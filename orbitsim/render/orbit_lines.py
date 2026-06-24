@@ -41,3 +41,34 @@ def sample_orbit_points(elements: KeplerianElements, n: int = 256) -> np.ndarray
         )
         pts[idx] = elements_to_state(sampled).r
     return pts
+
+
+from panda3d.core import LineSegs, NodePath
+
+
+def build_orbit_node(
+    points_render: list[tuple[float, float, float]],
+    color: tuple[float, float, float, float] = (0.3, 0.7, 1.0, 1.0),
+) -> NodePath:
+    """Build a Panda3D LineSegs polyline from render-space points.
+
+    Parameters
+    ----------
+    points_render : list of (x, y, z)
+        Render-space points (already passed through RenderTransform.to_render).
+    color : (r, g, b, a)
+
+    Returns
+    -------
+    NodePath
+        A NodePath holding the line strip.
+    """
+    segs = LineSegs()
+    segs.set_color(*color)
+    segs.set_thickness(1.5)
+    for idx, (x, y, z) in enumerate(points_render):
+        if idx == 0:
+            segs.move_to(x, y, z)
+        else:
+            segs.draw_to(x, y, z)
+    return NodePath(segs.create())
