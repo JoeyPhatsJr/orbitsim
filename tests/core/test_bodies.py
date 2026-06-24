@@ -32,3 +32,19 @@ def test_body_frozen():
     body = CelestialBody(name="Earth", mu=3.986e14, radius_m=6.378e6)
     with pytest.raises(AttributeError):
         body.mu = 3.987e14
+
+
+def test_prebuilt_bodies_exist():
+    from orbitsim.core.bodies import SUN, EARTH, MOON
+    from orbitsim.core.constants import MU_EARTH, R_EARTH
+    assert EARTH.mu == MU_EARTH
+    assert EARTH.radius_m == R_EARTH
+    assert EARTH.parent is SUN
+    assert MOON.parent is EARTH
+    assert SUN.parent is None
+
+
+def test_prebuilt_earth_j2():
+    from orbitsim.core.bodies import EARTH
+    from orbitsim.core.constants import J2_EARTH
+    assert EARTH.j2 == J2_EARTH

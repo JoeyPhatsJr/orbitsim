@@ -59,3 +59,38 @@ class CelestialBody:
         # r_SOI = a · (μ/μ_parent)^(2/5)
         mass_ratio = (self.mu / self.parent.mu) ** (2.0 / 5.0)
         return semi_major_axis_m * mass_ratio
+
+
+from orbitsim.core.constants import (
+    MU_SUN,
+    MU_EARTH,
+    MU_MOON,
+    R_SUN,
+    R_EARTH,
+    R_MOON,
+    J2_EARTH,
+)
+
+# Sidereal rotation periods [s] (IAU): Earth 86164.0905 s, Sun ~25.05 d, Moon ~27.32 d.
+SUN = CelestialBody(
+    name="Sun",
+    mu=MU_SUN,
+    radius_m=R_SUN,
+    rotation_period_s=25.05 * 86400.0,
+    parent=None,
+)
+EARTH = CelestialBody(
+    name="Earth",
+    mu=MU_EARTH,
+    radius_m=R_EARTH,
+    j2=J2_EARTH,
+    rotation_period_s=86164.0905,
+    parent=SUN,
+)
+MOON = CelestialBody(
+    name="Moon",
+    mu=MU_MOON,
+    radius_m=R_MOON,
+    rotation_period_s=27.321661 * 86400.0,
+    parent=EARTH,
+)
