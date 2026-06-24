@@ -1,7 +1,6 @@
 """Panda3D ShowBase bootstrap and per-frame loop."""
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
-from direct.gui.DirectSlider import DirectSlider
 from direct.gui.DirectButton import DirectButton
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import ClockObject, AmbientLight, DirectionalLight, Vec4, TextNode
@@ -68,37 +67,51 @@ class OrbitApp(ShowBase):
         self._setup_input()
         self.task_mgr.add(self._update, "update")
 
+    STEP_MPS = 5.0  # delta-V nudge per +/- click
+
     def _build_maneuver_ui(self) -> None:
-        """Three RTN delta-V sliders, an Execute button, and a live delta-V readout."""
-
-        def mk_slider(z):
-            return DirectSlider(
-                pos=(-0.55, 0.0, z),
-                scale=0.32,
-                range=(-200.0, 200.0),
-                value=0.0,
-                pageSize=10.0,
-                command=self._refresh_readout,
-                parent=self.a2dBottomRight,
-            )
-
-        self._s_pro = mk_slider(0.34)  # prograde
-        self._s_nrm = mk_slider(0.22)  # normal
-        self._s_rad = mk_slider(0.10)  # radial
-        labels = ("Prograde", "Normal", "Radial")
-        for lbl, z in zip(labels, (0.34, 0.22, 0.10)):
+        """Per-axis -/+ nudge buttons for RTN delta-V, an Execute button, and a readout."""
+        self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
+        self._dv_value_text = {}
+        rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
+        for axis, label, z in rows:
             OnscreenText(
-                text=lbl,
-                pos=(-1.02, z - 0.02),
+                text=label,
+                pos=(-1.18, z - 0.015),
                 scale=0.045,
                 fg=(1, 1, 1, 1),
                 align=TextNode.ALeft,
                 parent=self.a2dBottomRight,
             )
+            DirectButton(
+                text="-",
+                scale=0.06,
+                pos=(-0.60, 0.0, z),
+                command=self._nudge,
+                extraArgs=[axis, -1],
+                parent=self.a2dBottomRight,
+            )
+            self._dv_value_text[axis] = OnscreenText(
+                text="0",
+                pos=(-0.40, z - 0.015),
+                scale=0.045,
+                fg=(1.0, 0.9, 0.4, 1),
+                align=TextNode.ACenter,
+                mayChange=True,
+                parent=self.a2dBottomRight,
+            )
+            DirectButton(
+                text="+",
+                scale=0.06,
+                pos=(-0.20, 0.0, z),
+                command=self._nudge,
+                extraArgs=[axis, 1],
+                parent=self.a2dBottomRight,
+            )
         self._exec_btn = DirectButton(
             text="Execute Burn",
             scale=0.05,
-            pos=(-0.5, 0.0, 0.02),
+            pos=(-0.5, 0.0, 0.04),
             command=self._execute_burn,
             parent=self.a2dBottomRight,
         )
@@ -112,14 +125,21 @@ class OrbitApp(ShowBase):
             mayChange=True,
             parent=self.a2dTopLeft,
         )
+        self._refresh_readout()
+
+    def _nudge(self, axis: str, sign: int) -> None:
+        """Increment/decrement one RTN delta-V component by STEP_MPS."""
+        self._dv[axis] += sign * self.STEP_MPS
+        self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
+        self._refresh_readout()
 
     def _current_node(self) -> ManeuverNode:
-        """Build the node from the live slider values, burning at vessel 0's current epoch."""
+        """Build the node from the current dV values, burning at vessel 0's current epoch."""
         return ManeuverNode(
             epoch_s=self.world.vessels[0].state.epoch_s,
-            dv_prograde_mps=float(self._s_pro["value"]),
-            dv_normal_mps=float(self._s_nrm["value"]),
-            dv_radial_mps=float(self._s_rad["value"]),
+            dv_prograde_mps=self._dv["pro"],
+            dv_normal_mps=self._dv["nrm"],
+            dv_radial_mps=self._dv["rad"],
         )
 
     def _refresh_readout(self) -> None:
@@ -135,9 +155,9 @@ class OrbitApp(ShowBase):
         if 0.0 < node.magnitude_mps <= v0.delta_v_budget_mps:
             v0.state = apply_maneuver(v0.state, node)
             v0.delta_v_budget_mps -= node.magnitude_mps
-        self._s_pro["value"] = 0.0
-        self._s_nrm["value"] = 0.0
-        self._s_rad["value"] = 0.0
+        for axis in self._dv:
+            self._dv[axis] = 0.0
+            self._dv_value_text[axis].setText("0")
         self._refresh_readout()
 
     def _setup_input(self) -> None:
