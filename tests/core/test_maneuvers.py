@@ -70,3 +70,14 @@ def test_node_epoch_propagates_before_burn():
     # Burn happens at apoapsis (half a period later): position is on the far side.
     assert new_state.r[0] < 0
     assert abs(new_state.epoch_s - (state.epoch_s + period / 2.0)) < 1e-6
+
+
+def test_predict_elements_after_matches_apply_then_convert():
+    from orbitsim.core.maneuvers import predict_elements_after
+
+    state = _periapsis_state()
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=120.0, dv_normal_mps=0.0, dv_radial_mps=0.0)
+    predicted = predict_elements_after(state, node)
+    expected = state_to_elements(apply_maneuver(state, node))
+    assert abs(predicted.a - expected.a) < 1.0
+    assert abs(predicted.e - expected.e) < 1e-9

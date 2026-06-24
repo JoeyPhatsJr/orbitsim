@@ -4,6 +4,7 @@ import numpy as np
 
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.elements import KeplerianElements, state_to_elements
 
 
 @dataclass(frozen=True)
@@ -83,3 +84,12 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
         mu=burn_state.mu,
         epoch_s=burn_state.epoch_s,
     )
+
+
+def predict_elements_after(state: StateVector, node: ManeuverNode) -> KeplerianElements:
+    """Return the Keplerian elements that result from applying ``node`` to ``state``.
+
+    Convenience wrapper used by the renderer to sample a live preview orbit:
+    ``apply_maneuver`` then ``state_to_elements``.
+    """
+    return state_to_elements(apply_maneuver(state, node))
