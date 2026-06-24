@@ -33,3 +33,23 @@ def test_world_step_updates_state_object():
 def test_vessel_carries_budget():
     vessel = _circular_vessel()
     assert vessel.delta_v_budget_mps == 1000.0
+
+
+def test_vessel_has_node_list():
+    from orbitsim.core.maneuvers import ManeuverNode
+
+    vessel = _circular_vessel()
+    assert vessel.nodes == []
+    node = ManeuverNode(epoch_s=10.0, dv_prograde_mps=5.0, dv_normal_mps=0.0, dv_radial_mps=0.0)
+    vessel.nodes.append(node)
+    assert vessel.nodes[0].dv_prograde_mps == 5.0
+
+
+def test_vessel_node_lists_are_independent():
+    # default_factory must give each Vessel its own list, not a shared one.
+    a = _circular_vessel()
+    b = _circular_vessel()
+    from orbitsim.core.maneuvers import ManeuverNode
+
+    a.nodes.append(ManeuverNode(epoch_s=0.0, dv_prograde_mps=1.0, dv_normal_mps=0.0, dv_radial_mps=0.0))
+    assert b.nodes == []

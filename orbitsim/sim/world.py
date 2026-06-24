@@ -1,9 +1,10 @@
 """Body registry + vessels; per-tick propagation."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from orbitsim.core.bodies import CelestialBody
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.maneuvers import ManeuverNode
 
 
 @dataclass
@@ -17,11 +18,14 @@ class Vessel:
         Current inertial state (mutable here in the sim layer; updated each tick).
     delta_v_budget_mps : float
         Remaining delta-V budget [m/s].
+    nodes : list[ManeuverNode]
+        Pending maneuver nodes for the sandbox (each its own list; default empty).
     """
 
     name: str
     state: StateVector
     delta_v_budget_mps: float = 0.0
+    nodes: list[ManeuverNode] = field(default_factory=list)
 
 
 class World:
