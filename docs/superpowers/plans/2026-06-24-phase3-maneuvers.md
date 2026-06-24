@@ -107,14 +107,20 @@ def test_prograde_burn_raises_apoapsis_only():
     assert abs(rp1 - rp0) < 1.0           # periapsis unchanged (< 1 m)
 
 
-def test_normal_burn_changes_inclination_not_energy():
+def test_normal_burn_changes_inclination_and_adds_energy_in_quadrature():
     state = _periapsis_state()
     elem0 = state_to_elements(state)
-    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=0.0, dv_normal_mps=50.0, dv_radial_mps=0.0)
+    dv = 50.0
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=0.0, dv_normal_mps=dv, dv_radial_mps=0.0)
     new_state = apply_maneuver(state, node)
     elem1 = state_to_elements(new_state)
-    assert abs(elem1.a - elem0.a) / elem0.a < 1e-6   # semi-major axis (energy) unchanged
-    assert elem1.i > elem0.i + 1e-6                   # inclination changed
+    # A pure normal impulse is perpendicular to v, so speed adds in quadrature *exactly*:
+    # |v_new|^2 = |v_old|^2 + dv^2. This DOES raise energy (only a speed-preserving rotation
+    # of v leaves energy fixed). Here delta-a/a ~ 5e-5 — small but real, NOT zero.
+    # (The original plan asserted delta-a/a < 1e-6, which is physically impossible.)
+    assert abs(new_state.v_mag**2 - (state.v_mag**2 + dv**2)) < 1e-3
+    assert elem1.i > elem0.i + 1e-6                          # inclination changed (main effect)
+    assert 0.0 < abs(elem1.a - elem0.a) / elem0.a < 1e-3    # energy rises slightly, not zero
 
 
 def test_total_dv_added_matches_magnitude():
