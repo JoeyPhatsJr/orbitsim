@@ -7,14 +7,17 @@ class Hud:
     """On-screen text panel showing time, warp, and focused-vessel orbit info."""
 
     def __init__(self, base) -> None:
+        # Anchor to the top-left corner; pos is corner-relative (x right, y down),
+        # so a small +x / -y nudge places the text just inside the corner.
         self.text = OnscreenText(
             text="",
-            pos=(-1.3, 0.9),
+            pos=(0.08, -0.12),
             scale=0.05,
             fg=(1, 1, 1, 1),
+            shadow=(0, 0, 0, 1),
             align=TextNode.ALeft,
             mayChange=True,
-            parent=base.a2dTopLeft if hasattr(base, "a2dTopLeft") else None,
+            parent=base.a2dTopLeft,
         )
 
     def update(
