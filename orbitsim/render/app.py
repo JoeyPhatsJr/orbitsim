@@ -1,9 +1,13 @@
 """Panda3D ShowBase bootstrap and per-frame loop."""
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import ClockObject, AmbientLight, DirectionalLight, Vec4
+from direct.gui.DirectSlider import DirectSlider
+from direct.gui.DirectButton import DirectButton
+from direct.gui.OnscreenText import OnscreenText
+from panda3d.core import ClockObject, AmbientLight, DirectionalLight, Vec4, TextNode
 
 from orbitsim.core.elements import state_to_elements
+from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
@@ -52,12 +56,89 @@ class OrbitApp(ShowBase):
             # The camera always sits RENDER_UNITS_ACROSS_VIEW (1000) units from the
             # focus, so a fixed render-size marker keeps a constant on-screen size
             # at every zoom level.
-            m.set_scale(15.0)
+            m.set_scale(8.0)
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
+        # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
+        # *current* state (dt=0), so the executed orbit matches the live preview exactly.
+        self._preview_np = None
+        self._build_maneuver_ui()
+
         self._setup_input()
         self.task_mgr.add(self._update, "update")
+
+    def _build_maneuver_ui(self) -> None:
+        """Three RTN delta-V sliders, an Execute button, and a live delta-V readout."""
+
+        def mk_slider(z):
+            return DirectSlider(
+                pos=(-0.55, 0.0, z),
+                scale=0.32,
+                range=(-200.0, 200.0),
+                value=0.0,
+                pageSize=10.0,
+                command=self._refresh_readout,
+                parent=self.a2dBottomRight,
+            )
+
+        self._s_pro = mk_slider(0.34)  # prograde
+        self._s_nrm = mk_slider(0.22)  # normal
+        self._s_rad = mk_slider(0.10)  # radial
+        labels = ("Prograde", "Normal", "Radial")
+        for lbl, z in zip(labels, (0.34, 0.22, 0.10)):
+            OnscreenText(
+                text=lbl,
+                pos=(-1.02, z - 0.02),
+                scale=0.045,
+                fg=(1, 1, 1, 1),
+                align=TextNode.ALeft,
+                parent=self.a2dBottomRight,
+            )
+        self._exec_btn = DirectButton(
+            text="Execute Burn",
+            scale=0.05,
+            pos=(-0.5, 0.0, 0.02),
+            command=self._execute_burn,
+            parent=self.a2dBottomRight,
+        )
+        self._dv_readout = OnscreenText(
+            text="",
+            pos=(0.08, -0.36),
+            scale=0.045,
+            fg=(1.0, 0.4, 1.0, 1),
+            shadow=(0, 0, 0, 1),
+            align=TextNode.ALeft,
+            mayChange=True,
+            parent=self.a2dTopLeft,
+        )
+
+    def _current_node(self) -> ManeuverNode:
+        """Build the node from the live slider values, burning at vessel 0's current epoch."""
+        return ManeuverNode(
+            epoch_s=self.world.vessels[0].state.epoch_s,
+            dv_prograde_mps=float(self._s_pro["value"]),
+            dv_normal_mps=float(self._s_nrm["value"]),
+            dv_radial_mps=float(self._s_rad["value"]),
+        )
+
+    def _refresh_readout(self) -> None:
+        node = self._current_node()
+        budget = self.world.vessels[0].delta_v_budget_mps
+        self._dv_readout.setText(
+            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (budget {budget:,.0f} m/s)"
+        )
+
+    def _execute_burn(self) -> None:
+        v0 = self.world.vessels[0]
+        node = self._current_node()
+        if 0.0 < node.magnitude_mps <= v0.delta_v_budget_mps:
+            v0.state = apply_maneuver(v0.state, node)
+            v0.delta_v_budget_mps -= node.magnitude_mps
+        self._s_pro["value"] = 0.0
+        self._s_nrm["value"] = 0.0
+        self._s_rad["value"] = 0.0
+        self._refresh_readout()
 
     def _setup_input(self) -> None:
         self.accept("wheel_up", lambda: self.rig.zoom(0.8))
@@ -98,6 +179,19 @@ class OrbitApp(ShowBase):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
             self._rebuild_orbit(idx, vessel)
+
+        # Live maneuver preview (magenta) for vessel 0.
+        node = self._current_node()
+        if node.magnitude_mps > 0.0:
+            pred = predict_elements_after(self.world.vessels[0].state, node)
+            ppts = [self.transform.to_render(p) for p in sample_orbit_points(pred, n=256)]
+            if self._preview_np is not None:
+                self._preview_np.remove_node()
+            self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
+            self._preview_np.reparent_to(self.render)
+        elif self._preview_np is not None:
+            self._preview_np.remove_node()
+            self._preview_np = None
 
         self.rig.apply()
 
