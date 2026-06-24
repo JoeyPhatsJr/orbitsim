@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"c:\\\\AI\\\\Claude\\\\Orbital Mechanics Sim\\\\orbitsim\\\\core\" \"c:\\\\AI\\\\Claude\\\\Orbital Mechanics Sim\\\\orbitsim\\\\sim\" \"c:\\\\AI\\\\Claude\\\\Orbital Mechanics Sim\\\\orbitsim\\\\render\" \"c:\\\\AI\\\\Claude\\\\Orbital Mechanics Sim\\\\tests\\\\core\" 2>&1)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv\\\\Scripts\\\\Activate.ps1)",
+      "Bash(pip install *)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "additionalDirectories": [
+      "c:\\AI\\Claude\\Orbital Mechanics Sim\\orbitsim"
+    ]
+  }
+}
