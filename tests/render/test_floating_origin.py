@@ -23,7 +23,15 @@ def test_precision_preserved_across_float32_cast():
     rt = RenderTransform(origin_m=far, scale_m_per_unit=scale)
     rx, ry, rz = rt.to_render(point)
     implied_distance_m = rx * scale
-    assert abs(implied_distance_m - 1.0e-3) < 1e-6
+
+    # The floating-origin guarantee is that the float32 cast adds NOTHING beyond
+    # float64's own limit. float64 alone can only resolve ~1.5e-5 m (its ULP) at
+    # 1e11, so we compare the float32 render result against the pure-float64
+    # subtraction: they must agree to far within that ULP.
+    float64_ref = float((point - far)[0])
+    assert abs(implied_distance_m - float64_ref) < 1e-9  # float32 cast added ~nothing
+    # ...and the 1 mm offset clearly survived (did not collapse toward 0):
+    assert abs(implied_distance_m - 1.0e-3) < 1e-4
 
 
 def test_scale_divides():
