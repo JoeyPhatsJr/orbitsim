@@ -45,9 +45,14 @@ class OrbitApp(ShowBase):
         self.vessel_nps = []
         self.orbit_nps = []
         for _ in world.vessels:
-            m = make_uv_sphere(0.03, 8, 12)
+            m = make_uv_sphere(1.0, 8, 12)
             m.reparent_to(self.render)
             m.set_color(1.0, 0.9, 0.2, 1.0)
+            m.set_light_off()  # fullbright marker so it is always visible
+            # The camera always sits RENDER_UNITS_ACROSS_VIEW (1000) units from the
+            # focus, so a fixed render-size marker keeps a constant on-screen size
+            # at every zoom level.
+            m.set_scale(15.0)
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
