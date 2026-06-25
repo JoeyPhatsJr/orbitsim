@@ -30,3 +30,6 @@ Thumbs.db
 
 # Runtime-generated porkchop plot
 porkchop.png
+
+# Downloaded texture cache
+data/textures/
