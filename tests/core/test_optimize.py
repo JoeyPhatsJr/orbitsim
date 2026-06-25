@@ -28,3 +28,20 @@ def test_porkchop_minimum_near_hohmann():
     assert np.isfinite(dv[i, j])
     # The best grid cell should represent a feasible transfer (positive cost).
     assert dv[i, j] > 0
+
+
+def test_optimize_transfer_beats_or_matches_grid():
+    from orbitsim.core.optimize import optimize_transfer
+    r1, r2 = 7000e3, 14000e3
+    dep = _circular(r1)
+    arr_v = np.sqrt(MU_EARTH / r2)
+    arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, arr_v, 0.0]), mu=MU_EARTH)
+    h = hohmann(r1, r2, MU_EARTH)
+    dep_times = np.linspace(0.0, h.time_of_flight_s, 8)
+    tof_grid = np.linspace(0.5 * h.time_of_flight_s, 1.5 * h.time_of_flight_s, 20)
+
+    dv_grid, (i, j) = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH)
+    sol = optimize_transfer(dep, arr, dep_times, tof_grid, MU_EARTH)
+    assert sol.kind == "lambert"
+    # Refined solution is no worse than the coarse grid minimum (+ small tolerance).
+    assert sol.dv_total_mps <= dv_grid[i, j] * 1.01
