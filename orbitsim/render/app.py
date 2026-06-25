@@ -28,6 +28,7 @@ from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
+from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
 
 _global_clock = ClockObject.get_global_clock()
@@ -421,6 +422,8 @@ class OrbitApp(ShowBase):
                         "RADIAL_IN", "RADIAL_OUT", "TARGET"]
             for i, mode in enumerate(sas_keys, start=1):
                 self.accept(str(i), self._set_sas, [mode])
+            self.accept("f5", self._quicksave)
+            self.accept("f9", self._quickload)
 
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
@@ -482,6 +485,47 @@ class OrbitApp(ShowBase):
 
     def _set_sas(self, mode):
         self.world.vessels[0].sas_mode = mode
+
+    QUICKSAVE_PATH = "saves/quicksave.json"
+
+    def _flash_message(self, text: str) -> None:
+        """Transient user feedback; console fallback until the HUD toast (6.2)."""
+        print(f"[orbitsim] {text}")
+
+    def _quicksave(self) -> None:
+        """F5: write the current sandbox world + clock to the quicksave slot."""
+        try:
+            save_scenario(self.world, self.clock, self.QUICKSAVE_PATH)
+            self._flash_message("Quicksaved")
+        except (OSError, ValueError) as exc:
+            self._flash_message(f"Quicksave failed: {exc}")
+
+    def _quickload(self) -> None:
+        """F9: restore the quicksave in place onto the live vessel + clock.
+
+        Mutating the existing vessel (rather than swapping self.world) keeps the
+        Panda3D scene graph intact. Sandbox-only: one vessel, fixed central body.
+        """
+        try:
+            world, clock = load_scenario(self.QUICKSAVE_PATH)
+        except (OSError, ValueError) as exc:
+            self._flash_message(f"Quickload failed: {exc}")
+            return
+        src = world.vessels[0]
+        dst = self.world.vessels[0]
+        dst.state = src.state
+        dst.dry_mass_kg = src.dry_mass_kg
+        dst.fuel_mass_kg = src.fuel_mass_kg
+        dst.max_thrust_n = src.max_thrust_n
+        dst.exhaust_velocity_mps = src.exhaust_velocity_mps
+        dst.max_turn_rate_radps = src.max_turn_rate_radps
+        dst.throttle = src.throttle
+        dst.sas_mode = src.sas_mode
+        dst.orientation = src.orientation
+        dst.nodes[:] = src.nodes
+        self.clock.sim_time_s = clock.sim_time_s
+        self.clock.warp = clock.warp
+        self._flash_message("Quickloaded")
 
     def _apply_flight_input(self, dt):
         """Manual throttle trim + rotation from held keys (sandbox flight)."""
