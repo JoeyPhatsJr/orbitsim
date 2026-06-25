@@ -7,6 +7,7 @@ _BASE = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures
 TEXTURE_URLS = {
     "earth_day": _BASE + "earth_atmos_2048.jpg",
     "earth_night": _BASE + "earth_lights_2048.png",
+    "stars": "https://raw.githubusercontent.com/jeromeetienne/threex.planets/master/images/galaxy_starfield.png",
 }
 
 _DATA_DIR = os.path.join(

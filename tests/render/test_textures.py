@@ -8,6 +8,11 @@ def test_registry_has_earth_keys():
     assert "earth_night" in textures.TEXTURE_URLS
 
 
+def test_registry_has_stars_key():
+    assert "stars" in textures.TEXTURE_URLS
+    assert textures.TEXTURE_URLS["stars"].endswith(".png")
+
+
 def test_cache_hit_returns_existing_valid_file(tmp_path):
     # Pre-place a file with a valid JPEG magic; no network should be needed.
     p = tmp_path / "earth_day.jpg"
