@@ -12,7 +12,8 @@ from panda3d.core import (
 )
 
 
-def make_uv_sphere(radius: float = 1.0, num_lat: int = 24, num_lon: int = 48) -> NodePath:
+def make_uv_sphere(radius: float = 1.0, num_lat: int = 24, num_lon: int = 48,
+                   with_uv: bool = False) -> NodePath:
     """Build a UV sphere NodePath of the given radius (render units).
 
     Parameters
@@ -21,17 +22,21 @@ def make_uv_sphere(radius: float = 1.0, num_lat: int = 24, num_lon: int = 48) ->
         Sphere radius in render units.
     num_lat, num_lon : int
         Latitude/longitude subdivisions.
+    with_uv : bool
+        If True, include equirectangular texture coordinates (v3n3t2 format).
+        If False (default), use v3n3 format (no texcoords).
 
     Returns
     -------
     NodePath
         A NodePath wrapping the sphere geometry, centered at the origin.
     """
-    fmt = GeomVertexFormat.get_v3n3()
+    fmt = GeomVertexFormat.get_v3n3t2() if with_uv else GeomVertexFormat.get_v3n3()
     vdata = GeomVertexData("sphere", fmt, Geom.UHStatic)
     vdata.set_num_rows((num_lat + 1) * (num_lon + 1))
     vertex = GeomVertexWriter(vdata, "vertex")
     normal = GeomVertexWriter(vdata, "normal")
+    texcoord = GeomVertexWriter(vdata, "texcoord") if with_uv else None
 
     for i in range(num_lat + 1):
         theta = math.pi * i / num_lat
@@ -43,6 +48,8 @@ def make_uv_sphere(radius: float = 1.0, num_lat: int = 24, num_lon: int = 48) ->
             z = cos_t
             vertex.add_data3(x * radius, y * radius, z * radius)
             normal.add_data3(x, y, z)
+            if texcoord is not None:
+                texcoord.add_data2(j / num_lon, 1.0 - i / num_lat)
 
     tris = GeomTriangles(Geom.UHStatic)
     row = num_lon + 1
