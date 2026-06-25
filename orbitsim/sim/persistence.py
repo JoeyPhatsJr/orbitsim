@@ -41,6 +41,7 @@ def _vessel_to_dict(vessel: Vessel) -> dict:
         "name": vessel.name,
         "r_m": vessel.state.r.tolist(),
         "v_mps": vessel.state.v.tolist(),
+        "epoch_s": vessel.state.epoch_s,
         "dry_mass_kg": vessel.dry_mass_kg,
         "fuel_mass_kg": vessel.fuel_mass_kg,
         "max_thrust_n": vessel.max_thrust_n,
@@ -63,7 +64,7 @@ def save_scenario(world: World, clock: SimClock, path) -> None:
         "warp": clock.warp,
         "vessels": [_vessel_to_dict(v) for v in world.vessels],
     }
-    parent = os.path.dirname(os.fspath(path))
+    parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -76,6 +77,7 @@ def _vessel_from_dict(d: dict, mu: float) -> Vessel:
             r=np.array(d["r_m"], dtype=np.float64),
             v=np.array(d["v_mps"], dtype=np.float64),
             mu=mu,
+            epoch_s=d["epoch_s"],
         )
         vessel = Vessel(
             name=d["name"],

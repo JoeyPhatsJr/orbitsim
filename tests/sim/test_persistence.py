@@ -20,6 +20,7 @@ def _sample_world() -> tuple[World, SimClock]:
         r=np.array([r0, 1.0e5, -2.0e5]),
         v=np.array([10.0, v_circ * 1.02, v_circ * 0.13]),
         mu=MU_EARTH,
+        epoch_s=4567.0,  # non-zero, tracks clock.sim_time_s; guards epoch_s round-trip
     )
     vessel = Vessel(
         name="Sandbox-1",
@@ -58,6 +59,7 @@ def test_save_load_round_trip(tmp_path):
     assert np.array_equal(v1.state.r, v0.state.r)
     assert np.array_equal(v1.state.v, v0.state.v)
     assert v1.state.mu == EARTH.mu
+    assert v1.state.epoch_s == v0.state.epoch_s
     assert v1.dry_mass_kg == v0.dry_mass_kg
     assert v1.fuel_mass_kg == v0.fuel_mass_kg
     assert v1.max_thrust_n == v0.max_thrust_n
@@ -116,7 +118,7 @@ def test_load_rejects_missing_field(tmp_path):
         "sim_time_s": 0.0, "warp": 1.0,
         "vessels": [{
             "name": "X", "r_m": [7.0e6, 0.0, 0.0], "v_mps": [0.0, 7546.0, 0.0],
-            "dry_mass_kg": 1000.0,
+            "epoch_s": 0.0, "dry_mass_kg": 1000.0,
             # fuel_mass_kg intentionally omitted
             "max_thrust_n": 0.0, "exhaust_velocity_mps": 3000.0,
             "max_turn_rate_radps": 0.6, "throttle": 0.0, "sas_mode": "OFF",
