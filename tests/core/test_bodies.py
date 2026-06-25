@@ -48,3 +48,29 @@ def test_prebuilt_earth_j2():
     from orbitsim.core.bodies import EARTH
     from orbitsim.core.constants import J2_EARTH
     assert EARTH.j2 == J2_EARTH
+
+
+def test_all_planets_exist_with_sun_parent():
+    from orbitsim.core.bodies import (
+        MERCURY, VENUS, EARTH, MARS, JUPITER, SATURN, URANUS, NEPTUNE, SUN,
+    )
+    planets = [MERCURY, VENUS, EARTH, MARS, JUPITER, SATURN, URANUS, NEPTUNE]
+    for p in planets:
+        assert p.parent is SUN
+        assert p.mu > 0
+        assert p.radius_m > 0
+
+
+def test_mars_mu_order_of_magnitude():
+    from orbitsim.core.bodies import MARS
+    # Mars GM ~ 4.283e13 m^3/s^2.
+    assert abs(MARS.mu - 4.283e13) / 4.283e13 < 0.05
+
+
+def test_jupiter_is_largest_planet():
+    from orbitsim.core.bodies import (
+        MERCURY, VENUS, EARTH, MARS, JUPITER, SATURN, URANUS, NEPTUNE,
+    )
+    assert JUPITER.mu == max(
+        p.mu for p in [MERCURY, VENUS, EARTH, MARS, JUPITER, SATURN, URANUS, NEPTUNE]
+    )

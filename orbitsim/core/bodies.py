@@ -65,10 +65,26 @@ from orbitsim.core.constants import (
     MU_SUN,
     MU_EARTH,
     MU_MOON,
+    MU_MERCURY,
+    MU_VENUS,
+    MU_MARS,
+    MU_JUPITER,
+    MU_SATURN,
+    MU_URANUS,
+    MU_NEPTUNE,
     R_SUN,
     R_EARTH,
     R_MOON,
+    R_MERCURY,
+    R_VENUS,
+    R_MARS,
+    R_JUPITER,
+    R_SATURN,
+    R_URANUS,
+    R_NEPTUNE,
     J2_EARTH,
+    J2_MARS,
+    J2_JUPITER,
 )
 
 # Sidereal rotation periods [s] (IAU): Earth 86164.0905 s, Sun ~25.05 d, Moon ~27.32 d.
@@ -94,3 +110,15 @@ MOON = CelestialBody(
     rotation_period_s=27.321661 * 86400.0,
     parent=EARTH,
 )
+
+MERCURY = CelestialBody(name="Mercury", mu=MU_MERCURY, radius_m=R_MERCURY, parent=SUN)
+VENUS = CelestialBody(name="Venus", mu=MU_VENUS, radius_m=R_VENUS, parent=SUN)
+MARS = CelestialBody(name="Mars", mu=MU_MARS, radius_m=R_MARS, j2=J2_MARS, parent=SUN)
+JUPITER = CelestialBody(
+    name="Jupiter", mu=MU_JUPITER, radius_m=R_JUPITER, j2=J2_JUPITER, parent=SUN
+)
+SATURN = CelestialBody(name="Saturn", mu=MU_SATURN, radius_m=R_SATURN, parent=SUN)
+URANUS = CelestialBody(name="Uranus", mu=MU_URANUS, radius_m=R_URANUS, parent=SUN)
+NEPTUNE = CelestialBody(name="Neptune", mu=MU_NEPTUNE, radius_m=R_NEPTUNE, parent=SUN)
+
+PLANETS = [MERCURY, VENUS, EARTH, MARS, JUPITER, SATURN, URANUS, NEPTUNE]
