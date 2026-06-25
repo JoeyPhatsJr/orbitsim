@@ -4,10 +4,20 @@ from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectSlider import DirectSlider
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import ClockObject, AmbientLight, DirectionalLight, Vec4, TextNode
+from panda3d.core import (
+    ClockObject,
+    AmbientLight,
+    DirectionalLight,
+    Vec4,
+    TextNode,
+    CardMaker,
+)
 
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
+from orbitsim.core.state import StateVector
+from orbitsim.core.optimize import porkchop
+from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
@@ -63,6 +73,7 @@ class OrbitApp(ShowBase):
         # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
         # *current* state (dt=0), so the executed orbit matches the live preview exactly.
         self._preview_np = None
+        self._porkchop_card = None
         self._build_maneuver_ui()
 
         self._setup_input()
@@ -197,6 +208,43 @@ class OrbitApp(ShowBase):
         self.accept("arrow_down", lambda: self.rig.orbit(0.0, -0.1))
         self.accept("period", self.clock.warp_up)  # ">" key
         self.accept("comma", self.clock.warp_down)  # "<" key
+        self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
+
+    def _toggle_porkchop(self) -> None:
+        """Build a porkchop plot (vessel 0 -> a higher circular orbit) and overlay it.
+
+        Pressing 'p' again removes it. The departure axis spans a full synodic period
+        so the low-delta-V basin (the "banana") is captured.
+        """
+        existing = getattr(self, "_porkchop_card", None)
+        if existing is not None:
+            existing.remove_node()
+            self._porkchop_card = None
+            return
+
+        mu = self.world.central.mu
+        dep = self.world.vessels[0].state
+        r1 = dep.r_mag
+        r2 = r1 * 2.0
+        v2 = np.sqrt(mu / r2)
+        arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, v2, 0.0]), mu=mu)
+
+        w1 = np.sqrt(mu / r1**3)
+        w2 = np.sqrt(mu / r2**3)
+        t_syn = 2.0 * np.pi / abs(w1 - w2)
+        t_hohmann = np.pi * np.sqrt(((r1 + r2) / 2.0) ** 3 / mu)
+
+        dep_times = np.linspace(0.0, t_syn, 24)
+        tof_grid = np.linspace(0.4 * t_hohmann, 1.6 * t_hohmann, 36)
+        dv, _ = porkchop(dep, arr, dep_times, tof_grid, mu)
+
+        png = render_porkchop_png(dv, dep_times, tof_grid, "porkchop.png")
+        tex = self.loader.load_texture(png)
+        cm = CardMaker("porkchop")
+        cm.set_frame(-0.95, -0.15, 0.1, 0.85)  # top-right region of aspect2d
+        card = self.aspect2d.attach_new_node(cm.generate())
+        card.set_texture(tex)
+        self._porkchop_card = card
 
     def _rebuild_orbit(self, idx, vessel) -> None:
         elem = state_to_elements(vessel.state)

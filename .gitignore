@@ -27,3 +27,6 @@ data/*.bsp
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime-generated porkchop plot
+porkchop.png
