@@ -27,6 +27,7 @@ from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
+from orbitsim.render.earth import build_earth, set_sun_dir
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -147,26 +148,32 @@ class OrbitApp(ShowBase):
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
 
-        # Central body sphere. In solar mode it is the Sun (constant on-screen size,
-        # fullbright); in sandbox mode it is the planet, lit and scaled to real radius.
-        self.central_np = make_uv_sphere(1.0, 24, 48)
-        self.central_np.reparent_to(self.render)
+        # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
+        # day/night-shaded Earth (with an atmosphere shell), or a flat-blue fallback.
+        self._atmo_np = None
         if self.solar_system:
+            self.central_np = make_uv_sphere(1.0, 24, 48)
+            self.central_np.reparent_to(self.render)
             self.central_np.set_color(1.0, 0.85, 0.2, 1.0)
             self.central_np.set_light_off()
             self.central_np.set_scale(10.0)
         else:
-            self.central_np.set_color(0.2, 0.4, 0.9, 1.0)
+            self.central_np, self._atmo_np = build_earth(self)
+            self.central_np.reparent_to(self.render)
+            if self._atmo_np is not None:
+                self._atmo_np.reparent_to(self.central_np)
 
-        # Lighting so the sphere is visible.
+        # Lighting: low ambient + a sun directional light (aimed at the real Sun each
+        # frame in the sandbox). The shadered Earth lights itself; the light is for the
+        # flat fallback and any other lit geometry.
         amb = AmbientLight("amb")
-        amb.set_color(Vec4(0.3, 0.3, 0.3, 1))
+        amb.set_color(Vec4(0.3, 0.3, 0.3, 1) if self.solar_system else Vec4(0.12, 0.12, 0.15, 1))
         self.render.set_light(self.render.attach_new_node(amb))
-        dirl = DirectionalLight("dir")
-        dirl.set_color(Vec4(0.9, 0.9, 0.9, 1))
-        dnp = self.render.attach_new_node(dirl)
-        dnp.set_hpr(45, -45, 0)
-        self.render.set_light(dnp)
+        sun = DirectionalLight("sun")
+        sun.set_color(Vec4(1.0, 1.0, 0.95, 1))
+        self._sun_light_np = self.render.attach_new_node(sun)
+        self._sun_light_np.set_hpr(45, -45, 0)
+        self.render.set_light(self._sun_light_np)
 
         # Vessel markers + orbit lines.
         self.vessel_nps = []
@@ -530,6 +537,23 @@ class OrbitApp(ShowBase):
         self.central_np.set_pos(cx, cy, cz)
         body_render_radius = self.world.central.radius_m / self.transform.scale_m_per_unit
         self.central_np.set_scale(max(body_render_radius, 1e-3))
+
+        # Real Sun direction (Earth->Sun) drives the day/night terminator + sun light.
+        try:
+            from orbitsim.core.ephemeris import body_state
+
+            sun_r = body_state("SUN", self.clock.sim_time_s, center="EARTH").r
+            sun_dir = np.asarray(sun_r, dtype=float)
+            n = np.linalg.norm(sun_dir)
+            if n > 0:
+                sun_dir = sun_dir / n
+                set_sun_dir(self.central_np, tuple(sun_dir))
+                self._sun_light_np.set_pos(float(sun_dir[0]) * 1000.0,
+                                           float(sun_dir[1]) * 1000.0,
+                                           float(sun_dir[2]) * 1000.0)
+                self._sun_light_np.look_at(0, 0, 0)
+        except Exception:
+            pass
 
         for idx, vessel in enumerate(self.world.vessels):
             vx, vy, vz = self.transform.to_render(vessel.state.r)

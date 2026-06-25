@@ -4,7 +4,7 @@ Falls back to a flat-blue lit sphere if textures or shaders are unavailable, so 
 sandbox always renders."""
 import os
 
-from panda3d.core import Shader, Vec3
+from panda3d.core import Shader, Vec3, Filename
 
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.textures import texture_path
@@ -16,8 +16,8 @@ def _load_shader(vert, frag):
     try:
         return Shader.load(
             Shader.SL_GLSL,
-            vertex=os.path.join(_SHADER_DIR, vert),
-            fragment=os.path.join(_SHADER_DIR, frag),
+            vertex=Filename.from_os_specific(os.path.join(_SHADER_DIR, vert)),
+            fragment=Filename.from_os_specific(os.path.join(_SHADER_DIR, frag)),
         )
     except Exception:
         return None
@@ -40,8 +40,8 @@ def build_earth(base):
 
     earth = make_uv_sphere(1.0, 48, 96, with_uv=True)
     earth.set_shader(earth_shader)
-    earth.set_shader_input("dayTex", base.loader.load_texture(day))
-    earth.set_shader_input("nightTex", base.loader.load_texture(night))
+    earth.set_shader_input("dayTex", base.loader.load_texture(Filename.from_os_specific(day)))
+    earth.set_shader_input("nightTex", base.loader.load_texture(Filename.from_os_specific(night)))
     earth.set_shader_input("sunDir", Vec3(1, 0, 0))
     earth.set_light_off()  # the shader does its own lighting
 
