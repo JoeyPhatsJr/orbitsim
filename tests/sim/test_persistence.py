@@ -72,3 +72,64 @@ def test_save_load_round_trip(tmp_path):
         assert n1.dv_prograde_mps == n0.dv_prograde_mps
         assert n1.dv_normal_mps == n0.dv_normal_mps
         assert n1.dv_radial_mps == n0.dv_radial_mps
+
+
+def _write_json(tmp_path, obj):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(obj), encoding="utf-8")
+    return path
+
+
+def test_load_rejects_unknown_schema(tmp_path):
+    world, clock = _sample_world()
+    path = tmp_path / "s.json"
+    save_scenario(world, clock, path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["schema"] = 999
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema"):
+        load_scenario(path)
+
+
+def test_load_rejects_unknown_central_body(tmp_path):
+    world, clock = _sample_world()
+    path = tmp_path / "s.json"
+    save_scenario(world, clock, path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["central"] = "Pluto"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="central body"):
+        load_scenario(path)
+
+
+def test_load_rejects_malformed_json(tmp_path):
+    path = tmp_path / "broken.json"
+    path.write_text("{ not valid json", encoding="utf-8")
+    with pytest.raises(ValueError, match="[Mm]alformed"):
+        load_scenario(path)
+
+
+def test_load_rejects_missing_field(tmp_path):
+    # Valid schema + body, but a vessel is missing 'fuel_mass_kg'.
+    data = {
+        "schema": 1, "kind": "sandbox", "central": "Earth",
+        "sim_time_s": 0.0, "warp": 1.0,
+        "vessels": [{
+            "name": "X", "r_m": [7.0e6, 0.0, 0.0], "v_mps": [0.0, 7546.0, 0.0],
+            "dry_mass_kg": 1000.0,
+            # fuel_mass_kg intentionally omitted
+            "max_thrust_n": 0.0, "exhaust_velocity_mps": 3000.0,
+            "max_turn_rate_radps": 0.6, "throttle": 0.0, "sas_mode": "OFF",
+            "orientation": [1.0, 0.0, 0.0, 0.0], "nodes": [],
+        }],
+    }
+    path = _write_json(tmp_path, data)
+    with pytest.raises(ValueError, match="missing required field"):
+        load_scenario(path)
+
+
+def test_save_creates_parent_dirs(tmp_path):
+    world, clock = _sample_world()
+    path = tmp_path / "nested" / "dir" / "quicksave.json"
+    save_scenario(world, clock, path)
+    assert path.exists()
