@@ -3,6 +3,7 @@ import numpy as np
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectSlider import DirectSlider
+from direct.gui.DirectFrame import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import (
     ClockObject,
@@ -34,10 +35,100 @@ class OrbitApp(ShowBase):
         super().__init__()
         self.world = world
         self.clock = clock
+        self.disable_mouse()
+        self._sim_started = False
+        self._title_nodes = []
+        self._build_title_screen()
+
+    # ------------------------------------------------------------------ title screen
+
+    def _build_title_screen(self) -> None:
+        """Show the start menu: title, a delta-V budget slider, and a Play button.
+
+        The sim scene and update loop are not built until Play is clicked, so the
+        chosen budget is applied to every vessel before flight begins.
+        """
+        backdrop = DirectFrame(
+            frameColor=(0.02, 0.03, 0.08, 1.0),
+            frameSize=(-2.0, 2.0, -1.2, 1.2),
+            parent=self.aspect2d,
+        )
+        title = OnscreenText(
+            text="ORBITAL MECHANICS SIM",
+            pos=(0.0, 0.55),
+            scale=0.13,
+            fg=(0.85, 0.92, 1.0, 1.0),
+            parent=self.aspect2d,
+        )
+        subtitle = OnscreenText(
+            text="KSP, but the physics are real",
+            pos=(0.0, 0.42),
+            scale=0.05,
+            fg=(0.6, 0.7, 0.85, 1.0),
+            parent=self.aspect2d,
+        )
+        # delta-V budget control.
+        default_budget = (
+            self.world.vessels[0].delta_v_budget_mps if self.world.vessels else 2000.0
+        )
+        self._budget_label = OnscreenText(
+            text="",
+            pos=(0.0, 0.06),
+            scale=0.06,
+            fg=(1.0, 0.9, 0.4, 1.0),
+            mayChange=True,
+            parent=self.aspect2d,
+        )
+        self._budget_slider = DirectSlider(
+            pos=(0.0, 0.0, -0.08),
+            scale=0.6,
+            range=(0.0, 10000.0),
+            value=default_budget,
+            pageSize=250.0,
+            command=self._refresh_budget_label,
+            parent=self.aspect2d,
+        )
+        hint = OnscreenText(
+            text="delta-V budget  (drag to set)",
+            pos=(0.0, -0.22),
+            scale=0.045,
+            fg=(0.6, 0.7, 0.85, 1.0),
+            parent=self.aspect2d,
+        )
+        play = DirectButton(
+            text="  PLAY  ",
+            scale=0.1,
+            pos=(0.0, 0.0, -0.45),
+            command=self._on_play,
+            parent=self.aspect2d,
+        )
+        self._title_nodes = [backdrop, title, subtitle, self._budget_label, self._budget_slider, hint, play]
+        self._refresh_budget_label()
+
+    def _refresh_budget_label(self) -> None:
+        self._budget_label.setText(f"delta-V budget: {self._budget_slider['value']:,.0f} m/s")
+
+    def _on_play(self) -> None:
+        """Apply the chosen budget to all vessels, tear down the menu, start the sim."""
+        budget = float(self._budget_slider["value"])
+        for vessel in self.world.vessels:
+            vessel.delta_v_budget_mps = budget
+        for node in self._title_nodes:
+            node.destroy() if hasattr(node, "destroy") else node.remove_node()
+        self._title_nodes = []
+        self._start_sim()
+
+    # ------------------------------------------------------------------ sim scene
+
+    def _start_sim(self) -> None:
+        """Build the world scene (bodies, vessels, HUD, maneuver UI) and start updating."""
+        if self._sim_started:
+            return
+        self._sim_started = True
+        world = self.world
 
         self.transform = RenderTransform(origin_m=np.zeros(3), scale_m_per_unit=2.0e4)
         self.rig = CameraRig(self, self.transform)
-        self.disable_mouse()
         self.hud = Hud(self)
 
         # Central body sphere, sized in render units via the current scale.
