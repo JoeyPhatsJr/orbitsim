@@ -132,6 +132,16 @@ Manual `W/A/S/D/Q/E` input sets a commanded attitude rate; SAS modes override wi
 target direction. (Existing camera arrows/zoom/warp/`p`/maneuver keys are preserved; if a key
 collides, flight keys win only in sandbox mode.)
 
+### Mouse camera control
+**Right-click + drag** orbits the camera around the focus: holding the right mouse button and
+moving the mouse changes the rig's azimuth/elevation proportionally to the drag delta; the
+scroll wheel still zooms. Implementation: track right-button down/up (`mouse3`), and each
+frame read the pointer delta from `base.mouseWatcherNode` and feed it (scaled, with a
+sensitivity constant) to `CameraRig.orbit(d_azimuth, d_elevation)`. The default Panda mouse
+camera control stays disabled (`disable_mouse()`), so this is the only mouse-look path. Arrow
+keys remain as a secondary/no-mouse fallback. Right-drag must not conflict with **left**-click,
+which keeps driving the DirectGUI controls (navball is display-only; throttle/SAS are keys).
+
 ### Navball — `render/navball.py`
 A true 3D sphere instrument rendered into its own bottom-center 2D-overlay display region:
 - A textured/colored UV sphere whose rotation = the orbital-frame attitude of the ship
