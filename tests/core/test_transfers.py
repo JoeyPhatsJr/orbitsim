@@ -58,3 +58,17 @@ def test_hohmann_cheaper_when_ratio_small():
     h = hohmann(r1, r2, MU_EARTH)
     be = bielliptic(r1, r2, rb, MU_EARTH)
     assert h.dv_total_mps < be.dv_total_mps
+
+
+from orbitsim.core.transfers import plane_change
+
+
+def test_plane_change_formula():
+    v = 7700.0
+    di = np.deg2rad(10.0)
+    expected = 2.0 * v * np.sin(di / 2.0)
+    assert abs(plane_change(v, di) - expected) < 1e-9
+
+
+def test_plane_change_zero():
+    assert plane_change(7700.0, 0.0) == 0.0

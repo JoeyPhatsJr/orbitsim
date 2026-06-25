@@ -105,3 +105,11 @@ def bielliptic(r1_m: float, r2_m: float, rb_m: float, mu: float) -> TransferSolu
         time_of_flight_s=float(tof),
         kind="bielliptic",
     )
+
+
+def plane_change(speed_mps: float, delta_i_rad: float) -> float:
+    """delta-V for a simple plane change of delta_i at orbital speed v [m/s].
+
+    dv = 2 v sin(delta_i / 2)
+    """
+    return float(2.0 * speed_mps * np.sin(delta_i_rad / 2.0))
