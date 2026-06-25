@@ -92,3 +92,53 @@ def optimize_transfer(
     dep_state = propagate_kepler(state_dep, t_dep)
     arr_state_now = propagate_kepler(state_arr, t_dep)
     return intercept(dep_state, arr_state_now, tof)
+
+
+def interplanetary_porkchop(
+    dep_name: str,
+    arr_name: str,
+    dep_times_s: np.ndarray,
+    tof_grid_s: np.ndarray,
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """Heliocentric Lambert porkchop between two planets using DE440 ephemeris.
+
+    Total dv here is departure v-infinity + arrival v-infinity (relative to the
+    planets), i.e. the heliocentric Lambert cost; capture/escape burns are added
+    by the caller if desired.
+
+    Parameters
+    ----------
+    dep_name, arr_name : str
+        Planet names ("EARTH", "MARS").
+    dep_times_s : np.ndarray
+        Departure times [s past J2000 TDB], shape (m,).
+    tof_grid_s : np.ndarray
+        Times of flight [s], shape (n,).
+
+    Returns
+    -------
+    (dv_total, argmin)
+    """
+    from orbitsim.core.ephemeris import body_state
+    from orbitsim.core.constants import MU_SUN
+
+    m = len(dep_times_s)
+    n = len(tof_grid_s)
+    dv = np.full((m, n), np.inf, dtype=np.float64)
+
+    for i, t_dep in enumerate(dep_times_s):
+        dep_planet = body_state(dep_name, float(t_dep), center="SUN")
+        for j, tof in enumerate(tof_grid_s):
+            if tof <= 0:
+                continue
+            arr_planet = body_state(arr_name, float(t_dep + tof), center="SUN")
+            try:
+                v1, v2 = lambert(dep_planet.r, arr_planet.r, float(tof), MU_SUN)
+            except Exception:
+                continue
+            vinf_dep = np.linalg.norm(v1 - dep_planet.v)
+            vinf_arr = np.linalg.norm(v2 - arr_planet.v)
+            dv[i, j] = vinf_dep + vinf_arr
+
+    flat = int(np.argmin(dv))
+    return dv, (flat // n, flat % n)

@@ -56,3 +56,20 @@ def test_optimize_transfer_beats_or_matches_grid():
     assert sol.kind == "lambert"
     # Refined solution is no worse than the coarse grid minimum (+ small tolerance).
     assert sol.dv_total_mps <= dv_grid[i, j] * 1.01
+
+
+def test_earth_to_mars_porkchop_has_window():
+    import pytest
+    pytest.importorskip("skyfield")
+    from orbitsim.core.optimize import interplanetary_porkchop
+    # 2031 launch window scan, TOF 150–300 days.
+    base = 31.0 * 365.25 * 86400.0
+    dep_times = np.linspace(base, base + 2 * 365.25 * 86400.0, 24)  # 2 years
+    tof_grid = np.linspace(150 * 86400.0, 300 * 86400.0, 16)
+    dv, (i, j) = interplanetary_porkchop("EARTH", "MARS", dep_times, tof_grid)
+    assert dv.shape == (24, 16)
+    finite = dv[np.isfinite(dv)]
+    assert finite.size > 0
+    # Minimum heliocentric transfer dv (departure + arrival v-infinity) is in a
+    # physically plausible band — a few km/s to low tens of km/s.
+    assert 2.0e3 < dv[i, j] < 5.0e4
