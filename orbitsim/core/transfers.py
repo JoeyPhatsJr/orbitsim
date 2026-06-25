@@ -4,6 +4,8 @@ import numpy as np
 
 from orbitsim.core.maneuvers import ManeuverNode
 from lamberthub import izzo2015
+from orbitsim.core.state import StateVector
+from orbitsim.core.propagate import propagate_kepler
 
 
 @dataclass(frozen=True)
@@ -151,3 +153,46 @@ def lambert(
     r2 = np.asarray(r2_m, dtype=np.float64)
     v1, v2 = izzo2015(mu, r1, r2, tof_s, M=revs, prograde=prograde)
     return np.asarray(v1, dtype=np.float64), np.asarray(v2, dtype=np.float64)
+
+
+def intercept(
+    state_chaser: StateVector,
+    state_target: StateVector,
+    tof_s: float,
+    prograde: bool = True,
+) -> TransferSolution:
+    """Plan a Lambert intercept of `state_target` by `state_chaser` in tof_s.
+
+    Returns a two-burn TransferSolution: the departure delta-V (v1 - v_chaser)
+    and the arrival match delta-V (v_target_at_arrival - v2). Burn delta-V
+    components are stored as inertial magnitudes in the prograde slot for
+    simplicity (the renderer converts to RTN when building editable nodes).
+
+    Parameters
+    ----------
+    state_chaser, state_target : StateVector
+    tof_s : float
+    prograde : bool
+
+    Returns
+    -------
+    TransferSolution
+    """
+    target_future = propagate_kepler(state_target, tof_s)
+    v1, v2 = lambert(state_chaser.r, target_future.r, tof_s, state_chaser.mu, prograde=prograde)
+
+    dv_dep = np.linalg.norm(v1 - state_chaser.v)
+    dv_arr = np.linalg.norm(target_future.v - v2)
+
+    burns = [
+        ManeuverNode(epoch_s=state_chaser.epoch_s, dv_prograde_mps=float(dv_dep),
+                     dv_normal_mps=0.0, dv_radial_mps=0.0),
+        ManeuverNode(epoch_s=state_chaser.epoch_s + tof_s, dv_prograde_mps=float(dv_arr),
+                     dv_normal_mps=0.0, dv_radial_mps=0.0),
+    ]
+    return TransferSolution(
+        burns=burns,
+        dv_total_mps=float(dv_dep + dv_arr),
+        time_of_flight_s=float(tof_s),
+        kind="lambert",
+    )
