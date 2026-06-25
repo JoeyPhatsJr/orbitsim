@@ -28,6 +28,7 @@ from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
+from orbitsim.render.skybox import build_starfield
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -204,8 +205,17 @@ class OrbitApp(ShowBase):
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
 
+        # Star background (both modes): inertial, camera-centered, behind everything.
+        self.starfield = build_starfield(self)
+        self.starfield.reparent_to(self.render)
+
         self._setup_input()
         self.task_mgr.add(self._update, "update")
+
+    def _update_starfield(self) -> None:
+        """Keep the sky centered on the camera so stars sit at infinity (no parallax)."""
+        if getattr(self, "starfield", None) is not None:
+            self.starfield.set_pos(self.camera.get_pos(self.render))
 
     # Distinct colours for the Sun + 8 planets (constant on-screen marker size).
     _PLANET_COLORS = {
@@ -583,6 +593,7 @@ class OrbitApp(ShowBase):
             self._preview_np = None
 
         self._apply_mouse_orbit()
+        self._update_starfield()
         self.rig.apply()
 
         v0 = self.world.vessels[0]
@@ -635,6 +646,7 @@ class OrbitApp(ShowBase):
 
         self.central_np.set_pos(*self.transform.to_render(np.zeros(3)))
         self._apply_mouse_orbit()
+        self._update_starfield()
         self.rig.apply()
 
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
