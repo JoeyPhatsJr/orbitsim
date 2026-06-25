@@ -75,3 +75,47 @@ def test_vessel_delta_v_zero_without_fuel():
     v.dry_mass_kg = 1000.0
     v.fuel_mass_kg = 0.0
     assert v.delta_v_remaining == 0.0
+
+
+def test_world_step_burn_drains_fuel_and_adds_speed():
+    v = _circular_vessel()
+    v.dry_mass_kg = 1000.0
+    v.fuel_mass_kg = 500.0
+    v.max_thrust_n = 30000.0
+    v.exhaust_velocity_mps = 3000.0
+    v.throttle = 1.0
+    v.sas_mode = "PROGRADE"
+    # Point the nose prograde so the burn adds energy.
+    world = World(central=EARTH, vessels=[v])
+    speed0 = v.state.v_mag
+    fuel0 = v.fuel_mass_kg
+    # Slew first so the nose is prograde, then a short burn.
+    for _ in range(60):
+        world.step(0.1)
+    assert v.fuel_mass_kg < fuel0          # fuel burned
+    assert v.state.v_mag > speed0          # prograde burn sped us up
+    assert world.any_thrusting() is True
+
+
+def test_world_step_coast_is_on_rails():
+    v = _circular_vessel()
+    v.throttle = 0.0
+    world = World(central=EARTH, vessels=[v])
+    period = state_to_elements(v.state).period_s
+    world.step(period)
+    pos_err = np.linalg.norm(world.vessels[0].state.r - np.array([7.0e6, 0.0, 0.0]))
+    assert pos_err < 1e-3                   # analytic period closure preserved
+    assert world.any_thrusting() is False
+
+
+def test_world_step_slews_attitude_toward_prograde():
+    from orbitsim.core.attitude import nose_direction
+    v = _circular_vessel()
+    v.sas_mode = "PROGRADE"
+    v.throttle = 0.0                        # slewing works while coasting
+    world = World(central=EARTH, vessels=[v])
+    for _ in range(100):
+        world.step(0.1)
+    prograde = v.state.v / v.state.v_mag
+    # Nose should have turned to (near) prograde.
+    assert np.dot(nose_direction(v.orientation), prograde) > 0.999

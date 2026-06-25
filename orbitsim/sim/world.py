@@ -74,7 +74,8 @@ class Vessel:
 
 
 class World:
-    """Holds the central body and all vessels; advances them analytically.
+    """Holds the central body and all vessels; advances them analytically or
+    numerically.
 
     Parameters
     ----------
@@ -88,6 +89,47 @@ class World:
         self.vessels = vessels
 
     def step(self, sim_dt_s: float) -> None:
-        """Propagate every vessel forward by sim_dt_s seconds (on-rails)."""
+        """Advance every vessel by sim_dt_s: slew attitude, then translate.
+
+        Coasting vessels propagate analytically (on rails); thrusting vessels
+        (throttle>0 and fuel) integrate numerically under gravity + thrust.
+        """
+        from orbitsim.core.flight import integrate_powered
+        from orbitsim.core.attitude import (
+            slew_toward, sas_target_dir, nose_direction,
+        )
+
         for vessel in self.vessels:
-            vessel.state = propagate_kepler(vessel.state, sim_dt_s)
+            # 1) Attitude: slew toward the SAS hold direction (if any) each tick.
+            if vessel.sas_mode not in ("OFF", "STABILITY"):
+                try:
+                    target = sas_target_dir(vessel.sas_mode, vessel.state)
+                except ValueError:
+                    target = None
+                if target is not None:
+                    vessel.orientation = slew_toward(
+                        vessel.orientation, target,
+                        vessel.max_turn_rate_radps, sim_dt_s
+                    )
+            # 2) Translation.
+            if vessel.throttle > 0.0 and vessel.fuel_mass_kg > 0.0:
+                new_state, new_fuel = integrate_powered(
+                    vessel.state,
+                    dry_mass_kg=vessel.dry_mass_kg,
+                    fuel_kg=vessel.fuel_mass_kg,
+                    thrust_dir_unit=nose_direction(vessel.orientation),
+                    throttle=vessel.throttle,
+                    max_thrust_n=vessel.max_thrust_n,
+                    ve_mps=vessel.exhaust_velocity_mps,
+                    dt_s=sim_dt_s,
+                )
+                vessel.state = new_state
+                vessel.fuel_mass_kg = new_fuel
+            else:
+                vessel.state = propagate_kepler(vessel.state, sim_dt_s)
+
+    def any_thrusting(self) -> bool:
+        """True if any vessel is currently producing thrust (throttle>0 and
+        fuel)."""
+        return any(v.throttle > 0.0 and v.fuel_mass_kg > 0.0
+                   for v in self.vessels)
