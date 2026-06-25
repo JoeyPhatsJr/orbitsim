@@ -70,7 +70,7 @@ def test_free_space_burn_matches_rocket_equation():
     )
     expected_dv = ve * np.log((dry + fuel0) / dry)         # 3000*ln(2)=2079.44
     assert abs(out.v[0] - expected_dv) / expected_dv < 1e-3
-    assert abs(fuel) < 1.0                                  # fuel essentially depleted
+    assert abs(fuel) < 1e-6                                 # fuel depleted
 
 
 def test_burn_stops_when_fuel_exhausted():
@@ -85,5 +85,5 @@ def test_burn_stops_when_fuel_exhausted():
         substeps=2000,
     )
     expected_dv = 3000.0 * np.log(1100.0 / 1000.0)
-    assert fuel < 1e-6
+    assert fuel == 0.0
     assert abs(out.v[0] - expected_dv) / expected_dv < 2e-3

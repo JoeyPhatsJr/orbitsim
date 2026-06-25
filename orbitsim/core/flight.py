@@ -30,18 +30,12 @@ def thrust_accel_mps2(throttle: float, max_thrust_n: float, mass_kg: float
     return float(throttle * max_thrust_n / mass_kg)
 
 
-def _accel(r, v, fuel, dry_mass_kg, thrust_dir_unit, throttle, max_thrust_n,
-           ve_mps, mu):
-    """Acceleration [m/s^2] = two-body gravity + thrust (thrust off when fuel
-    <= 0)."""
-    a = np.zeros(3)
+def _gravity_accel(r, mu):
+    """Two-body gravitational acceleration [m/s^2] (zero when mu == 0)."""
     rn = np.linalg.norm(r)
     if mu != 0.0 and rn > 0.0:
-        a = a - mu * r / rn**3
-    if fuel > 0.0 and throttle > 0.0:
-        mass = dry_mass_kg + fuel
-        a = a + (throttle * max_thrust_n / mass) * thrust_dir_unit
-    return a
+        return -mu * r / rn**3
+    return np.zeros(3)
 
 
 def integrate_powered(
@@ -55,17 +49,19 @@ def integrate_powered(
     dt_s: float,
     substeps: int = 50,
 ) -> tuple:
-    """Integrate r, v, fuel over dt_s under two-body gravity + thrust
-    (fixed-step RK4).
+    """Integrate r, v, fuel over dt_s under two-body gravity + thrust.
 
-    Mass decreases as fuel burns (real rocket equation). Thrust direction is
-    held constant over the interval (the sim layer slews attitude separately).
-    When fuel reaches zero, thrust stops mid-interval.
+    Operator splitting per substep: the thrust contributes an *exact*
+    rocket-equation velocity impulse over the burn portion of the substep
+    (so the total delta-V telescopes to ve*ln(m0/mf) and fuel reaches exactly
+    zero, independent of how depletion aligns with the grid), then the state
+    drifts under two-body gravity via RK4. Thrust direction is held constant
+    over the interval (the sim layer slews attitude separately).
 
     Returns
     -------
     (StateVector, float)
-        New state (same mu/epoch_s+dt) and remaining fuel [kg].
+        New state (same mu, epoch_s + dt_s) and remaining fuel [kg].
     """
     if substeps < 1:
         raise ValueError("substeps must be >= 1")
@@ -77,77 +73,27 @@ def integrate_powered(
     h = dt_s / substeps
     mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
 
-    def deriv(r_, v_, fuel_):
-        a = _accel(r_, v_, fuel_, dry_mass_kg, thrust_dir_unit, throttle,
-                   max_thrust_n, ve_mps, mu)
-        df = -mdot if fuel_ > 0.0 else 0.0
-        return v_, a, df
-
     for _ in range(substeps):
-        # If fuel is zero, no more thrust; just coast.
-        if fuel <= 0.0:
-            fuel = 0.0
-            k1r, k1v, _ = deriv(r, v, 0.0)
-            k2r, k2v, _ = deriv(r + 0.5 * h * k1r, v + 0.5 * h * k1v, 0.0)
-            k3r, k3v, _ = deriv(r + 0.5 * h * k2r, v + 0.5 * h * k2v, 0.0)
-            k4r, k4v, _ = deriv(r + h * k3r, v + h * k3v, 0.0)
-            r = r + (h / 6.0) * (k1r + 2 * k2r + 2 * k3r + k4r)
-            v = v + (h / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
-        else:
-            # Standard RK4 step, but check if fuel will go negative.
-            k1r, k1v, k1f = deriv(r, v, fuel)
-            # Predict if we would go negative at any RK stage.
-            test_f1 = fuel + 0.5 * h * k1f
-            if test_f1 < 0.0:
-                # Fuel will deplete this step; calculate time to depletion.
-                # mdot is constant, so t_deplete = fuel / mdot.
-                t_burn = fuel / mdot if mdot > 0.0 else h
-                # Burn for t_burn, then coast for (h - t_burn).
-                h_burn = min(t_burn, h)
-                # One substep of burning.
-                k1r_b, k1v_b, k1f_b = deriv(r, v, fuel)
-                k2r_b, k2v_b, k2f_b = deriv(r + 0.5 * h_burn * k1r_b,
-                                            v + 0.5 * h_burn * k1v_b,
-                                            fuel + 0.5 * h_burn * k1f_b)
-                k3r_b, k3v_b, k3f_b = deriv(r + 0.5 * h_burn * k2r_b,
-                                            v + 0.5 * h_burn * k2v_b,
-                                            fuel + 0.5 * h_burn * k2f_b)
-                k4r_b, k4v_b, k4f_b = deriv(r + h_burn * k3r_b,
-                                            v + h_burn * k3v_b,
-                                            fuel + h_burn * k3f_b)
-                r = r + (h_burn / 6.0) * (k1r_b + 2 * k2r_b + 2 * k3r_b + k4r_b)
-                v = v + (h_burn / 6.0) * (k1v_b + 2 * k2v_b + 2 * k3v_b + k4v_b)
-                fuel = max(0.0, fuel + (h_burn / 6.0) * (k1f_b + 2 * k2f_b +
-                                                         2 * k3f_b + k4f_b))
-                # Coast for the remainder.
-                h_coast = h - h_burn
-                if h_coast > 0.0:
-                    k1r_c, k1v_c, _ = deriv(r, v, 0.0)
-                    k2r_c, k2v_c, _ = deriv(r + 0.5 * h_coast * k1r_c,
-                                            v + 0.5 * h_coast * k1v_c, 0.0)
-                    k3r_c, k3v_c, _ = deriv(r + 0.5 * h_coast * k2r_c,
-                                            v + 0.5 * h_coast * k2v_c, 0.0)
-                    k4r_c, k4v_c, _ = deriv(r + h_coast * k3r_c,
-                                            v + h_coast * k3v_c, 0.0)
-                    r = r + (h_coast / 6.0) * (k1r_c + 2 * k2r_c + 2 * k3r_c +
-                                               k4r_c)
-                    v = v + (h_coast / 6.0) * (k1v_c + 2 * k2v_c + 2 * k3v_c +
-                                               k4v_c)
-            else:
-                # Normal RK4 step.
-                k2r, k2v, k2f = deriv(r + 0.5 * h * k1r, v + 0.5 * h * k1v,
-                                      test_f1)
-                test_f2 = fuel + 0.5 * h * k2f
-                k3r, k3v, k3f = deriv(r + 0.5 * h * k2r, v + 0.5 * h * k2v,
-                                      test_f2)
-                test_f3 = fuel + h * k3f
-                k4r, k4v, k4f = deriv(r + h * k3r, v + h * k3v, test_f3)
-                r = r + (h / 6.0) * (k1r + 2 * k2r + 2 * k3r + k4r)
-                v = v + (h / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
-                fuel = max(0.0, fuel + (h / 6.0) * (k1f + 2 * k2f + 2 * k3f +
-                                                    k4f))
+        # Thrust: exact rocket-equation impulse over the burning portion of h.
+        if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
+            t_burn = min(h, fuel / mdot)
+            m_start = dry_mass_kg + fuel
+            m_end = m_start - mdot * t_burn
+            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
+            fuel = max(0.0, fuel - mdot * t_burn)
+        # Gravity drift: RK4 on the two-body field for the full substep.
+        k1r = v
+        k1v = _gravity_accel(r, mu)
+        k2r = v + 0.5 * h * k1v
+        k2v = _gravity_accel(r + 0.5 * h * k1r, mu)
+        k3r = v + 0.5 * h * k2v
+        k3v = _gravity_accel(r + 0.5 * h * k2r, mu)
+        k4r = v + h * k3v
+        k4v = _gravity_accel(r + h * k3r, mu)
+        r = r + (h / 6.0) * (k1r + 2 * k2r + 2 * k3r + k4r)
+        v = v + (h / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
 
     return (
         StateVector(r=r, v=v, mu=mu, epoch_s=state.epoch_s + dt_s),
-        max(0.0, fuel),
+        float(fuel),
     )
