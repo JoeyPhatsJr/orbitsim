@@ -1,87 +1,227 @@
-"""A 3D navball: a sphere oriented to the ship attitude, with velocity / normal /
-radial markers and a fixed nose reticle, rendered in a bottom-center display region."""
+"""A 3D attitude navball, KSP-style: a textured sky/ground sphere oriented by the
+full ship quaternion, with the nose fixed at screen center, orbital-frame markers
+(prograde/retrograde/normal/radial), a bezel ring, and a center reticle.
+
+The ball lives in its own bottom-center display region with an orthographic camera,
+so it overlays the world. The display region is kept square in *pixels* (scaling
+with the window) so the ball always renders as a circle, never an ellipse."""
+from math import sin, cos, pi
+
 import numpy as np
-from panda3d.core import NodePath, OrthographicLens, TextNode, Vec3
+from panda3d.core import (
+    NodePath, OrthographicLens, Vec3, Texture, Mat4, LineSegs,
+)
 
 from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.core.attitude import nose_direction, sas_target_dir
+from orbitsim.core.attitude import nose_direction, sas_target_dir, quat_rotate_vector
 
-# Markers shown on the ball, by SAS mode -> color.
+# Orbital-frame markers shown on the ball -> distinct colors (color is the only cue,
+# so prograde/retrograde etc. get clearly different hues).
 _MARKER_COLORS = {
-    "PROGRADE": (0.2, 1.0, 0.3, 1), "RETROGRADE": (0.2, 1.0, 0.3, 1),
-    "NORMAL": (0.7, 0.3, 1.0, 1), "ANTINORMAL": (0.7, 0.3, 1.0, 1),
-    "RADIAL_OUT": (0.2, 0.8, 1.0, 1), "RADIAL_IN": (0.2, 0.8, 1.0, 1),
+    "PROGRADE": (0.25, 1.0, 0.35, 1),
+    "RETROGRADE": (1.0, 0.35, 0.30, 1),
+    "NORMAL": (0.72, 0.40, 1.0, 1),
+    "ANTINORMAL": (1.0, 0.45, 0.90, 1),
+    "RADIAL_OUT": (0.30, 0.85, 1.0, 1),
+    "RADIAL_IN": (1.0, 0.72, 0.20, 1),
 }
-_FILM = 2.6          # orthographic film size (ball has radius 1)
-_CAM_DIST = 10.0     # ortho camera distance along -Y
+_FILM = 2.6            # orthographic film size (ball has radius 1)
+_CAM_DIST = 10.0       # ortho camera distance along -Y
+_BALL_FRAC_H = 0.30    # navball height as a fraction of the window height
+
+
+def ship_axes(q):
+    """Body (starboard, nose, dorsal) axes of orientation q, as inertial unit vectors."""
+    right = quat_rotate_vector(q, np.array([1.0, 0.0, 0.0]))
+    nose = nose_direction(q)
+    up = quat_rotate_vector(q, np.array([0.0, 1.0, 0.0]))
+    return right, nose, up
+
+
+def project_direction(d, right, nose, up):
+    """Project an inertial direction d into ball/screen space: (d·right, -(d·nose),
+    d·up). The nose maps to screen center (0,-1,0); near-hemisphere points have y<0."""
+    return np.array([np.dot(d, right), -np.dot(d, nose), np.dot(d, up)])
+
+
+def _build_navball_texture(w: int = 1024, h: int = 512) -> Texture:
+    """Procedural equirectangular navball map: sky (top) / ground (bottom) split by
+    a horizon line, with a pitch ladder (±30°, ±60°) and heading ticks at the equator.
+
+    Row 0 of the array is the north pole (lat +90°); it is flipped to Panda's
+    bottom-up RAM convention before upload."""
+    sky_h = np.array([66, 135, 205], float)     # sky at the horizon
+    sky_p = np.array([26, 60, 138], float)       # sky at the pole (darker)
+    gnd_h = np.array([150, 116, 74], float)       # ground at the horizon
+    gnd_p = np.array([92, 66, 42], float)         # ground at the pole
+    horizon = np.array([245, 245, 245], float)
+    pitch = np.array([220, 224, 230], float)
+    tick = np.array([235, 235, 240], float)
+
+    lat = 90.0 - 180.0 * np.arange(h) / (h - 1)   # row 0 = +90°, last row = -90°
+    t = lat / 90.0                                # +1 north pole … -1 south pole
+    col = np.empty((h, 3), float)
+    north = t >= 0.0
+    tn = t[north][:, None]
+    col[north] = sky_h * (1.0 - tn) + sky_p * tn
+    ts = -t[~north][:, None]
+    col[~north] = gnd_h * (1.0 - ts) + gnd_p * ts
+    img = np.repeat(col[:, None, :], w, axis=1)   # (h, w, 3)
+
+    def row_for(lat_deg: float) -> int:
+        return int(round((90.0 - lat_deg) / 180.0 * (h - 1)))
+
+    def band(lat_deg: float, color, half_px: int) -> None:
+        r = row_for(lat_deg)
+        img[max(0, r - half_px):r + half_px + 1, :, :] = color
+
+    for lat_deg in (30.0, 60.0, -30.0, -60.0):
+        band(lat_deg, pitch, 1)
+    band(0.0, horizon, 2)
+
+    hrow = row_for(0.0)
+    for k in range(24):                           # heading ticks every 15° of longitude
+        c = int(round(k / 24.0 * w)) % w
+        ext = 18 if k % 6 == 0 else 9             # taller at the four cardinals
+        img[max(0, hrow - ext):hrow + ext + 1, max(0, c - 1):c + 2, :] = tick
+
+    data = np.ascontiguousarray(np.flipud(img).astype(np.uint8))
+    tex = Texture("navball")
+    tex.setup_2d_texture(w, h, Texture.T_unsigned_byte, Texture.F_rgb)
+    tex.set_ram_image_as(data.tobytes(), "RGB")
+    tex.set_minfilter(Texture.FT_linear)
+    tex.set_magfilter(Texture.FT_linear)
+    return tex
 
 
 class Navball:
-    """Bottom-center attitude sphere with its own camera + display region so it
-    overlays the world without being affected by the world camera."""
+    """Bottom-center attitude sphere with its own camera + display region.
+
+    The ball is oriented by the full ship quaternion so pitch, yaw, and roll all
+    read; the nose is fixed at screen center (the reticle). Orbital markers float
+    on the ball at their inertial directions, projected into the ball frame."""
 
     def __init__(self, base) -> None:
         self.base = base
         self.root = NodePath("navball_root")
-        frame = (0.40, 0.60, 0.0, 0.26)   # left, right, bottom, top (window fraction)
-        self.cam = base.make_camera(base.win, displayRegion=frame)
-        self.cam.node().get_display_region(0).set_sort(20)
-        lens = OrthographicLens()
-        lens.set_film_size(_FILM, _FILM)
-        self.cam.node().set_lens(lens)
+        self.cam = base.make_camera(base.win)
+        self.dr = self.cam.node().get_display_region(0)
+        self.dr.set_sort(20)
+        self.lens = OrthographicLens()
+        self.lens.set_film_size(_FILM, _FILM)
+        self.cam.node().set_lens(self.lens)
         self.cam.reparent_to(self.root)
         self.cam.set_pos(0, -_CAM_DIST, 0)
         self.cam.look_at(0, 0, 0)
 
-        # The ball (its own pivot we rotate to the ship attitude).
-        self.ball = make_uv_sphere(1.0, 18, 36)
+        # The textured ball (we rotate it to the ship attitude each frame).
+        self.ball = make_uv_sphere(1.0, 48, 96, with_uv=True)
         self.ball.reparent_to(self.root)
         self.ball.set_light_off()
-        self.ball.set_color(0.25, 0.45, 0.75, 1.0)   # blue ball
-        # A bright pole cap so the rotation is legible.
-        pole = make_uv_sphere(0.14, 8, 12)
-        pole.reparent_to(self.ball)
-        pole.set_pos(0, 0, 1.0)
-        pole.set_color(0.95, 0.9, 0.4, 1)
-        pole.set_light_off()
+        self.ball.set_texture(_build_navball_texture())
 
-        # Orbital-frame markers (parented to root, not the ball: they live in the
-        # orbital frame, independent of body roll).
+        # Orbital-frame markers (parented to root; positioned in the ball frame).
         self._markers = {}
         for mode, col in _MARKER_COLORS.items():
-            m = make_uv_sphere(0.1, 6, 10)
+            m = make_uv_sphere(0.11, 8, 12)
             m.reparent_to(self.root)
             m.set_color(*col)
             m.set_light_off()
             self._markers[mode] = m
 
-        # Fixed nose reticle (screen center, in front of the ball).
-        tn = TextNode("reticle")
-        tn.set_text("[ ]")
-        tn.set_text_color(1, 1, 1, 1)
-        tn.set_align(TextNode.ACenter)
-        self.reticle = self.root.attach_new_node(tn)
-        self.reticle.set_scale(0.35)
-        self.reticle.set_pos(0.0, -_CAM_DIST + 1.0, -0.12)
-        self.reticle.set_billboard_point_eye()
+        self._build_bezel()
+        self._build_reticle()
+        self._layout()
+        base.accept("window-event", self._layout)
+
+    def _overlay(self, np_: NodePath) -> NodePath:
+        """Draw a fixed 2D-ish overlay (bezel/reticle) in front of the ball."""
+        np_.set_light_off()
+        np_.set_bin("fixed", 30)
+        np_.set_depth_test(False)
+        np_.set_depth_write(False)
+        return np_
+
+    def _build_bezel(self) -> None:
+        ls = LineSegs()
+        ls.set_thickness(2.5)
+        ls.set_color(0.78, 0.81, 0.88, 1.0)
+        n, rad, y = 72, 1.18, -1.5
+        ls.move_to(rad, y, 0.0)
+        for i in range(1, n + 1):
+            a = 2.0 * pi * i / n
+            ls.draw_to(rad * cos(a), y, rad * sin(a))
+        self.bezel = self._overlay(self.root.attach_new_node(ls.create()))
+
+    def _build_reticle(self) -> None:
+        ls = LineSegs()
+        ls.set_thickness(2.0)
+        ls.set_color(1.0, 0.92, 0.25, 1.0)
+        n, rad, y = 24, 0.12, -2.0
+        ls.move_to(rad, y, 0.0)
+        for i in range(1, n + 1):
+            a = 2.0 * pi * i / n
+            ls.draw_to(rad * cos(a), y, rad * sin(a))
+        for ax, az in ((1, 0), (-1, 0), (0, 1), (0, -1)):     # cross ticks
+            ls.move_to(ax * rad, y, az * rad)
+            ls.draw_to(ax * rad * 1.8, y, az * rad * 1.8)
+        self.reticle = self._overlay(self.root.attach_new_node(ls.create()))
+
+    def _layout(self, *args) -> None:
+        """Keep the display region square in pixels (so the ball is a circle) and
+        scale it with the window: bottom-center, height = _BALL_FRAC_H of the window."""
+        win = self.base.win
+        w, h = win.get_x_size(), win.get_y_size()
+        if w <= 0 or h <= 0:
+            return
+        side_px = _BALL_FRAC_H * h
+        half_w = (side_px / w) / 2.0
+        self.dr.set_dimensions(0.5 - half_w, 0.5 + half_w, 0.015, 0.015 + _BALL_FRAC_H)
 
     def update(self, *, orientation_q, state, target_pos=None) -> None:
-        """Rotate the ball to the ship attitude and place the orbital-frame markers.
+        """Orient the ball to the ship attitude and place the orbital markers.
 
-        The ball is oriented so its pole follows the ship nose, giving a quick read
-        of where the ship points; markers sit on the unit sphere at their orbital
-        directions and hide on the far hemisphere (toward the camera at -Y)."""
-        nose = np.asarray(nose_direction(orientation_q), dtype=np.float64)
-        self.ball.look_at(Vec3(*nose))
+        Projection: an inertial direction d maps into ball/screen space as
+        p(d) = (d·right, -(d·nose), d·up), where right/up/nose are the ship body
+        axes in inertial coords. So the nose lands at screen center (0,-1,0) under
+        the reticle, screen-up follows the ship's dorsal axis (roll reads), and
+        markers on the near hemisphere (p_y < 0) are visible.
+
+        The painted ball is referenced to the *local horizon* (RTN), not the
+        celestial pole: sky (texture +Z) = radial-out, heading 0 = prograde. So
+        flying prograde-and-level puts the horizon across the middle, like KSP."""
+        q = np.asarray(orientation_q, dtype=np.float64)
+        b_right, b_nose, b_up = ship_axes(q)
+
+        def proj(d):
+            return project_direction(d, b_right, b_nose, b_up)
+
+        # Local-horizon basis (inertial): up = radial-out, heading 0 = prograde.
+        v = np.asarray(state.v, dtype=np.float64)
+        v_hat = v / np.linalg.norm(v)
+        radial_out = np.cross(v, np.cross(state.r, v))
+        radial_out = radial_out / np.linalg.norm(radial_out)
+        east = np.cross(radial_out, v_hat)   # completes the right-handed horizon frame
+
+        # Ball transform: paint the horizon frame (prograde, east, radial-out) through
+        # the same projection as the markers, so the sphere and markers stay registered.
+        c0, c1, c2 = proj(v_hat), proj(east), proj(radial_out)
+        self.ball.set_mat(Mat4(
+            c0[0], c1[0], c2[0], 0.0,
+            c0[1], c1[1], c2[1], 0.0,
+            c0[2], c1[2], c2[2], 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ))
+
         for mode, marker in self._markers.items():
             try:
                 d = np.asarray(sas_target_dir(mode, state, target_pos), dtype=np.float64)
             except ValueError:
                 marker.hide()
                 continue
-            marker.set_pos(Vec3(*d))
-            # Hide markers on the far side of the ball (those with +Y, away from camera).
-            if d[1] > 0.35:
+            p = proj(d)
+            marker.set_pos(p[0], p[1], p[2])
+            if p[1] > 0.2:               # far hemisphere (behind the ball): hide
                 marker.hide()
             else:
                 marker.show()
