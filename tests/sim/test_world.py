@@ -53,3 +53,25 @@ def test_vessel_node_lists_are_independent():
 
     a.nodes.append(ManeuverNode(epoch_s=0.0, dv_prograde_mps=1.0, dv_normal_mps=0.0, dv_radial_mps=0.0))
     assert b.nodes == []
+
+
+def test_vessel_propulsion_defaults_and_derived():
+    from orbitsim.core.attitude import quat_identity
+    v = _circular_vessel()
+    # New fields exist with defaults.
+    assert v.throttle == 0.0
+    assert v.sas_mode == "OFF"
+    assert np.allclose(v.orientation, quat_identity())
+    # Configure a rocket and check derived quantities.
+    v.dry_mass_kg = 1000.0
+    v.fuel_mass_kg = 1000.0
+    v.exhaust_velocity_mps = 3000.0
+    assert v.mass_kg == 2000.0
+    assert abs(v.delta_v_remaining - 3000.0 * np.log(2.0)) < 1e-6
+
+
+def test_vessel_delta_v_zero_without_fuel():
+    v = _circular_vessel()
+    v.dry_mass_kg = 1000.0
+    v.fuel_mass_kg = 0.0
+    assert v.delta_v_remaining == 0.0
