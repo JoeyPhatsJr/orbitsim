@@ -228,11 +228,20 @@ class OrbitApp(ShowBase):
         self._planet_nps = []
         self._planet_labels = []
         for body in self._planet_bodies:
-            marker = make_uv_sphere(1.0, 10, 14)
+            is_earth = body.name == "Earth"
+            marker = make_uv_sphere(1.0, 12, 16, with_uv=is_earth)
             marker.reparent_to(self.render)
             marker.set_color(*self._PLANET_COLORS.get(body.name, (0.8, 0.8, 0.8, 1.0)))
             marker.set_light_off()
             marker.set_scale(8.0 if body.name == "Sun" else 4.0)
+            if is_earth:
+                from panda3d.core import Filename
+                from orbitsim.render.textures import texture_path
+
+                p = texture_path("earth_day")
+                if p is not None:
+                    marker.set_texture(self.loader.load_texture(Filename.from_os_specific(p)))
+                    marker.set_color(1, 1, 1, 1)
             self._planet_nps.append(marker)
             # 3D billboard label on render (tracks the marker, faces the camera).
             tn = TextNode(f"label_{body.name}")
