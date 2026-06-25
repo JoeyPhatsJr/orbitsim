@@ -12,22 +12,33 @@ def _circular(r_m):
 
 
 def test_porkchop_minimum_near_hohmann():
-    """The grid minimum should find a sensible transfer between two coplanar circular orbits."""
+    """The grid minimum for two coplanar circular orbits should match Hohmann.
+
+    Crucial: the departure axis must span a full *synodic* period. A Hohmann-cost
+    transfer only exists when the target happens to sit ~180 deg ahead at arrival,
+    and that phasing recurs every synodic period T_syn = 2*pi / |w1 - w2|. Scanning a
+    narrower window (e.g. one Hohmann time-of-flight) never catches the right phase,
+    so the grid minimum there is ~2x Hohmann -- a property of the *geometry*, not the
+    solver. Over a synodic period the true ~1.0x Hohmann basin appears.
+    """
     r1, r2 = 7000e3, 14000e3
     dep = _circular(r1)
     arr_circular_v = np.sqrt(MU_EARTH / r2)
-    # Target at r2 in circular orbit
     arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, arr_circular_v, 0.0]), mu=MU_EARTH)
 
     h = hohmann(r1, r2, MU_EARTH)
-    dep_times = np.linspace(0.0, h.time_of_flight_s, 8)
-    tof_grid = np.linspace(0.5 * h.time_of_flight_s, 1.5 * h.time_of_flight_s, 20)
+    w1 = np.sqrt(MU_EARTH / r1**3)
+    w2 = np.sqrt(MU_EARTH / r2**3)
+    t_syn = 2.0 * np.pi / abs(w1 - w2)
+
+    dep_times = np.linspace(0.0, t_syn, 20)
+    tof_grid = np.linspace(0.5 * h.time_of_flight_s, 1.5 * h.time_of_flight_s, 30)
 
     dv, (i, j) = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH)
     assert dv.shape == (len(dep_times), len(tof_grid))
     assert np.isfinite(dv[i, j])
-    # The best grid cell should represent a feasible transfer (positive cost).
-    assert dv[i, j] > 0
+    # The basin minimum should be within 10% of the ideal Hohmann total dv.
+    assert dv[i, j] < 1.1 * h.dv_total_mps
 
 
 def test_optimize_transfer_beats_or_matches_grid():
