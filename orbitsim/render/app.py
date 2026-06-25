@@ -16,6 +16,9 @@ from panda3d.core import (
 
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
+from orbitsim.core.attitude import (
+    quat_from_axis_angle, quat_multiply, quat_normalize, quat_rotate_vector, nose_direction,
+)
 from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
@@ -68,10 +71,8 @@ class OrbitApp(ShowBase):
             fg=(0.6, 0.7, 0.85, 1.0),
             parent=self.aspect2d,
         )
-        # delta-V budget control.
-        default_budget = (
-            self.world.vessels[0].delta_v_budget_mps if self.world.vessels else 2000.0
-        )
+        # Fuel-load control (delta-V is the derived readout via the rocket equation).
+        default_fuel = self.world.vessels[0].fuel_mass_kg if self.world.vessels else 800.0
         self._budget_label = OnscreenText(
             text="",
             pos=(0.0, 0.06),
@@ -83,14 +84,14 @@ class OrbitApp(ShowBase):
         self._budget_slider = DirectSlider(
             pos=(0.0, 0.0, -0.08),
             scale=0.6,
-            range=(0.0, 10000.0),
-            value=default_budget,
-            pageSize=250.0,
+            range=(0.0, 4000.0),
+            value=default_fuel,
+            pageSize=100.0,
             command=self._refresh_budget_label,
             parent=self.aspect2d,
         )
         hint = OnscreenText(
-            text="delta-V budget  (drag to set)",
+            text="fuel load  (drag to set)",
             pos=(0.0, -0.22),
             scale=0.045,
             fg=(0.6, 0.7, 0.85, 1.0),
@@ -107,13 +108,23 @@ class OrbitApp(ShowBase):
         self._refresh_budget_label()
 
     def _refresh_budget_label(self) -> None:
-        self._budget_label.setText(f"delta-V budget: {self._budget_slider['value']:,.0f} m/s")
+        from orbitsim.core.flight import tsiolkovsky_dv
+
+        fuel = float(self._budget_slider["value"])
+        if self.world.vessels:
+            v = self.world.vessels[0]
+            dry, ve = v.dry_mass_kg, v.exhaust_velocity_mps
+        else:
+            dry, ve = 1000.0, 3000.0
+        dv = tsiolkovsky_dv(ve, dry + fuel, dry) if fuel > 0 else 0.0
+        self._budget_label.setText(f"Fuel: {fuel:,.0f} kg   (dV {dv:,.0f} m/s)")
 
     def _on_play(self) -> None:
-        """Apply the chosen budget to all vessels, tear down the menu, start the sim."""
-        budget = float(self._budget_slider["value"])
+        """Apply the chosen fuel load to all vessels, tear down the menu, start the sim."""
+        fuel = float(self._budget_slider["value"])
         for vessel in self.world.vessels:
-            vessel.delta_v_budget_mps = budget
+            vessel.fuel_mass_kg = fuel
+        self._fuel_capacity = fuel if self.world.vessels else 0.0
         for node in self._title_nodes:
             node.destroy() if hasattr(node, "destroy") else node.remove_node()
         self._title_nodes = []
@@ -180,6 +191,11 @@ class OrbitApp(ShowBase):
             # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
             # *current* state (dt=0), so the executed orbit matches the live preview.
             self._build_maneuver_ui()
+            self._fuel_capacity = (
+                self.world.vessels[0].fuel_mass_kg if self.world.vessels else 0.0
+            )
+            from orbitsim.render.navball import Navball
+            self.navball = Navball(self)
 
         self._setup_input()
         self.task_mgr.add(self._update, "update")
@@ -341,16 +357,105 @@ class OrbitApp(ShowBase):
         self._release_jogs()
         self._refresh_readout()
 
+    MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
+
     def _setup_input(self) -> None:
         self.accept("wheel_up", lambda: self.rig.zoom(0.8))
         self.accept("wheel_down", lambda: self.rig.zoom(1.25))
+        # Right-click + drag orbits the camera (both sandbox and solar modes).
+        self._rmb_down = False
+        self._last_mouse = None
+        self.accept("mouse3", self._rmb, [True])
+        self.accept("mouse3-up", self._rmb, [False])
         self.accept("arrow_left", lambda: self.rig.orbit(-0.1, 0.0))
         self.accept("arrow_right", lambda: self.rig.orbit(0.1, 0.0))
         self.accept("arrow_up", lambda: self.rig.orbit(0.0, 0.1))
         self.accept("arrow_down", lambda: self.rig.orbit(0.0, -0.1))
-        self.accept("period", self.clock.warp_up)  # ">" key
+        self.accept("period", self._warp_up_guarded)  # ">" key (blocked while thrusting)
         self.accept("comma", self.clock.warp_down)  # "<" key
         self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
+
+        if not self.solar_system and self.world.vessels:
+            self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
+            for k in list(self._keys):
+                self.accept(k, self._set_key, [k, True])
+                self.accept(f"{k}-up", self._set_key, [k, False])
+            self.accept("z", self._throttle_full)
+            self.accept("x", self._throttle_cut)
+            self.accept("t", self._toggle_sas)
+            sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
+                        "RADIAL_IN", "RADIAL_OUT", "TARGET"]
+            for i, mode in enumerate(sas_keys, start=1):
+                self.accept(str(i), self._set_sas, [mode])
+
+    ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
+    THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
+
+    def _warp_up_guarded(self):
+        if not self.world.any_thrusting():
+            self.clock.warp_up()
+
+    def _rmb(self, down):
+        self._rmb_down = down
+        self._last_mouse = None
+
+    def _apply_mouse_orbit(self):
+        """Orbit the camera while the right mouse button is held and dragged."""
+        mw = self.mouseWatcherNode
+        if mw is None or not (self._rmb_down and mw.has_mouse()):
+            self._last_mouse = None
+            return
+        x, y = mw.get_mouse_x(), mw.get_mouse_y()
+        if self._last_mouse is not None:
+            dx = x - self._last_mouse[0]
+            dy = y - self._last_mouse[1]
+            self.rig.orbit(dx * self.MOUSE_ORBIT_SENS, dy * self.MOUSE_ORBIT_SENS)
+        self._last_mouse = (x, y)
+
+    def _set_key(self, key, down):
+        self._keys[key] = down
+
+    def _throttle_full(self):
+        self.world.vessels[0].throttle = 1.0
+
+    def _throttle_cut(self):
+        self.world.vessels[0].throttle = 0.0
+
+    def _toggle_sas(self):
+        v = self.world.vessels[0]
+        v.sas_mode = "STABILITY" if v.sas_mode == "OFF" else "OFF"
+
+    def _set_sas(self, mode):
+        self.world.vessels[0].sas_mode = mode
+
+    def _apply_flight_input(self, dt):
+        """Manual throttle trim + rotation from held keys (sandbox flight)."""
+        if self.solar_system or not self.world.vessels:
+            return
+        v = self.world.vessels[0]
+        k = self._keys
+        if k["shift"]:
+            v.throttle = min(1.0, v.throttle + self.THROTTLE_STEP * dt)
+        if k["control"]:
+            v.throttle = max(0.0, v.throttle - self.THROTTLE_STEP * dt)
+        ax = np.zeros(3)
+        if k["w"]:
+            ax = ax + np.array([1.0, 0.0, 0.0])    # pitch
+        if k["s"]:
+            ax = ax + np.array([-1.0, 0.0, 0.0])
+        if k["a"]:
+            ax = ax + np.array([0.0, 1.0, 0.0])    # yaw
+        if k["d"]:
+            ax = ax + np.array([0.0, -1.0, 0.0])
+        if k["q"]:
+            ax = ax + np.array([0.0, 0.0, 1.0])    # roll
+        if k["e"]:
+            ax = ax + np.array([0.0, 0.0, -1.0])
+        if np.linalg.norm(ax) > 0.0:
+            v.sas_mode = "OFF"                      # taking manual control
+            world_axis = quat_rotate_vector(v.orientation, ax)
+            dq = quat_from_axis_angle(world_axis, self.ROTATE_RATE_RADPS * dt)
+            v.orientation = quat_normalize(quat_multiply(dq, v.orientation))
 
     def _toggle_porkchop(self) -> None:
         """Build a porkchop plot (vessel 0 -> a higher circular orbit) and overlay it.
@@ -400,12 +505,17 @@ class OrbitApp(ShowBase):
 
     def _update(self, task):
         real_dt = _global_clock.get_dt()
-        sim_dt = self.clock.advance(real_dt)
 
         if self.solar_system:
+            self.clock.advance(real_dt)
             self._update_solar_system()
             return task.cont
 
+        # Flight input, then lock warp to 1x while thrusting (no RK4 through warp).
+        self._apply_flight_input(real_dt)
+        if self.world.any_thrusting() and self.clock.warp != 1.0:
+            self.clock.warp = 1.0
+        sim_dt = self.clock.advance(real_dt)
         self.world.step(sim_dt)
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
@@ -439,6 +549,7 @@ class OrbitApp(ShowBase):
             self._preview_np.remove_node()
             self._preview_np = None
 
+        self._apply_mouse_orbit()
         self.rig.apply()
 
         v0 = self.world.vessels[0]
@@ -458,6 +569,21 @@ class OrbitApp(ShowBase):
             apoapsis_m=ra - self.world.central.radius_m,
             period_s=period,
         )
+        g_local = self.world.central.mu / max(v0.state.r_mag, 1.0) ** 2
+        twr = (v0.max_thrust_n / (v0.mass_kg * g_local)) if v0.mass_kg > 0 else 0.0
+        cap = getattr(self, "_fuel_capacity", 0.0)
+        fuel_frac = v0.fuel_mass_kg / cap if cap > 0 else 0.0
+        self.hud.update_flight(
+            throttle=v0.throttle,
+            fuel_kg=v0.fuel_mass_kg,
+            fuel_frac=fuel_frac,
+            mass_kg=v0.mass_kg,
+            thrust_n=v0.max_thrust_n,
+            twr=twr,
+            dv_remaining=v0.delta_v_remaining,
+            warp_locked=self.world.any_thrusting(),
+        )
+        self.navball.update(orientation_q=v0.orientation, state=v0.state)
         return task.cont
 
     def _update_solar_system(self) -> None:
@@ -475,6 +601,7 @@ class OrbitApp(ShowBase):
             label.set_pos(rx, ry, rz + 6.0)
 
         self.central_np.set_pos(*self.transform.to_render(np.zeros(3)))
+        self._apply_mouse_orbit()
         self.rig.apply()
 
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)

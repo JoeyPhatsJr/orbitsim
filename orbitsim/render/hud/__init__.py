@@ -19,6 +19,17 @@ class Hud:
             mayChange=True,
             parent=base.a2dTopLeft,
         )
+        # Flight readout in the top-right corner.
+        self.flight = OnscreenText(
+            text="",
+            pos=(-0.05, -0.12),
+            scale=0.05,
+            fg=(0.8, 1.0, 0.8, 1),
+            shadow=(0, 0, 0, 1),
+            align=TextNode.ARight,
+            mayChange=True,
+            parent=base.a2dTopRight,
+        )
 
     def update(
         self,
@@ -41,3 +52,26 @@ class Hud:
             f"Period: {period_s / 60.0:,.1f} min",
         ]
         self.text.setText("\n".join(lines))
+
+    def update_flight(
+        self,
+        *,
+        throttle: float,
+        fuel_kg: float,
+        fuel_frac: float,
+        mass_kg: float,
+        thrust_n: float,
+        twr: float,
+        dv_remaining: float,
+        warp_locked: bool,
+    ) -> None:
+        lines = [
+            f"Throttle: {throttle * 100:,.0f}%",
+            f"Fuel: {fuel_frac * 100:,.0f}%  ({fuel_kg:,.0f} kg)",
+            f"Mass: {mass_kg:,.0f} kg",
+            f"Thrust: {thrust_n / 1000:,.1f} kN   TWR: {twr:,.2f}",
+            f"dV left: {dv_remaining:,.0f} m/s",
+        ]
+        if warp_locked:
+            lines.append("WARP LOCKED - thrusting")
+        self.flight.setText("\n".join(lines))

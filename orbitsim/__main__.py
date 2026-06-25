@@ -23,7 +23,16 @@ def _default_world() -> World:
         v=np.array([0.0, v_circ * 1.05, v_circ * 0.15]),
         mu=MU_EARTH,
     )
-    vessel = Vessel(name="Sandbox-1", state=state, delta_v_budget_mps=2000.0)
+    vessel = Vessel(
+        name="Sandbox-1",
+        state=state,
+        delta_v_budget_mps=2000.0,
+        dry_mass_kg=1000.0,
+        fuel_mass_kg=800.0,
+        max_thrust_n=30000.0,
+        exhaust_velocity_mps=3000.0,
+        max_turn_rate_radps=0.8,
+    )
     return World(central=EARTH, vessels=[vessel])
 
 
