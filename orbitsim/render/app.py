@@ -2,6 +2,7 @@
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectButton import DirectButton
+from direct.gui.DirectSlider import DirectSlider
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import ClockObject, AmbientLight, DirectionalLight, Vec4, TextNode
 
@@ -67,45 +68,46 @@ class OrbitApp(ShowBase):
         self._setup_input()
         self.task_mgr.add(self._update, "update")
 
-    STEP_MPS = 5.0  # delta-V nudge per +/- click
+    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
+    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
+    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
+    JOG_DEADZONE = 0.02  # |value| below this contributes no change
 
     def _build_maneuver_ui(self) -> None:
-        """Per-axis -/+ nudge buttons for RTN delta-V, an Execute button, and a readout."""
+        """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
+
+        Each slider is a rate control: hold it right to increase that delta-V component
+        (faster the further you push, exponentially), left to decrease. Releasing the
+        mouse springs the thumb back to center and the value stops changing.
+        """
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
         self._dv_value_text = {}
+        self._jog = {}
         rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
         for axis, label, z in rows:
             OnscreenText(
                 text=label,
-                pos=(-1.18, z - 0.015),
+                pos=(-1.22, z - 0.015),
                 scale=0.045,
                 fg=(1, 1, 1, 1),
                 align=TextNode.ALeft,
                 parent=self.a2dBottomRight,
             )
-            DirectButton(
-                text="-",
-                scale=0.06,
-                pos=(-0.60, 0.0, z),
-                command=self._nudge,
-                extraArgs=[axis, -1],
+            self._jog[axis] = DirectSlider(
+                pos=(-0.62, 0.0, z),
+                scale=0.34,
+                range=(-1.0, 1.0),
+                value=0.0,
+                pageSize=0.25,
                 parent=self.a2dBottomRight,
             )
             self._dv_value_text[axis] = OnscreenText(
-                text="0",
-                pos=(-0.40, z - 0.015),
+                text="+0",
+                pos=(-0.14, z - 0.015),
                 scale=0.045,
                 fg=(1.0, 0.9, 0.4, 1),
-                align=TextNode.ACenter,
+                align=TextNode.ALeft,
                 mayChange=True,
-                parent=self.a2dBottomRight,
-            )
-            DirectButton(
-                text="+",
-                scale=0.06,
-                pos=(-0.20, 0.0, z),
-                command=self._nudge,
-                extraArgs=[axis, 1],
                 parent=self.a2dBottomRight,
             )
         self._exec_btn = DirectButton(
@@ -125,13 +127,38 @@ class OrbitApp(ShowBase):
             mayChange=True,
             parent=self.a2dTopLeft,
         )
+        # Releasing the mouse springs every jog slider back to its center (zero rate).
+        self.accept("mouse1-up", self._release_jogs)
         self._refresh_readout()
 
-    def _nudge(self, axis: str, sign: int) -> None:
-        """Increment/decrement one RTN delta-V component by STEP_MPS."""
-        self._dv[axis] += sign * self.STEP_MPS
-        self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
-        self._refresh_readout()
+    def _jog_rate_mps_per_s(self, value: float) -> float:
+        """Map a jog displacement in [-1, 1] to a signed delta-V rate [m/s per s].
+
+        Zero at center, ``JOG_MAX_RATE_MPS`` at full deflection, exponential in between
+        so small displacements give fine control and large ones change quickly.
+        """
+        mag = abs(value)
+        if mag <= self.JOG_DEADZONE:
+            return 0.0
+        shaped = (np.exp(self.JOG_CURVE * mag) - 1.0) / (np.exp(self.JOG_CURVE) - 1.0)
+        return float(np.copysign(self.JOG_MAX_RATE_MPS * shaped, value))
+
+    def _apply_jogs(self, real_dt_s: float) -> None:
+        """Integrate each jog slider's rate into its delta-V component for this frame."""
+        changed = False
+        for axis, slider in self._jog.items():
+            rate = self._jog_rate_mps_per_s(slider["value"])
+            if rate != 0.0:
+                self._dv[axis] += rate * real_dt_s
+                self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
+                changed = True
+        if changed:
+            self._refresh_readout()
+
+    def _release_jogs(self) -> None:
+        """Spring all jog thumbs back to center so the value stops changing on release."""
+        for slider in self._jog.values():
+            slider["value"] = 0.0
 
     def _current_node(self) -> ManeuverNode:
         """Build the node from the current dV values, burning at vessel 0's current epoch."""
@@ -157,7 +184,8 @@ class OrbitApp(ShowBase):
             v0.delta_v_budget_mps -= node.magnitude_mps
         for axis in self._dv:
             self._dv[axis] = 0.0
-            self._dv_value_text[axis].setText("0")
+            self._dv_value_text[axis].setText("+0")
+        self._release_jogs()
         self._refresh_readout()
 
     def _setup_input(self) -> None:
@@ -184,6 +212,9 @@ class OrbitApp(ShowBase):
         real_dt = _global_clock.get_dt()
         sim_dt = self.clock.advance(real_dt)
         self.world.step(sim_dt)
+
+        # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
+        self._apply_jogs(real_dt)
 
         # Focus origin on the first vessel; central body sits relative to it.
         focus = self.world.vessels[0].state.r if self.world.vessels else np.zeros(3)
