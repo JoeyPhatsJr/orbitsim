@@ -2,7 +2,8 @@
 import numpy as np
 import pytest
 from orbitsim.core.flight import (
-    tsiolkovsky_dv, mass_flow_rate, thrust_accel_mps2, integrate_powered,
+    tsiolkovsky_dv, fuel_burned_for_dv, mass_flow_rate, thrust_accel_mps2,
+    integrate_powered,
 )
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
@@ -22,6 +23,27 @@ def test_tsiolkovsky_zero_fuel_is_zero_dv():
 def test_tsiolkovsky_rejects_bad_masses():
     with pytest.raises(ValueError):
         tsiolkovsky_dv(3000.0, 1000.0, 2000.0)   # mf > m0
+
+
+def test_fuel_burned_known_answer():
+    # dv = ve -> mf = m0/e, so burned = m0*(1 - 1/e).
+    assert abs(fuel_burned_for_dv(3000.0, 1000.0, 3000.0)
+               - 1000.0 * (1.0 - np.exp(-1.0))) < 1e-9
+    assert fuel_burned_for_dv(3000.0, 1000.0, 0.0) == 0.0
+
+
+def test_fuel_burned_inverts_tsiolkovsky():
+    # Burning fuel_burned_for_dv(dv) leaves a mass whose tsiolkovsky dv equals dv.
+    ve, m0, dv = 3200.0, 1800.0, 1450.0
+    mf = m0 - fuel_burned_for_dv(ve, m0, dv)
+    assert abs(tsiolkovsky_dv(ve, m0, mf) - dv) < 1e-9
+
+
+def test_fuel_burned_rejects_bad_input():
+    with pytest.raises(ValueError):
+        fuel_burned_for_dv(0.0, 1000.0, 100.0)   # ve <= 0
+    with pytest.raises(ValueError):
+        fuel_burned_for_dv(3000.0, 1000.0, -1.0)  # dv < 0
 
 
 def test_mass_flow_rate():

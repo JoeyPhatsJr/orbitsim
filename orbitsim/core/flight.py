@@ -14,6 +14,18 @@ def tsiolkovsky_dv(ve_mps: float, m0_kg: float, mf_kg: float) -> float:
     return float(ve_mps * np.log(m0_kg / mf_kg))
 
 
+def fuel_burned_for_dv(ve_mps: float, m0_kg: float, dv_mps: float) -> float:
+    """Propellant mass [kg] to produce dv from initial mass m0 — the rocket-equation
+    inverse, m0 * (1 - exp(-dv/ve)). Requires ve > 0, m0 > 0, dv >= 0."""
+    if ve_mps <= 0.0:
+        raise ValueError(f"ve must be positive, got {ve_mps}")
+    if m0_kg <= 0.0:
+        raise ValueError(f"m0 must be positive, got {m0_kg}")
+    if dv_mps < 0.0:
+        raise ValueError(f"dv must be non-negative, got {dv_mps}")
+    return float(m0_kg * (1.0 - np.exp(-dv_mps / ve_mps)))
+
+
 def mass_flow_rate(throttle: float, max_thrust_n: float, ve_mps: float
                    ) -> float:
     """Propellant mass flow ṁ = throttle * thrust / ve [kg/s]."""

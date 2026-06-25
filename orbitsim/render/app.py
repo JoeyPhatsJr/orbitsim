@@ -148,6 +148,7 @@ class OrbitApp(ShowBase):
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
+        self._build_warp_controls()
 
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
         # day/night-shaded Earth (with an atmosphere shell), or a flat-blue fallback.
@@ -366,17 +367,24 @@ class OrbitApp(ShowBase):
 
     def _refresh_readout(self) -> None:
         node = self._current_node()
-        budget = self.world.vessels[0].delta_v_budget_mps
+        # One budget: the fuel-derived delta-V (rocket equation), shared with flight.
+        budget = self.world.vessels[0].delta_v_remaining
         self._dv_readout.setText(
-            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (budget {budget:,.0f} m/s)"
+            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {budget:,.0f} m/s)"
         )
 
     def _execute_burn(self) -> None:
+        from orbitsim.core.flight import fuel_burned_for_dv
+
         v0 = self.world.vessels[0]
         node = self._current_node()
-        if 0.0 < node.magnitude_mps <= v0.delta_v_budget_mps:
+        dv = node.magnitude_mps
+        if 0.0 < dv <= v0.delta_v_remaining:
             v0.state = apply_maneuver(v0.state, node)
-            v0.delta_v_budget_mps -= node.magnitude_mps
+            # Spend fuel for this impulse, so maneuver nodes and live thrust draw
+            # from the same tank (no separate budget pool).
+            burned = fuel_burned_for_dv(v0.exhaust_velocity_mps, v0.mass_kg, dv)
+            v0.fuel_mass_kg = max(0.0, v0.fuel_mass_kg - burned)
         for axis in self._dv:
             self._dv[axis] = 0.0
             self._dv_value_text[axis].setText("+0")
@@ -416,6 +424,27 @@ class OrbitApp(ShowBase):
 
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
+
+    def _build_warp_controls(self) -> None:
+        """Top-center on-screen warp control: slower / faster buttons + readout.
+        (The ',' and '.' keys do the same.) Works in both sandbox and solar modes."""
+        self._warp_readout = OnscreenText(
+            text="", pos=(0.0, -0.09), scale=0.055, fg=(1.0, 1.0, 1.0, 1.0),
+            shadow=(0, 0, 0, 1), mayChange=True, parent=self.a2dTopCenter,
+        )
+        self._warp_btns = [
+            DirectButton(text="<<", scale=0.05, pos=(-0.28, 0.0, -0.085),
+                         command=self.clock.warp_down, parent=self.a2dTopCenter),
+            DirectButton(text=">>", scale=0.05, pos=(0.28, 0.0, -0.085),
+                         command=self._warp_up_guarded, parent=self.a2dTopCenter),
+        ]
+        self._update_warp_readout()
+
+    def _update_warp_readout(self) -> None:
+        if getattr(self, "_warp_readout", None) is not None:
+            locked = not self.solar_system and self.world.any_thrusting()
+            suffix = "  (LOCKED)" if locked else ""
+            self._warp_readout.setText(f"Warp  x{self.clock.warp:,.0f}{suffix}")
 
     def _warp_up_guarded(self):
         if not self.world.any_thrusting():
@@ -470,9 +499,9 @@ class OrbitApp(ShowBase):
         if k["s"]:
             ax = ax + np.array([-1.0, 0.0, 0.0])
         if k["a"]:
-            ax = ax + np.array([0.0, 1.0, 0.0])    # yaw
+            ax = ax + np.array([0.0, -1.0, 0.0])   # yaw left
         if k["d"]:
-            ax = ax + np.array([0.0, -1.0, 0.0])
+            ax = ax + np.array([0.0, 1.0, 0.0])
         if k["q"]:
             ax = ax + np.array([0.0, 0.0, 1.0])    # roll
         if k["e"]:
@@ -628,6 +657,7 @@ class OrbitApp(ShowBase):
             warp_locked=self.world.any_thrusting(),
         )
         self.navball.update(orientation_q=v0.orientation, state=v0.state)
+        self._update_warp_readout()
         return task.cont
 
     def _update_solar_system(self) -> None:
@@ -649,12 +679,12 @@ class OrbitApp(ShowBase):
         self._update_starfield()
         self.rig.apply()
 
+        self._update_warp_readout()
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
         self.hud.text.setText(
             f"Solar system (JPL DE440)\n"
             f"Date: {date:%Y-%m-%d}\n"
-            f"Warp: x{self.clock.warp:,.0f}\n"
-            f"',' / '.' change warp"
+            f"',' / '.' or the buttons change warp"
         )
 
     def run_app(self) -> None:
