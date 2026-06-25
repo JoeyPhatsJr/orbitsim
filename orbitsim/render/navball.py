@@ -44,6 +44,31 @@ def project_direction(d, right, nose, up):
     return np.array([np.dot(d, right), -np.dot(d, nose), np.dot(d, up)])
 
 
+def horizon_frame(state):
+    """Local-horizon basis as inertial unit vectors: (prograde, east, radial-out).
+    These become the navball texture's +X (heading 0), +Y, +Z (sky pole)."""
+    v = np.asarray(state.v, dtype=np.float64)
+    v_hat = v / np.linalg.norm(v)
+    radial_out = np.cross(v, np.cross(np.asarray(state.r, dtype=np.float64), v))
+    radial_out = radial_out / np.linalg.norm(radial_out)
+    east = np.cross(radial_out, v_hat)
+    return v_hat, east, radial_out
+
+
+def horizon_ball_matrix(orientation_q, state):
+    """3x3 transform (row-vector convention: world = local @ M) that orients the
+    horizon-referenced ball texture for attitude q. Row k is where local axis e_k
+    lands on screen, so local +X→proj(prograde), +Y→proj(east), +Z→proj(radial-out),
+    keeping the painted sphere registered with the orbital markers."""
+    right, nose, up = ship_axes(orientation_q)
+    v_hat, east, radial_out = horizon_frame(state)
+    return np.array([
+        project_direction(v_hat, right, nose, up),
+        project_direction(east, right, nose, up),
+        project_direction(radial_out, right, nose, up),
+    ])
+
+
 def _build_navball_texture(w: int = 1024, h: int = 512) -> Texture:
     """Procedural equirectangular navball map: sky (top) / ground (bottom) split by
     a horizon line, with a pitch ladder (±30°, ±60°) and heading ticks at the equator.
@@ -103,6 +128,7 @@ class Navball:
 
     def __init__(self, base) -> None:
         self.base = base
+        self._last_win_size = (0, 0)
         self.root = NodePath("navball_root")
         self.cam = base.make_camera(base.win)
         self.dr = self.cam.node().get_display_region(0)
@@ -132,7 +158,6 @@ class Navball:
         self._build_bezel()
         self._build_reticle()
         self._layout()
-        base.accept("window-event", self._layout)
 
     def _overlay(self, np_: NodePath) -> NodePath:
         """Draw a fixed 2D-ish overlay (bezel/reticle) in front of the ball."""
@@ -167,13 +192,17 @@ class Navball:
             ls.draw_to(ax * rad * 1.8, y, az * rad * 1.8)
         self.reticle = self._overlay(self.root.attach_new_node(ls.create()))
 
-    def _layout(self, *args) -> None:
+    def _layout(self) -> None:
         """Keep the display region square in pixels (so the ball is a circle) and
-        scale it with the window: bottom-center, height = _BALL_FRAC_H of the window."""
-        win = self.base.win
-        w, h = win.get_x_size(), win.get_y_size()
-        if w <= 0 or h <= 0:
+        scale it with the window: bottom-center, height = _BALL_FRAC_H of the window.
+
+        Called every frame from update() rather than off a 'window-event' handler:
+        ShowBase already owns that event (for the main camera's aspect ratio), and
+        re-accepting it on the same object would clobber ShowBase's handler."""
+        w, h = self.base.win.get_x_size(), self.base.win.get_y_size()
+        if w <= 0 or h <= 0 or (w, h) == self._last_win_size:
             return
+        self._last_win_size = (w, h)
         side_px = _BALL_FRAC_H * h
         half_w = (side_px / w) / 2.0
         self.dr.set_dimensions(0.5 - half_w, 0.5 + half_w, 0.015, 0.015 + _BALL_FRAC_H)
@@ -190,26 +219,20 @@ class Navball:
         The painted ball is referenced to the *local horizon* (RTN), not the
         celestial pole: sky (texture +Z) = radial-out, heading 0 = prograde. So
         flying prograde-and-level puts the horizon across the middle, like KSP."""
+        self._layout()   # keep the ball circular if the window was resized
         q = np.asarray(orientation_q, dtype=np.float64)
         b_right, b_nose, b_up = ship_axes(q)
 
         def proj(d):
             return project_direction(d, b_right, b_nose, b_up)
 
-        # Local-horizon basis (inertial): up = radial-out, heading 0 = prograde.
-        v = np.asarray(state.v, dtype=np.float64)
-        v_hat = v / np.linalg.norm(v)
-        radial_out = np.cross(v, np.cross(state.r, v))
-        radial_out = radial_out / np.linalg.norm(radial_out)
-        east = np.cross(radial_out, v_hat)   # completes the right-handed horizon frame
-
-        # Ball transform: paint the horizon frame (prograde, east, radial-out) through
-        # the same projection as the markers, so the sphere and markers stay registered.
-        c0, c1, c2 = proj(v_hat), proj(east), proj(radial_out)
+        # Orient the horizon-referenced ball texture (rows of M = images of the
+        # texture's local axes; world = local @ M, Panda's row-vector convention).
+        m = horizon_ball_matrix(q, state)
         self.ball.set_mat(Mat4(
-            c0[0], c1[0], c2[0], 0.0,
-            c0[1], c1[1], c2[1], 0.0,
-            c0[2], c1[2], c2[2], 0.0,
+            m[0, 0], m[0, 1], m[0, 2], 0.0,
+            m[1, 0], m[1, 1], m[1, 2], 0.0,
+            m[2, 0], m[2, 1], m[2, 2], 0.0,
             0.0, 0.0, 0.0, 1.0,
         ))
 

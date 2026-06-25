@@ -4,7 +4,35 @@ The rendered ball itself is verified at the visual checkpoint, per project conve
 import numpy as np
 
 from orbitsim.core.attitude import quat_identity, quat_from_axis_angle, nose_direction
-from orbitsim.render.navball import ship_axes, project_direction, _build_navball_texture
+from orbitsim.core.state import StateVector
+from orbitsim.render.navball import (
+    ship_axes, project_direction, horizon_frame, horizon_ball_matrix, _build_navball_texture,
+)
+
+
+def _mat_to_quat(R):
+    """Quaternion [w,x,y,z] from a rotation matrix whose columns are the body
+    (starboard, dorsal, nose) axes in inertial coords."""
+    tr = R[0, 0] + R[1, 1] + R[2, 2]
+    if tr > 0:
+        s = np.sqrt(tr + 1.0) * 2
+        q = [0.25 * s, (R[2, 1] - R[1, 2]) / s, (R[0, 2] - R[2, 0]) / s, (R[1, 0] - R[0, 1]) / s]
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2
+        q = [(R[2, 1] - R[1, 2]) / s, 0.25 * s, (R[0, 1] + R[1, 0]) / s, (R[0, 2] + R[2, 0]) / s]
+    elif R[1, 1] > R[2, 2]:
+        s = np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2
+        q = [(R[0, 2] - R[2, 0]) / s, (R[0, 1] + R[1, 0]) / s, 0.25 * s, (R[1, 2] + R[2, 1]) / s]
+    else:
+        s = np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2
+        q = [(R[1, 0] - R[0, 1]) / s, (R[0, 2] + R[2, 0]) / s, (R[1, 2] + R[2, 1]) / s, 0.25 * s]
+    q = np.array(q)
+    return q / np.linalg.norm(q)
+
+
+# A circular LEO state with simple axis-aligned vectors: prograde=+Y, radial-out=+X,
+# east=+Z. r=7000 km, v ~ circular speed.
+_STATE = StateVector(np.array([7.0e6, 0.0, 0.0]), np.array([0.0, 7546.0, 0.0]), 3.986e14)
 
 
 def test_nose_projects_to_screen_center():
@@ -31,6 +59,32 @@ def test_projection_preserves_unit_length():
     right, nose, up = ship_axes(quat_from_axis_angle([0.3, -1.0, 0.5], 1.3))
     d = np.array([0.2, -0.7, 0.68]); d /= np.linalg.norm(d)
     assert abs(np.linalg.norm(project_direction(d, right, nose, up)) - 1.0) < 1e-9
+
+
+def test_horizon_frame_is_orthonormal_rtn():
+    v_hat, east, radial_out = horizon_frame(_STATE)
+    assert np.allclose(v_hat, [0, 1, 0], atol=1e-9)        # prograde
+    assert np.allclose(radial_out, [1, 0, 0], atol=1e-9)   # radial out
+    assert np.allclose(east, [0, 0, 1], atol=1e-9)         # right-handed completion
+
+
+def test_ball_matrix_is_a_rotation():
+    m = horizon_ball_matrix(quat_from_axis_angle([0.3, -1.0, 0.5], 1.3), _STATE)
+    assert np.allclose(m @ m.T, np.eye(3), atol=1e-9)
+    assert abs(np.linalg.det(m) - 1.0) < 1e-9
+
+
+def test_wings_level_prograde_puts_horizon_centered():
+    # Nose=prograde(+Y), dorsal=radial-out(+X): R columns (starboard, dorsal, nose).
+    v_hat, east, radial_out = horizon_frame(_STATE)
+    starboard = np.cross(radial_out, v_hat)  # dorsal x nose
+    q = _mat_to_quat(np.column_stack([starboard, radial_out, v_hat]))
+    m = horizon_ball_matrix(q, _STATE)
+    # world = local @ m, so row k = where texture axis e_k lands on screen.
+    # Texture +X (heading 0 = prograde) must land at screen center (0,-1,0)...
+    assert np.allclose(m[0], [0.0, -1.0, 0.0], atol=1e-6)
+    # ...and the sky pole (texture +Z = radial-out) must land at screen up (0,0,1).
+    assert np.allclose(m[2], [0.0, 0.0, 1.0], atol=1e-6)
 
 
 def test_texture_is_sky_over_ground():
