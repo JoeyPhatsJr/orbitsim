@@ -31,10 +31,11 @@ _global_clock = ClockObject.get_global_clock()
 class OrbitApp(ShowBase):
     """Renders one central body + vessels with orbit lines; time-warpable."""
 
-    def __init__(self, world, clock) -> None:
+    def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
         self.world = world
         self.clock = clock
+        self.solar_system = solar_system
         self.disable_mouse()
         self._sim_started = False
         self._title_nodes = []
@@ -129,12 +130,22 @@ class OrbitApp(ShowBase):
 
         self.transform = RenderTransform(origin_m=np.zeros(3), scale_m_per_unit=2.0e4)
         self.rig = CameraRig(self, self.transform)
+        if self.solar_system:
+            # The rig owns scale (= distance / 1000). Pull back to ~13 AU so the Sun,
+            # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
+            self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
 
-        # Central body sphere, sized in render units via the current scale.
+        # Central body sphere. In solar mode it is the Sun (constant on-screen size,
+        # fullbright); in sandbox mode it is the planet, lit and scaled to real radius.
         self.central_np = make_uv_sphere(1.0, 24, 48)
         self.central_np.reparent_to(self.render)
-        self.central_np.set_color(0.2, 0.4, 0.9, 1.0)
+        if self.solar_system:
+            self.central_np.set_color(1.0, 0.85, 0.2, 1.0)
+            self.central_np.set_light_off()
+            self.central_np.set_scale(10.0)
+        else:
+            self.central_np.set_color(0.2, 0.4, 0.9, 1.0)
 
         # Lighting so the sphere is visible.
         amb = AmbientLight("amb")
@@ -161,14 +172,54 @@ class OrbitApp(ShowBase):
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
-        # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
-        # *current* state (dt=0), so the executed orbit matches the live preview exactly.
         self._preview_np = None
         self._porkchop_card = None
-        self._build_maneuver_ui()
+        if self.solar_system:
+            self._build_planets()
+        else:
+            # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
+            # *current* state (dt=0), so the executed orbit matches the live preview.
+            self._build_maneuver_ui()
 
         self._setup_input()
         self.task_mgr.add(self._update, "update")
+
+    # Distinct colours for the Sun + 8 planets (constant on-screen marker size).
+    _PLANET_COLORS = {
+        "Sun": (1.0, 0.85, 0.2, 1.0),
+        "Mercury": (0.6, 0.6, 0.6, 1.0),
+        "Venus": (0.9, 0.8, 0.5, 1.0),
+        "Earth": (0.3, 0.5, 1.0, 1.0),
+        "Mars": (0.9, 0.4, 0.2, 1.0),
+        "Jupiter": (0.8, 0.7, 0.5, 1.0),
+        "Saturn": (0.9, 0.8, 0.6, 1.0),
+        "Uranus": (0.6, 0.85, 0.9, 1.0),
+        "Neptune": (0.3, 0.4, 0.9, 1.0),
+    }
+
+    def _build_planets(self) -> None:
+        """Create constant-size markers + labels for the Sun and 8 planets."""
+        from orbitsim.core.bodies import PLANETS, SUN
+
+        self._planet_bodies = [SUN] + list(PLANETS)
+        self._planet_nps = []
+        self._planet_labels = []
+        for body in self._planet_bodies:
+            marker = make_uv_sphere(1.0, 10, 14)
+            marker.reparent_to(self.render)
+            marker.set_color(*self._PLANET_COLORS.get(body.name, (0.8, 0.8, 0.8, 1.0)))
+            marker.set_light_off()
+            marker.set_scale(8.0 if body.name == "Sun" else 4.0)
+            self._planet_nps.append(marker)
+            # 3D billboard label on render (tracks the marker, faces the camera).
+            tn = TextNode(f"label_{body.name}")
+            tn.set_text(body.name)
+            tn.set_text_color(0.8, 0.85, 1.0, 1.0)
+            label = self.render.attach_new_node(tn)
+            label.set_scale(15.0)
+            label.set_billboard_point_eye()
+            label.set_light_off()
+            self._planet_labels.append(label)
 
     # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
     JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
@@ -350,6 +401,11 @@ class OrbitApp(ShowBase):
     def _update(self, task):
         real_dt = _global_clock.get_dt()
         sim_dt = self.clock.advance(real_dt)
+
+        if self.solar_system:
+            self._update_solar_system()
+            return task.cont
+
         self.world.step(sim_dt)
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
@@ -403,6 +459,31 @@ class OrbitApp(ShowBase):
             period_s=period,
         )
         return task.cont
+
+    def _update_solar_system(self) -> None:
+        """Place the Sun + planets at their DE440 positions for the current sim time."""
+        from datetime import datetime, timedelta
+        from orbitsim.core.ephemeris import body_state
+
+        t = self.clock.sim_time_s
+        self.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
+
+        for body, marker, label in zip(self._planet_bodies, self._planet_nps, self._planet_labels):
+            pos_m = np.zeros(3) if body.name == "Sun" else body_state(body.name.upper(), t, center="SUN").r
+            rx, ry, rz = self.transform.to_render(pos_m)
+            marker.set_pos(rx, ry, rz)
+            label.set_pos(rx, ry, rz + 6.0)
+
+        self.central_np.set_pos(*self.transform.to_render(np.zeros(3)))
+        self.rig.apply()
+
+        date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
+        self.hud.text.setText(
+            f"Solar system (JPL DE440)\n"
+            f"Date: {date:%Y-%m-%d}\n"
+            f"Warp: x{self.clock.warp:,.0f}\n"
+            f"',' / '.' change warp"
+        )
 
     def run_app(self) -> None:
         self.run()

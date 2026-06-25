@@ -6,7 +6,7 @@ visual checkpoint, not unit tests.
 """
 
 MIN_DISTANCE_M = 10.0
-MAX_DISTANCE_M = 1.0e12
+MAX_DISTANCE_M = 1.0e13  # ~67 AU camera pull-back, enough to frame the outer planets
 
 # 1000 render units span the camera-to-focus distance, keeping the visible
 # scene comfortably inside float32-friendly coordinates.
