@@ -38,3 +38,22 @@ def test_frame_shift_round_trip():
     state_back = shift_frame(state_helio, "SUN", "EARTH", T, MU_EARTH)
     assert np.linalg.norm(state_back.r - r) < 1.0          # 1 m
     assert np.linalg.norm(state_back.v - v) < 1e-3         # 1 mm/s
+
+
+from orbitsim.core.patched_conics import propagate_patched
+from orbitsim.core.constants import MU_EARTH as _MU_EARTH
+
+
+def test_hyperbolic_escape_crosses_soi_to_sun():
+    """A fast Earth-centered hyperbolic state, propagated long enough, hands off to the Sun."""
+    # Earth-centered escape: well above escape speed at 7000 km.
+    r = np.array([7.0e6, 0.0, 0.0])
+    v_esc = np.sqrt(2 * _MU_EARTH / 7.0e6)
+    v = np.array([0.0, v_esc * 1.5, 0.0])  # hyperbolic
+    state = StateVector(r=r, v=v, mu=_MU_EARTH, epoch_s=T)
+
+    # Propagate ~20 days; the vessel should leave Earth's SOI and become Sun-centered.
+    final_state, center = propagate_patched(state, 20 * 86400.0, "EARTH", [SUN] + PLANETS)
+    assert center == "SUN"
+    # Heliocentric energy should be bound (negative) or at least finite & sensible.
+    assert np.isfinite(final_state.specific_energy)
