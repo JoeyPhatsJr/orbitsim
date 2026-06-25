@@ -26,7 +26,6 @@ def _default_world() -> World:
     vessel = Vessel(
         name="Sandbox-1",
         state=state,
-        delta_v_budget_mps=2000.0,
         dry_mass_kg=1000.0,
         fuel_mass_kg=800.0,
         max_thrust_n=30000.0,

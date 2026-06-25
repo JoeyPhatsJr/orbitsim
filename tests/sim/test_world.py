@@ -10,7 +10,7 @@ from orbitsim.core.constants import MU_EARTH
 def _circular_vessel(r_m: float = 7.0e6) -> Vessel:
     v = np.sqrt(MU_EARTH / r_m)
     state = StateVector(r=np.array([r_m, 0.0, 0.0]), v=np.array([0.0, v, 0.0]), mu=MU_EARTH)
-    return Vessel(name="test", state=state, delta_v_budget_mps=1000.0)
+    return Vessel(name="test", state=state)
 
 
 def test_world_step_period_closure():
@@ -28,11 +28,6 @@ def test_world_step_updates_state_object():
     before = world.vessels[0].state
     world.step(100.0)
     assert world.vessels[0].state is not before  # new immutable instance
-
-
-def test_vessel_carries_budget():
-    vessel = _circular_vessel()
-    assert vessel.delta_v_budget_mps == 1000.0
 
 
 def test_vessel_has_node_list():

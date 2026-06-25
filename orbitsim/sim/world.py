@@ -14,16 +14,14 @@ from orbitsim.core.flight import tsiolkovsky_dv
 class Vessel:
     """A point-mass vessel: orbital state, propulsion, and attitude.
 
-    delta_v_budget_mps is retained for display/back-compat; the authoritative
-    delta-V is the derived `delta_v_remaining` (rocket equation).
+    Delta-V is derived from the rocket equation via `delta_v_remaining`; there
+    is no stored budget — fuel mass is the single source of truth.
 
     Attributes
     ----------
     name : str
     state : StateVector
         Current inertial state (mutable here in the sim layer; updated each tick).
-    delta_v_budget_mps : float
-        Retained for display/back-compat; see delta_v_remaining.
     nodes : list[ManeuverNode]
         Pending maneuver nodes for the sandbox (each its own list; default empty).
     dry_mass_kg : float
@@ -46,7 +44,6 @@ class Vessel:
 
     name: str
     state: StateVector
-    delta_v_budget_mps: float = 0.0
     nodes: list = field(default_factory=list)
     # Propulsion (SI).
     dry_mass_kg: float = 1000.0
