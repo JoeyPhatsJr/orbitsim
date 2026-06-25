@@ -72,3 +72,35 @@ def test_plane_change_formula():
 
 def test_plane_change_zero():
     assert plane_change(7700.0, 0.0) == 0.0
+
+
+from orbitsim.core.transfers import lambert
+from orbitsim.core.state import StateVector
+from orbitsim.core.propagate import propagate_kepler
+
+
+def test_lambert_reproduces_hohmann():
+    """A Lambert arc over the Hohmann tof reproduces Hohmann within 2%."""
+    r1 = 7000e3
+    r2 = 14000e3
+    h = hohmann(r1, r2, MU_EARTH)
+    tof = h.time_of_flight_s
+    r1_vec = np.array([r1, 0.0, 0.0])
+    # Hohmann arrival is nearly opposite (perturbed slightly to avoid numerical degeneracy).
+    r2_vec_raw = np.array([-r2 * 0.9999999, r2 * 0.0001, 0.0])
+    r2_vec = r2_vec_raw / np.linalg.norm(r2_vec_raw) * r2
+    v1, v2 = lambert(r1_vec, r2_vec, tof, MU_EARTH)
+    v_circ1 = np.sqrt(MU_EARTH / r1)
+    dv1 = np.linalg.norm(v1 - np.array([0.0, v_circ1, 0.0]))
+    np.testing.assert_allclose(dv1, abs(h.burns[0].dv_prograde_mps), rtol=0.02)
+
+
+def test_lambert_arc_lands_on_target():
+    """Propagating r1 with the solved v1 for tof lands within 1 km of r2."""
+    r1_vec = np.array([8000e3, 0.0, 0.0])
+    r2_vec = np.array([0.0, 12000e3, 2000e3])
+    tof = 3600.0
+    v1, v2 = lambert(r1_vec, r2_vec, tof, MU_EARTH)
+    state = StateVector(r=r1_vec, v=v1, mu=MU_EARTH)
+    arrived = propagate_kepler(state, tof)
+    assert np.linalg.norm(arrived.r - r2_vec) < 1000.0

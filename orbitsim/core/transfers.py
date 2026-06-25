@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from orbitsim.core.maneuvers import ManeuverNode
+from lamberthub import izzo2015
 
 
 @dataclass(frozen=True)
@@ -113,3 +114,40 @@ def plane_change(speed_mps: float, delta_i_rad: float) -> float:
     dv = 2 v sin(delta_i / 2)
     """
     return float(2.0 * speed_mps * np.sin(delta_i_rad / 2.0))
+
+
+def lambert(
+    r1_m: np.ndarray,
+    r2_m: np.ndarray,
+    tof_s: float,
+    mu: float,
+    prograde: bool = True,
+    revs: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Solve Lambert's problem: velocities connecting r1 -> r2 in tof_s.
+
+    Thin SI wrapper around lamberthub.izzo2015.
+
+    Parameters
+    ----------
+    r1_m, r2_m : np.ndarray
+        Position vectors [m], shape (3,).
+    tof_s : float
+        Time of flight [s], must be > 0.
+    mu : float
+    prograde : bool
+        Prograde (True) vs retrograde transfer.
+    revs : int
+        Number of complete revolutions (multi-rev), default 0.
+
+    Returns
+    -------
+    (v1, v2) : tuple of np.ndarray
+        Departure and arrival velocities [m/s], shape (3,) float64.
+    """
+    if tof_s <= 0:
+        raise ValueError(f"tof_s must be positive, got {tof_s}")
+    r1 = np.asarray(r1_m, dtype=np.float64)
+    r2 = np.asarray(r2_m, dtype=np.float64)
+    v1, v2 = izzo2015(mu, r1, r2, tof_s, M=revs, prograde=prograde)
+    return np.asarray(v1, dtype=np.float64), np.asarray(v2, dtype=np.float64)
