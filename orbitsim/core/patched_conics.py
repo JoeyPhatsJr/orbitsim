@@ -3,6 +3,7 @@ import numpy as np
 
 from orbitsim.core.bodies import CelestialBody, SUN
 from orbitsim.core.ephemeris import body_state
+from orbitsim.core.state import StateVector
 
 # Approximate semi-major axes [m] for SOI sizing (heliocentric).
 _SMA_M = {
@@ -45,3 +46,36 @@ def dominant_body(
             best = body
             best_soi = soi
     return best
+
+
+def shift_frame(
+    state: StateVector,
+    from_center: str,
+    to_center: str,
+    t_sim_s: float,
+    to_mu: float,
+) -> StateVector:
+    """Re-express a state from one central body's frame to another's.
+
+    Galilean shift: subtract/add the relative body state from the ephemeris.
+    r_new = r_old + (from_center - to_center) position
+    v_new = v_old + (from_center - to_center) velocity
+
+    Parameters
+    ----------
+    state : StateVector
+        State referenced to `from_center`.
+    from_center, to_center : str
+        Body names ("EARTH", "SUN", ...).
+    t_sim_s : float
+    to_mu : float
+        mu of the new central body for the returned StateVector.
+    """
+    # Position/velocity of from_center relative to to_center.
+    rel = body_state(from_center.upper(), t_sim_s, center=to_center.upper())
+    return StateVector(
+        r=np.asarray(state.r, dtype=np.float64) + rel.r,
+        v=np.asarray(state.v, dtype=np.float64) + rel.v,
+        mu=to_mu,
+        epoch_s=t_sim_s,
+    )
