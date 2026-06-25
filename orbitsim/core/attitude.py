@@ -66,3 +66,88 @@ def angle_between(u: np.ndarray, v: np.ndarray) -> float:
 def nose_direction(q: np.ndarray) -> np.ndarray:
     """Unit nose (thrust) direction = body +Z rotated by q."""
     return quat_rotate_vector(q, _NOSE_BODY)
+
+
+def slew_toward(
+    q: np.ndarray,
+    target_dir: np.ndarray,
+    max_rate_radps: float,
+    dt_s: float,
+) -> np.ndarray:
+    """Rotate q so its nose turns toward target_dir, by at most max_rate*dt
+    (no overshoot).
+
+    Parameters
+    ----------
+    q : np.ndarray
+        Current orientation quaternion [w, x, y, z].
+    target_dir : np.ndarray
+        Desired nose direction (need not be unit).
+    max_rate_radps : float
+        Maximum slew rate [rad/s].
+    dt_s : float
+        Time step [s].
+    """
+    nose = nose_direction(q)
+    target = np.asarray(target_dir, dtype=np.float64)
+    if np.linalg.norm(target) == 0.0:
+        return q
+    gap = angle_between(nose, target)
+    if gap < 1e-12:
+        return q
+    step = min(gap, max_rate_radps * dt_s)
+    if step <= 0.0:
+        return q
+    axis = np.cross(nose, target)
+    if np.linalg.norm(axis) < 1e-12:
+        # Parallel or antiparallel: pick any axis perpendicular to the nose.
+        seed = (np.array([1.0, 0.0, 0.0]) if abs(nose[0]) < 0.9
+                else np.array([0.0, 1.0, 0.0]))
+        axis = np.cross(nose, seed)
+    dq = quat_from_axis_angle(axis, step)
+    return quat_normalize(quat_multiply(dq, q))
+
+
+from orbitsim.core.state import StateVector
+
+SAS_MODES = (
+    "PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
+    "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET",
+)
+
+
+def sas_target_dir(mode, state: StateVector, target_pos=None) -> np.ndarray:
+    """Unit nose direction for an SAS hold mode, from the vessel's orbital state.
+
+    Radial-out uses the orthonormal RTN axis v × h (consistent with
+    core.maneuvers), not r/|r|.
+    """
+    v = np.asarray(state.v, dtype=np.float64)
+    v_hat = v / np.linalg.norm(v)
+    h = np.cross(state.r, state.v)
+    h_hat = h / np.linalg.norm(h)
+    radial_out = np.cross(v, h)
+    radial_out = radial_out / np.linalg.norm(radial_out)
+    mode = mode.upper()
+    if mode == "PROGRADE":
+        return v_hat
+    if mode == "RETROGRADE":
+        return -v_hat
+    if mode == "NORMAL":
+        return h_hat
+    if mode == "ANTINORMAL":
+        return -h_hat
+    if mode == "RADIAL_OUT":
+        return radial_out
+    if mode == "RADIAL_IN":
+        return -radial_out
+    if mode in ("TARGET", "ANTITARGET"):
+        if target_pos is None:
+            raise ValueError(f"{mode} requires target_pos")
+        d = np.asarray(target_pos, dtype=np.float64) - state.r
+        n = np.linalg.norm(d)
+        if n == 0.0:
+            raise ValueError("target coincides with vessel")
+        d = d / n
+        return d if mode == "TARGET" else -d
+    raise ValueError(f"unknown SAS mode: {mode}")
