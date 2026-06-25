@@ -16,3 +16,17 @@ def test_deterministic_for_seed():
 
 def test_different_seeds_differ():
     assert random_star_dirs(50, seed=1) != random_star_dirs(50, seed=2)
+
+
+def test_build_starfield_returns_a_node():
+    from panda3d.core import loadPrcFileData
+
+    loadPrcFileData("", "window-type offscreen")
+    loadPrcFileData("", "audio-library-name null")
+    from direct.showbase.ShowBase import ShowBase
+    from orbitsim.render.skybox import build_starfield
+
+    base = ShowBase()
+    sky = build_starfield(base)
+    assert sky is not None and not sky.is_empty()
+    base.destroy()
