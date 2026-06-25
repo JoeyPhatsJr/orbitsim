@@ -56,3 +56,52 @@ def hohmann(r1_m: float, r2_m: float, mu: float) -> TransferSolution:
         time_of_flight_s=float(tof),
         kind="hohmann",
     )
+
+
+def bielliptic(r1_m: float, r2_m: float, rb_m: float, mu: float) -> TransferSolution:
+    """Three-burn bi-elliptic transfer via an intermediate apoapsis rb.
+
+    Parameters
+    ----------
+    r1_m, r2_m : float
+        Initial and final circular radii [m].
+    rb_m : float
+        Intermediate apoapsis radius [m], should satisfy rb_m >= r2_m.
+    mu : float
+
+    Returns
+    -------
+    TransferSolution
+    """
+    a1 = (r1_m + rb_m) / 2.0   # first transfer ellipse
+    a2 = (r2_m + rb_m) / 2.0   # second transfer ellipse
+
+    v_c1 = np.sqrt(mu / r1_m)
+    v_c2 = np.sqrt(mu / r2_m)
+
+    # Burn 1: at r1, raise apoapsis to rb.
+    v_peri1 = np.sqrt(mu * (2.0 / r1_m - 1.0 / a1))
+    dv1 = v_peri1 - v_c1
+    # Burn 2: at rb, raise periapsis from r1-ellipse to r2-ellipse.
+    v_apo1 = np.sqrt(mu * (2.0 / rb_m - 1.0 / a1))
+    v_apo2 = np.sqrt(mu * (2.0 / rb_m - 1.0 / a2))
+    dv2 = v_apo2 - v_apo1
+    # Burn 3: at r2, circularize (decelerate).
+    v_peri2 = np.sqrt(mu * (2.0 / r2_m - 1.0 / a2))
+    dv3 = v_c2 - v_peri2
+
+    t1 = np.pi * np.sqrt(a1**3 / mu)
+    t2 = np.pi * np.sqrt(a2**3 / mu)
+    tof = t1 + t2
+
+    burns = [
+        ManeuverNode(epoch_s=0.0, dv_prograde_mps=float(dv1), dv_normal_mps=0.0, dv_radial_mps=0.0),
+        ManeuverNode(epoch_s=float(t1), dv_prograde_mps=float(dv2), dv_normal_mps=0.0, dv_radial_mps=0.0),
+        ManeuverNode(epoch_s=float(tof), dv_prograde_mps=float(dv3), dv_normal_mps=0.0, dv_radial_mps=0.0),
+    ]
+    return TransferSolution(
+        burns=burns,
+        dv_total_mps=float(abs(dv1) + abs(dv2) + abs(dv3)),
+        time_of_flight_s=float(tof),
+        kind="bielliptic",
+    )
