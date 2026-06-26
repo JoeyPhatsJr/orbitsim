@@ -33,3 +33,13 @@ class _CircularBody:
 EARTH = _CircularBody(MU_EARTH, EARTH_X)
 MOON = _CircularBody(MU_MOON, MOON_X)
 EARTH_MOON = [EARTH, MOON]
+
+
+def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
+    """Summed gravitational acceleration on a test particle at r_m, time t_s [m/s^2]."""
+    r = np.asarray(r_m, dtype=np.float64)
+    a = np.zeros(3)
+    for body in attractors:
+        d = r - body.state_at(t_s).r
+        a += -body.mu * d / np.linalg.norm(d)**3
+    return a

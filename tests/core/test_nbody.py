@@ -25,4 +25,21 @@ def test_bodies_are_circular_and_rotate_with_omega():
     assert abs(np.dot(m.r, m.v)) < 1.0
 
 
+def test_single_attractor_matches_point_mass_gravity():
+    r = np.array([2.0e7, 0.0, 0.0])
+    a = nb.gravity_accel(r, 0.0, attractors=[nb.EARTH])
+    e = nb.EARTH.state_at(0.0).r
+    d = r - e
+    expected = -MU_EARTH * d / np.linalg.norm(d)**3
+    assert np.allclose(a, expected, rtol=1e-12)
+
+
+def test_two_attractors_sum():
+    r = np.array([1.0e8, 5.0e7, 0.0])
+    a_both = nb.gravity_accel(r, 0.0, attractors=nb.EARTH_MOON)
+    a_e = nb.gravity_accel(r, 0.0, attractors=[nb.EARTH])
+    a_m = nb.gravity_accel(r, 0.0, attractors=[nb.MOON])
+    assert np.allclose(a_both, a_e + a_m, rtol=1e-12)
+
+
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON
