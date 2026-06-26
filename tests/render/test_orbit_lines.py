@@ -20,11 +20,18 @@ def test_shape_unchanged_ignores_true_anomaly():
 
 
 def test_shape_changed_on_semimajor_axis():
-    assert orbit_shape_changed(_elem(a=7.0e6), _elem(a=7.0e6 + 1.0)) is True
+    # default tol 1e-6 rel -> ~7 m at a=7e6; a real burn shifts a far more.
+    assert orbit_shape_changed(_elem(a=7.0e6), _elem(a=7.0e6 + 100.0)) is True
 
 
 def test_shape_changed_on_angles():
-    assert orbit_shape_changed(_elem(argp=0.4), _elem(argp=0.4 + 1e-6)) is True
+    assert orbit_shape_changed(_elem(argp=0.4), _elem(argp=0.4 + 1e-3)) is True
+
+
+def test_shape_angle_wrap_near_zero_is_unchanged():
+    # raan flips between ~0 and ~2pi under recovery noise; that is NOT a real change.
+    two_pi = 2.0 * np.pi
+    assert orbit_shape_changed(_elem(raan=1e-12), _elem(raan=two_pi - 1e-12)) is False
 
 
 def test_none_counts_as_changed():

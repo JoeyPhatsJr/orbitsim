@@ -27,7 +27,7 @@ from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
+from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node, orbit_shape_changed
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
@@ -201,6 +201,11 @@ class OrbitApp(ShowBase):
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
+        # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
+        # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
+        self._orbit_frame = self.render.attach_new_node("orbit_frame")
+        self._orbit_elem_cache = [None for _ in world.vessels]
+
         self._preview_np = None
         self._porkchop_card = None
         if self.solar_system:
@@ -228,9 +233,8 @@ class OrbitApp(ShowBase):
             self._moon_np.set_color(0.7, 0.7, 0.72, 1.0)
             self._moon_np.set_light_off()
             self._moon_np.set_scale(7.0)
-            moon_pts = [self.transform.to_render(p) for p in sample_orbit_points(MOON_ORBIT, n=256)]
-            self._moon_orbit_np = build_orbit_node(moon_pts, color=(0.5, 0.5, 0.55, 1.0))
-            self._moon_orbit_np.reparent_to(self.render)
+            self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
+            self._moon_orbit_scale = None
             self._target_text = OnscreenText(
                 text="", pos=(0.08, -0.48), scale=0.045, fg=(1.0, 0.7, 0.4, 1),
                 shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
@@ -713,12 +717,16 @@ class OrbitApp(ShowBase):
 
     def _rebuild_orbit(self, idx, vessel) -> None:
         elem = state_to_elements(vessel.state)
-        pts = sample_orbit_points(elem, n=256)
-        pts_render = [self.transform.to_render(p) for p in pts]
+        scale = self.transform.scale_m_per_unit
+        cached = self._orbit_elem_cache[idx]
+        if cached is not None and cached[1] == scale and not orbit_shape_changed(cached[0], elem):
+            return  # coasting at the same zoom: keep the cached geometry under the orbit frame
+        self._orbit_elem_cache[idx] = (elem, scale)
+        pts = [tuple(p / scale) for p in sample_orbit_points(elem, n=256)]  # render units
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()
-        node = build_orbit_node(pts_render)
-        node.reparent_to(self.render)
+        node = build_orbit_node(pts)
+        node.reparent_to(self._orbit_frame)
         self.orbit_nps[idx] = node
 
     def _update(self, task):
@@ -748,6 +756,19 @@ class OrbitApp(ShowBase):
         self.central_np.set_pos(cx, cy, cz)
         body_render_radius = self.world.central.radius_m / self.transform.scale_m_per_unit
         self.central_np.set_scale(max(body_render_radius, 1e-3))
+
+        # Orbit frame tracks the floating origin by translation only (geometry is baked in
+        # render units = meters / scale, so a vertex p/scale renders at to_render(0) + p/scale =
+        # to_render(p)). Translate-only avoids a tiny node scale (which Panda flags as singular).
+        self._orbit_frame.set_pos(cx, cy, cz)  # = to_render(0)
+        scale = self.transform.scale_m_per_unit
+        if self._moon_orbit_scale != scale:  # rebuild the fixed Moon ring on zoom
+            self._moon_orbit_scale = scale
+            if self._moon_orbit_np is not None:
+                self._moon_orbit_np.remove_node()
+            moon_pts = [tuple(p / scale) for p in sample_orbit_points(MOON_ORBIT, n=256)]
+            self._moon_orbit_np = build_orbit_node(moon_pts, color=(0.5, 0.5, 0.55, 1.0))
+            self._moon_orbit_np.reparent_to(self._orbit_frame)
 
         # Real Sun direction (Earth->Sun) drives the day/night terminator + sun light.
         try:
@@ -786,11 +807,12 @@ class OrbitApp(ShowBase):
         # Post-burn orbit preview.
         if node.magnitude_mps > 0.0:
             pred = predict_elements_after(v0.state, node)
-            ppts = [self.transform.to_render(p) for p in sample_orbit_points(pred, n=256)]
+            ppts = [tuple(p / self.transform.scale_m_per_unit)
+                    for p in sample_orbit_points(pred, n=256)]
             if self._preview_np is not None:
                 self._preview_np.remove_node()
             self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
-            self._preview_np.reparent_to(self.render)
+            self._preview_np.reparent_to(self._orbit_frame)
         elif self._preview_np is not None:
             self._preview_np.remove_node()
             self._preview_np = None
