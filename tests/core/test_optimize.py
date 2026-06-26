@@ -105,18 +105,20 @@ def _ship_and_target():
 
 
 def test_intercept_node_closes_the_loop():
+    # The node must actually intercept: after applying the burn, the post-burn
+    # trajectory passes close to the target. We verify this directly with
+    # closest_approach (no need to recover the solver's internal time-of-flight),
+    # so the test does not constrain the solver's tof discretization.
+    from orbitsim.core.rendezvous import closest_approach
     ship, target, mu = _ship_and_target()
     dep = np.linspace(0.0, 3.0e3, 16)
     tof = np.linspace(1.0e3, 4.0e4, 40)
     node = intercept_node(ship, target, mu, dep, tof)
-    # Apply the burn, then propagate by the chosen TOF; we should reach the target.
     t_dep = node.epoch_s - ship.epoch_s
-    tof_star = _recover_tof(ship, target, mu, node)   # see helper below
-    post = apply_maneuver(ship, node)
-    arrived = propagate_kepler(post, tof_star)
-    target_then = propagate_kepler(target, t_dep + tof_star)
-    sep = np.linalg.norm(arrived.r - target_then.r)
-    assert sep < 1.0e4    # within 10 km of a moving target — a real intercept
+    post = apply_maneuver(ship, node)                      # state at the node epoch
+    target_at_dep = propagate_kepler(target, t_dep)        # target at the same epoch
+    ca = closest_approach(post, target_at_dep, window_s=6.0e4, coarse_samples=2000)
+    assert ca.separation_m < 1.0e4    # within 10 km of a moving target — a real intercept
 
 
 def test_intercept_node_rtn_projection_is_lossless():
@@ -141,20 +143,3 @@ def test_intercept_node_raises_when_infeasible():
     import pytest
     with pytest.raises(ValueError):
         intercept_node(ship, target, mu, np.array([0.0]), np.array([-1.0, 0.0]))
-
-
-def _recover_tof(ship, target, mu, node):
-    from orbitsim.core.transfers import lambert
-    burn = propagate_kepler(ship, node.epoch_s - ship.epoch_s)
-    best_tof, best = None, np.inf
-    for tof in np.linspace(1.0e3, 4.0e4, 400):
-        r2 = propagate_kepler(target, (node.epoch_s - ship.epoch_s) + tof).r
-        try:
-            v1, _ = lambert(burn.r, r2, float(tof), mu)
-        except Exception:
-            continue
-        post = apply_maneuver(ship, node)
-        d = np.linalg.norm((post.v) - v1)
-        if d < best:
-            best, best_tof = d, tof
-    return best_tof

@@ -185,16 +185,7 @@ def intercept_node(ship_state, target_state_now, mu, dep_times_s, tof_grid_s,
         res = minimize(cost, np.array([t_dep, tof]), method="Nelder-Mead",
                        options={"xatol": 1.0, "fatol": 1.0, "maxiter": 200})
         if np.isfinite(cost(res.x)) and res.x[1] > 0.0:
-            t_dep_r, tof_r = float(res.x[0]), float(res.x[1])
-            # Snap tof to the nearest point on a fine grid (at least 400 pts,
-            # matching _recover_tof's resolution) so _recover_tof can find the
-            # exact tof and propagation closes the loop to zero error.
-            n_fine = max(len(tof_grid_s), 400)
-            tof_fine = np.linspace(tof_grid_s[0], tof_grid_s[-1], n_fine)
-            idx = int(np.argmin(np.abs(tof_fine - tof_r)))
-            snap_cost, _, _ = _dep_cost(ship_state, target_state_now, mu, t_dep_r, float(tof_fine[idx]))
-            if np.isfinite(snap_cost):
-                t_dep, tof = t_dep_r, float(tof_fine[idx])
+            t_dep, tof = float(res.x[0]), float(res.x[1])
 
     _, dep, v1 = _dep_cost(ship_state, target_state_now, mu, t_dep, tof)
     dv_vec = v1 - dep.v
