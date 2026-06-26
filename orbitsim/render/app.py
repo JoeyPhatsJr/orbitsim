@@ -388,6 +388,7 @@ class OrbitApp(ShowBase):
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
             ("Clear Tgt", self._clear_target),
+            ("Intercept", self._plan_intercept),
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.06),
@@ -512,6 +513,38 @@ class OrbitApp(ShowBase):
         if self._node_marker_np is not None:
             self._node_marker_np.remove_node()
             self._node_marker_np = None
+
+    def _plan_intercept(self):
+        """Auto-plan a flyby of the current target via a departure-dV porkchop."""
+        import numpy as np
+        from orbitsim.core.optimize import intercept_node
+        from orbitsim.core.elements import state_to_elements
+        if self._target is None:
+            self._flash_message("No target selected")
+            return
+        v0 = self.world.vessels[0]
+        try:
+            period = state_to_elements(v0.state).period_s
+        except ValueError:
+            self._flash_message("Unbound orbit — can't plan intercept")
+            return
+        now = self.clock.sim_time_s
+        dep = np.linspace(0.0, period, 24)
+        tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
+        try:
+            node = intercept_node(v0.state, self._target.state_at(now),
+                                  self.world.central.mu, dep, tof)
+        except ValueError:
+            self._flash_message("No intercept found")
+            return
+        self._node_epoch_s = node.epoch_s
+        self._dv["pro"] = node.dv_prograde_mps
+        self._dv["nrm"] = node.dv_normal_mps
+        self._dv["rad"] = node.dv_radial_mps
+        for axis in ("pro", "nrm", "rad"):
+            self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
+        self._refresh_readout()
+        self._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
 
     def _clear_target(self):
         """Deselect the current target; remove its closest-approach markers + readout."""
