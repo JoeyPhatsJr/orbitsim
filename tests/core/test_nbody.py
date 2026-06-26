@@ -80,4 +80,15 @@ def test_propagation_is_reversible():
     assert np.linalg.norm(back.r - st.r) < 1.0
 
 
+def test_jacobi_constant_conserved_over_seven_days():
+    # A ship out between Earth and Moon where both attractors matter.
+    e = nb.EARTH.state_at(0.0)
+    st = StateVector(r=np.array([1.2e8, 0.0, 0.0]),
+                     v=np.array([0.0, 900.0, 50.0]), mu=MU_EARTH, epoch_s=0.0)
+    c0 = nb.jacobi_constant(st, 0.0)
+    far = nb.propagate_nbody(st, 7 * 86400.0, attractors=nb.EARTH_MOON, max_step_s=600.0)
+    c1 = nb.jacobi_constant(far, far.epoch_s)
+    assert abs(c1 - c0) / abs(c0) < 1e-6
+
+
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON

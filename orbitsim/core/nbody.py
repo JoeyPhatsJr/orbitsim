@@ -71,3 +71,27 @@ def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
         a = gravity_accel(r, t, attractors)
         v = v_half + 0.5 * a * h
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+def _rot_z(theta):
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])  # inertial->rotating
+
+
+def rotating_frame(r_m, v_mps, t_s):
+    """Map an inertial state into the frame co-rotating at OMEGA_EM (Moon fixed +x)."""
+    R = _rot_z(OMEGA_EM * t_s)
+    r_rot = R @ np.asarray(r_m, dtype=np.float64)
+    w = np.array([0.0, 0.0, OMEGA_EM])
+    v_rot = R @ np.asarray(v_mps, dtype=np.float64) - np.cross(w, r_rot)
+    return r_rot, v_rot
+
+
+def jacobi_constant(state, t_s):
+    """Jacobi constant C = 2*Omega - |v_rot|^2 (conserved along a coast)."""
+    r_rot, v_rot = rotating_frame(state.r, state.v, t_s)
+    x, y = r_rot[0], r_rot[1]
+    r1 = np.linalg.norm(r_rot - np.array([EARTH_X, 0.0, 0.0]))
+    r2 = np.linalg.norm(r_rot - np.array([MOON_X, 0.0, 0.0]))
+    omega2 = 0.5 * OMEGA_EM**2 * (x**2 + y**2) + MU_EARTH / r1 + MU_MOON / r2
+    return float(2.0 * omega2 - np.dot(v_rot, v_rot))
