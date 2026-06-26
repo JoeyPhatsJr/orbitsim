@@ -24,6 +24,8 @@ _MARKER_COLORS = {
     "ANTINORMAL": (1.0, 0.45, 0.90, 1),
     "RADIAL_OUT": (0.30, 0.85, 1.0, 1),
     "RADIAL_IN": (1.0, 0.72, 0.20, 1),
+    "TARGET": (1.0, 0.2, 1.0, 1),
+    "ANTITARGET": (0.6, 0.2, 0.6, 1),
 }
 _FILM = 2.6            # orthographic film size (ball has radius 1)
 _CAM_DIST = 10.0       # ortho camera distance along -Y

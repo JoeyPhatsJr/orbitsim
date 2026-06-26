@@ -73,3 +73,75 @@ def test_earth_to_mars_porkchop_has_window():
     # Minimum heliocentric transfer dv (departure + arrival v-infinity) is in a
     # physically plausible band — a few km/s to low tens of km/s.
     assert 2.0e3 < dv[i, j] < 5.0e4
+
+
+# ---------------------------------------------------------------------------
+# intercept_node tests
+# ---------------------------------------------------------------------------
+
+import numpy as np
+from orbitsim.core.state import StateVector
+from orbitsim.core.bodies import EARTH
+from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.maneuvers import apply_maneuver
+from orbitsim.core.optimize import intercept_node
+
+
+def _ship_and_target():
+    mu = EARTH.mu
+    # Ship in a circular ~7,000 km LEO (coplanar, equatorial).
+    r1 = 7.0e6
+    ship = StateVector(r=np.array([r1, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(mu / r1), 0.0]), mu=mu, epoch_s=0.0)
+    # Target in a higher circular orbit, phased ~100° ahead (off 180° to avoid the
+    # Lambert plane singularity).
+    r2 = 4.0e7
+    ang = np.radians(100.0)
+    tv = np.sqrt(mu / r2)
+    target = StateVector(
+        r=np.array([r2 * np.cos(ang), r2 * np.sin(ang), 0.0]),
+        v=np.array([-tv * np.sin(ang), tv * np.cos(ang), 0.0]), mu=mu, epoch_s=0.0)
+    return ship, target, mu
+
+
+def test_intercept_node_closes_the_loop():
+    # The node must actually intercept: after applying the burn, the post-burn
+    # trajectory passes close to the target. We verify this directly with
+    # closest_approach (no need to recover the solver's internal time-of-flight),
+    # so the test does not constrain the solver's tof discretization.
+    from orbitsim.core.rendezvous import closest_approach
+    ship, target, mu = _ship_and_target()
+    dep = np.linspace(0.0, 3.0e3, 16)
+    tof = np.linspace(1.0e3, 4.0e4, 40)
+    node = intercept_node(ship, target, mu, dep, tof)
+    t_dep = node.epoch_s - ship.epoch_s
+    post = apply_maneuver(ship, node)                      # state at the node epoch
+    target_at_dep = propagate_kepler(target, t_dep)        # target at the same epoch
+    ca = closest_approach(post, target_at_dep, window_s=6.0e4, coarse_samples=2000)
+    assert ca.separation_m < 1.0e4    # within 10 km of a moving target — a real intercept
+
+
+def test_intercept_node_rtn_projection_is_lossless():
+    # The node's RTN components must recompose to the inertial burn vector.
+    ship, target, mu = _ship_and_target()
+    dep = np.linspace(0.0, 3.0e3, 12)
+    tof = np.linspace(1.0e3, 4.0e4, 30)
+    node = intercept_node(ship, target, mu, dep, tof, refine=False)
+    burn = propagate_kepler(ship, node.epoch_s - ship.epoch_s)
+    v_hat = burn.v / np.linalg.norm(burn.v)
+    h = np.cross(burn.r, burn.v); h_hat = h / np.linalg.norm(h)
+    r_hat = np.cross(h_hat, v_hat)
+    recomposed = (node.dv_prograde_mps * v_hat + node.dv_normal_mps * h_hat
+                  + node.dv_radial_mps * r_hat)
+    assert node.magnitude_mps > 0.0
+    # Orthonormal RTN basis -> recomposed magnitude must equal the node magnitude
+    # (lossless projection); a wrong/ non-orthonormal basis would break this.
+    assert abs(np.linalg.norm(recomposed) - node.magnitude_mps) < 1e-9
+
+
+def test_intercept_node_raises_when_infeasible():
+    ship, target, mu = _ship_and_target()
+    # All TOFs non-positive => no feasible Lambert cell.
+    import pytest
+    with pytest.raises(ValueError):
+        intercept_node(ship, target, mu, np.array([0.0]), np.array([-1.0, 0.0]))

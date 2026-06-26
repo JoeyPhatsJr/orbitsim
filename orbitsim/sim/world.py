@@ -54,7 +54,9 @@ class Vessel:
     max_turn_rate_radps: float = 0.6
     throttle: float = 0.0
     sas_mode: str = "OFF"
+    unlimited_dv: bool = False
     orientation: np.ndarray = field(default_factory=quat_identity)
+    sas_target_pos: object = None   # inertial target position [m] for TARGET/ANTITARGET, or None
 
     @property
     def mass_kg(self) -> float:
@@ -63,7 +65,9 @@ class Vessel:
 
     @property
     def delta_v_remaining(self) -> float:
-        """Remaining delta-V from the rocket equation [m/s]; 0 if no fuel."""
+        """Remaining delta-V from the rocket equation [m/s]; inf if unlimited, 0 if no fuel."""
+        if self.unlimited_dv:
+            return float("inf")
         if self.fuel_mass_kg <= 0.0:
             return 0.0
         return tsiolkovsky_dv(self.exhaust_velocity_mps, self.mass_kg,
@@ -100,16 +104,14 @@ class World:
             # 1) Attitude: slew toward the SAS hold direction (if any) each tick.
             if vessel.sas_mode not in ("OFF", "STABILITY"):
                 try:
-                    target = sas_target_dir(vessel.sas_mode, vessel.state)
+                    target = sas_target_dir(vessel.sas_mode, vessel.state, vessel.sas_target_pos)
                 except ValueError:
                     target = None
                 if target is not None:
                     vessel.orientation = slew_toward(
-                        vessel.orientation, target,
-                        vessel.max_turn_rate_radps, sim_dt_s
-                    )
+                        vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
             # 2) Translation.
-            if vessel.throttle > 0.0 and vessel.fuel_mass_kg > 0.0:
+            if vessel.throttle > 0.0 and (vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv):
                 new_state, new_fuel = integrate_powered(
                     vessel.state,
                     dry_mass_kg=vessel.dry_mass_kg,
@@ -121,12 +123,13 @@ class World:
                     dt_s=sim_dt_s,
                 )
                 vessel.state = new_state
-                vessel.fuel_mass_kg = new_fuel
+                if not vessel.unlimited_dv:
+                    vessel.fuel_mass_kg = new_fuel
             else:
                 vessel.state = propagate_kepler(vessel.state, sim_dt_s)
 
     def any_thrusting(self) -> bool:
         """True if any vessel is currently producing thrust (throttle>0 and
         fuel)."""
-        return any(v.throttle > 0.0 and v.fuel_mass_kg > 0.0
+        return any(v.throttle > 0.0 and (v.fuel_mass_kg > 0.0 or v.unlimited_dv)
                    for v in self.vessels)

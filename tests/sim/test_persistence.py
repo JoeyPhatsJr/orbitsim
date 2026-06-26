@@ -135,3 +135,19 @@ def test_save_creates_parent_dirs(tmp_path):
     path = tmp_path / "nested" / "dir" / "quicksave.json"
     save_scenario(world, clock, path)
     assert path.exists()
+
+
+def test_unlimited_dv_round_trips(tmp_path):
+    from orbitsim.sim.world import Vessel, World
+    from orbitsim.sim.clock import SimClock
+    from orbitsim.sim.persistence import save_scenario, load_scenario
+    from orbitsim.core.bodies import EARTH
+    from orbitsim.core.state import StateVector
+    import numpy as np
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.5e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    w = World(central=EARTH, vessels=[Vessel(name="x", state=st, unlimited_dv=True)])
+    p = tmp_path / "s.json"
+    save_scenario(w, SimClock(0.0, 1.0), str(p))
+    w2, _ = load_scenario(str(p))
+    assert w2.vessels[0].unlimited_dv is True

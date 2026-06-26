@@ -50,6 +50,7 @@ def _vessel_to_dict(vessel: Vessel) -> dict:
         "throttle": vessel.throttle,
         "sas_mode": vessel.sas_mode,
         "orientation": np.asarray(vessel.orientation).tolist(),
+        "unlimited_dv": vessel.unlimited_dv,
         "nodes": [_node_to_dict(n) for n in vessel.nodes],
     }
 
@@ -90,6 +91,7 @@ def _vessel_from_dict(d: dict, mu: float) -> Vessel:
             throttle=d["throttle"],
             sas_mode=d["sas_mode"],
             orientation=np.array(d["orientation"], dtype=np.float64),
+            unlimited_dv=d.get("unlimited_dv", False),
         )
         for n in d["nodes"]:
             vessel.nodes.append(ManeuverNode(

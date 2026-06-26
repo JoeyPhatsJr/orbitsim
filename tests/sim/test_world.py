@@ -114,3 +114,63 @@ def test_world_step_slews_attitude_toward_prograde():
     prograde = v.state.v / v.state.v_mag
     # Nose should have turned to (near) prograde.
     assert np.dot(nose_direction(v.orientation), prograde) > 0.999
+
+
+def test_unlimited_dv_is_infinite_regardless_of_fuel():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.5e3, 0]),
+                     mu=3.986e14, epoch_s=0.0)
+    v = Vessel(name="x", state=st, fuel_mass_kg=0.0, unlimited_dv=True)
+    assert v.delta_v_remaining == float("inf")
+    v2 = Vessel(name="y", state=st, fuel_mass_kg=500.0, unlimited_dv=False)
+    assert v2.delta_v_remaining < float("inf")
+
+
+def test_unlimited_dv_step_thrusts_without_draining_fuel():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, dry_mass_kg=1000.0, fuel_mass_kg=10.0,
+               max_thrust_n=5.0e4, exhaust_velocity_mps=3000.0,
+               throttle=1.0, unlimited_dv=True)
+    # point the nose prograde so thrust does something
+    v.sas_mode = "PROGRADE"
+    w = World(central=EARTH, vessels=[v])
+    speed0 = v.state.v_mag
+    w.step(1.0)
+    assert v.fuel_mass_kg == 10.0          # fuel not drained
+    assert v.state.v_mag != speed0          # thrust applied (speed changed)
+
+
+def test_unlimited_dv_locks_warp_even_with_zero_fuel():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, fuel_mass_kg=0.0, max_thrust_n=5.0e4,
+               throttle=1.0, unlimited_dv=True)
+    w = World(central=EARTH, vessels=[v])
+    assert w.any_thrusting() is True
+
+
+def test_target_sas_slews_nose_toward_target():
+    from orbitsim.core.attitude import nose_direction
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, sas_mode="TARGET", max_turn_rate_radps=1.0)
+    v.sas_target_pos = np.array([7.0e6, 1.0e8, 0.0])   # far +Y of the ship
+    w = World(central=EARTH, vessels=[v])
+    want = v.sas_target_pos - v.state.r
+    want = want / np.linalg.norm(want)
+    a0 = float(np.dot(nose_direction(v.orientation), want))
+    for _ in range(120):
+        w.step(0.05)
+    a1 = float(np.dot(nose_direction(v.orientation), want))
+    assert a1 > a0           # nose turned toward the target
+    assert a1 > 0.9          # and got close to pointing at it
+
+
+def test_target_sas_with_no_target_does_not_crash():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, sas_mode="TARGET")   # sas_target_pos stays None
+    w = World(central=EARTH, vessels=[v])
+    q0 = v.orientation.copy()
+    w.step(1.0)
+    np.testing.assert_array_equal(v.orientation, q0)    # attitude held, no error
