@@ -17,6 +17,8 @@ from panda3d.core import (
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
 from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.moon import MOON_ORBIT, moon_state_at
+from orbitsim.core.rendezvous import closest_approach
 from orbitsim.core.attitude import (
     quat_from_axis_angle, quat_multiply, quat_normalize, quat_rotate_vector, nose_direction,
 )
@@ -213,6 +215,25 @@ class OrbitApp(ShowBase):
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
 
+            # Moon (idealized Keplerian) as an intercept target: marker + orbit ring.
+            self._target_moon = False
+            self._ca_recompute_t = 0.0
+            self._ca = None
+            self._ca_marker_ship = None
+            self._ca_marker_moon = None
+            self._moon_np = make_uv_sphere(1.0, 12, 16)
+            self._moon_np.reparent_to(self.render)
+            self._moon_np.set_color(0.7, 0.7, 0.72, 1.0)
+            self._moon_np.set_light_off()
+            self._moon_np.set_scale(7.0)
+            moon_pts = [self.transform.to_render(p) for p in sample_orbit_points(MOON_ORBIT, n=256)]
+            self._moon_orbit_np = build_orbit_node(moon_pts, color=(0.5, 0.5, 0.55, 1.0))
+            self._moon_orbit_np.reparent_to(self.render)
+            self._target_text = OnscreenText(
+                text="", pos=(0.08, -0.48), scale=0.045, fg=(1.0, 0.7, 0.4, 1),
+                shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
+            )
+
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
         self.starfield.reparent_to(self.render)
@@ -348,6 +369,7 @@ class OrbitApp(ShowBase):
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
+            ("Target", self._toggle_target),
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.06),
@@ -427,6 +449,30 @@ class OrbitApp(ShowBase):
         if self._node_marker_np is not None:
             self._node_marker_np.remove_node()
             self._node_marker_np = None
+
+    def _toggle_target(self):
+        """Toggle the Moon as the intercept target; clear markers/readout when off."""
+        self._target_moon = not self._target_moon
+        if not self._target_moon:
+            for attr in ("_ca_marker_ship", "_ca_marker_moon"):
+                np_ = getattr(self, attr, None)
+                if np_ is not None:
+                    np_.remove_node()
+                    setattr(self, attr, None)
+            self._ca = None
+            self._target_text.setText("")
+
+    def _ca_marker(self, attr, color):
+        """Lazily create/reuse a closest-approach marker NodePath."""
+        np_ = getattr(self, attr, None)
+        if np_ is None:
+            np_ = make_uv_sphere(1.0, 8, 12)
+            np_.reparent_to(self.render)
+            np_.set_color(*color)
+            np_.set_light_off()
+            np_.set_scale(5.0)
+            setattr(self, attr, np_)
+        return np_
 
     def _refresh_readout(self) -> None:
         node = self._current_node()
@@ -774,6 +820,36 @@ class OrbitApp(ShowBase):
             self._node_ttn_text.setText(f"Node {label}   dV {node.magnitude_mps:,.1f} m/s")
         else:
             self._node_ttn_text.setText("")
+
+        # Moon position this frame.
+        moon_now = moon_state_at(self.clock.sim_time_s)
+        self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
+        # Closest approach to the Moon when targeted (throttled recompute).
+        if self._target_moon:
+            import time as _time
+            traj = (apply_maneuver(v0.state, node)
+                    if (self._node_epoch_s is not None and node.magnitude_mps > 0.0)
+                    else v0.state)
+            now_real = _time.monotonic()
+            if self._ca is None or now_real - self._ca_recompute_t > 0.5:
+                self._ca_recompute_t = now_real
+                try:
+                    period = state_to_elements(traj).period_s
+                except ValueError:
+                    period = 14.0 * 86400.0
+                window = min(period, 14.0 * 86400.0)
+                self._ca = closest_approach(traj, moon_now, window_s=window, coarse_samples=720)
+            ca = self._ca
+            ship_at = propagate_kepler(traj, ca.t_ca_s).r
+            moon_at = moon_state_at(self.clock.sim_time_s + ca.t_ca_s).r
+            self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
+                *self.transform.to_render(ship_at))
+            self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
+                *self.transform.to_render(moon_at))
+            mm, ss = divmod(int(max(0.0, ca.t_ca_s)), 60)
+            self._target_text.setText(
+                f"Target: Moon   CA T-{mm:02d}:{ss:02d}   sep {ca.separation_m / 1000:,.0f} km"
+                f"   rel {ca.rel_speed_mps:,.0f} m/s")
 
         self._apply_mouse_orbit()
         self._update_starfield()
