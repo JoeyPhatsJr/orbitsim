@@ -5,6 +5,7 @@ import numpy as np
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core.elements import KeplerianElements, state_to_elements
+from orbitsim.core.kepler import true_to_eccentric_anomaly, eccentric_to_mean_anomaly
 
 
 @dataclass(frozen=True)
@@ -93,3 +94,25 @@ def predict_elements_after(state: StateVector, node: ManeuverNode) -> KeplerianE
     ``apply_maneuver`` then ``state_to_elements``.
     """
     return state_to_elements(apply_maneuver(state, node))
+
+
+def _time_to_mean_anomaly(state: StateVector, target_M: float) -> float:
+    """Seconds until the vessel's mean anomaly next reaches ``target_M`` (bound orbits only)."""
+    elem = state_to_elements(state)
+    if elem.e >= 1.0 or elem.a <= 0.0:
+        raise ValueError("time-to-apsis is defined only for bound (elliptical) orbits")
+    E = true_to_eccentric_anomaly(elem.nu, elem.e)
+    M = eccentric_to_mean_anomaly(E, elem.e)
+    n = 2.0 * np.pi / elem.period_s  # mean motion [rad/s]
+    dM = (target_M - M) % (2.0 * np.pi)  # forward angle to the target, in [0, 2π)
+    return dM / n
+
+
+def time_to_periapsis(state: StateVector) -> float:
+    """Seconds until the vessel next passes periapsis (ν=0). Bound orbits only."""
+    return _time_to_mean_anomaly(state, 2.0 * np.pi)
+
+
+def time_to_apoapsis(state: StateVector) -> float:
+    """Seconds until the vessel next passes apoapsis (ν=π). Bound orbits only."""
+    return _time_to_mean_anomaly(state, np.pi)

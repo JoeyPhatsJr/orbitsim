@@ -1,8 +1,12 @@
 """Tests for impulsive maneuvers in the local RTN frame."""
 import numpy as np
-from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
+import pytest
+from hypothesis import given, strategies as st
+from orbitsim.core.maneuvers import (
+    ManeuverNode, apply_maneuver, time_to_periapsis, time_to_apoapsis,
+)
 from orbitsim.core.state import StateVector
-from orbitsim.core.elements import state_to_elements
+from orbitsim.core.elements import KeplerianElements, state_to_elements, elements_to_state
 from orbitsim.core.constants import MU_EARTH
 
 
@@ -81,3 +85,57 @@ def test_predict_elements_after_matches_apply_then_convert():
     expected = state_to_elements(apply_maneuver(state, node))
     assert abs(predicted.a - expected.a) < 1.0
     assert abs(predicted.e - expected.e) < 1e-9
+
+
+def _state_at_nu(nu):
+    elem = KeplerianElements(a=7.0e6, e=0.2, i=0.5, raan=0.3, argp=0.4, nu=nu, mu=MU_EARTH)
+    return elements_to_state(elem)
+
+
+def _period():
+    return KeplerianElements(a=7.0e6, e=0.2, i=0.5, raan=0.3, argp=0.4, nu=0.0, mu=MU_EARTH).period_s
+
+
+def test_time_to_periapsis_from_apoapsis_is_half_period():
+    T = _period()
+    assert abs(time_to_periapsis(_state_at_nu(np.pi)) - T / 2.0) < 1e-3
+
+
+def test_time_to_apoapsis_at_apoapsis_is_zero():
+    assert time_to_apoapsis(_state_at_nu(np.pi)) < 1e-3
+
+
+def test_time_to_periapsis_at_periapsis_is_zero():
+    assert time_to_periapsis(_state_at_nu(0.0)) < 1e-3
+
+
+def test_time_to_apoapsis_from_periapsis_is_half_period():
+    T = _period()
+    assert abs(time_to_apoapsis(_state_at_nu(0.0)) - T / 2.0) < 1e-3
+
+
+def test_timing_within_one_period_for_arbitrary_nu():
+    T = _period()
+    for nu in (0.1, 1.0, 2.5, 4.0, 6.0):
+        for f in (time_to_periapsis, time_to_apoapsis):
+            t = f(_state_at_nu(nu))
+            assert 0.0 <= t < T
+
+
+def test_timing_raises_on_hyperbolic():
+    hyp = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 12000.0, 0.0]), mu=MU_EARTH)  # > escape -> e>1
+    with pytest.raises(ValueError):
+        time_to_periapsis(hyp)
+    with pytest.raises(ValueError):
+        time_to_apoapsis(hyp)
+
+
+@given(nu=st.floats(min_value=0.0, max_value=2.0 * np.pi, exclude_max=True),
+       e=st.floats(min_value=0.0, max_value=0.9))
+def test_timing_invariant_zero_to_period(nu, e):
+    elem = KeplerianElements(a=8.0e6, e=e, i=0.4, raan=0.2, argp=0.3, nu=nu, mu=MU_EARTH)
+    state = elements_to_state(elem)
+    T = elem.period_s
+    assert 0.0 <= time_to_periapsis(state) < T + 1e-6
+    assert 0.0 <= time_to_apoapsis(state) < T + 1e-6
