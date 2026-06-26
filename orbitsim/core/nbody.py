@@ -70,20 +70,45 @@ def _substep_count(state, dt_s, attractors, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
-    """Advance the ship by dt_s using velocity Verlet (kick-drift-kick). Reversible."""
-    n = _substep_count(state, dt_s, attractors, max_step_s)
-    h = dt_s / n
-    r = np.asarray(state.r, dtype=np.float64).copy()
-    v = np.asarray(state.v, dtype=np.float64).copy()
-    t = state.epoch_s
-    a = gravity_accel(r, t, attractors)
-    for _ in range(n):
+def _verlet(r, v, t, dt_s, accel_fn, n_sub):
+    """Velocity-Verlet (kick-drift-kick) for n_sub uniform steps. accel_fn(r, t)->a."""
+    r = np.asarray(r, dtype=np.float64).copy()
+    v = np.asarray(v, dtype=np.float64).copy()
+    h = dt_s / n_sub
+    a = accel_fn(r, t)
+    for _ in range(n_sub):
         v_half = v + 0.5 * a * h
         r = r + v_half * h
         t = t + h
-        a = gravity_accel(r, t, attractors)
+        a = accel_fn(r, t)
         v = v_half + 0.5 * a * h
+    return r, v, t
+
+
+def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
+    """Advance the ship by dt_s with velocity Verlet under summed attractors. Reversible."""
+    n = _substep_count(state, dt_s, attractors, max_step_s)
+    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s,
+                      lambda rr, tt: gravity_accel(rr, tt, attractors), n)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+def _earth_moon_substeps(state, dt_s, max_step_s):
+    """Sub-steps for propagate_earth_moon: cap by 1/200 of the local orbital timescale
+    at Earth (origin) and at the Moon."""
+    r = np.asarray(state.r, dtype=np.float64)
+    cap = max_step_s
+    rE = np.linalg.norm(r)
+    cap = min(cap, (2 * np.pi * np.sqrt(rE**3 / MU_EARTH)) / 200.0)
+    rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
+    cap = min(cap, (2 * np.pi * np.sqrt(rM**3 / MU_MOON)) / 200.0)
+    return max(1, int(np.ceil(abs(dt_s) / cap)))
+
+
+def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
+    """Advance the ship by dt_s under earth_moon_accel (central Earth + Moon + indirect)."""
+    n = _earth_moon_substeps(state, dt_s, max_step_s)
+    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, earth_moon_accel, n)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
 
 

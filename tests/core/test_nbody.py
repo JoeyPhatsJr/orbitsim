@@ -156,3 +156,24 @@ def test_L4_balances_in_the_earth_fixed_model():
     centrifugal = -np.cross(w, np.cross(w, L4))
     net = nb.earth_moon_accel(L4, t) + centrifugal
     assert np.linalg.norm(net) < 1e-7, np.linalg.norm(net)
+
+
+def test_propagate_earth_moon_reduces_to_two_body_near_earth():
+    # A LEO orbit: the Moon's perturbation is tiny, so it tracks Kepler closely.
+    r = 7.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
+    out = nb.propagate_earth_moon(st, period / 4, max_step_s=0.5)
+    # Within ~1 km of two-body over a quarter LEO orbit (Moon tug is sub-km here).
+    assert np.linalg.norm(out.r - propagate_kepler(st, period / 4).r) < 1.0e3
+
+
+def test_propagate_earth_moon_reversible():
+    st = StateVector(r=np.array([5.0e7, 0.0, 0.0]),
+                     v=np.array([0.0, 1500.0, 100.0]), mu=MU_EARTH, epoch_s=0.0)
+    T = 3600.0 * 6
+    fwd = nb.propagate_earth_moon(st, T, max_step_s=20.0)
+    back = nb.propagate_earth_moon(fwd, -T, max_step_s=20.0)
+    assert np.linalg.norm(back.r - st.r) < 1.0
