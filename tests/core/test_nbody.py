@@ -86,7 +86,9 @@ def test_jacobi_constant_conserved_over_seven_days():
     st = StateVector(r=np.array([1.2e8, 0.0, 0.0]),
                      v=np.array([0.0, 900.0, 50.0]), mu=MU_EARTH, epoch_s=0.0)
     c0 = nb.jacobi_constant(st, 0.0)
-    far = nb.propagate_nbody(st, 7 * 86400.0, attractors=nb.EARTH_MOON, max_step_s=600.0)
+    # Velocity Verlet's Jacobi error is bounded O(h^2) (no secular drift); 200 s steps
+    # give ~2.7e-7 here. (Do not relax the 1e-6 tolerance — tighten the step instead.)
+    far = nb.propagate_nbody(st, 7 * 86400.0, attractors=nb.EARTH_MOON, max_step_s=200.0)
     c1 = nb.jacobi_constant(far, far.epoch_s)
     assert abs(c1 - c0) / abs(c0) < 1e-6
 
