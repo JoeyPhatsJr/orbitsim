@@ -1,5 +1,7 @@
 import numpy as np
 from orbitsim.core.constants import MU_EARTH, MU_MOON
+from orbitsim.core.state import StateVector
+from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core import nbody as nb
 
 
@@ -40,6 +42,39 @@ def test_two_attractors_sum():
     a_e = nb.gravity_accel(r, 0.0, attractors=[nb.EARTH])
     a_m = nb.gravity_accel(r, 0.0, attractors=[nb.MOON])
     assert np.allclose(a_both, a_e + a_m, rtol=1e-12)
+
+
+def _leo_state():
+    r = 7.0e6
+    # State referenced to Earth's *barycentric* position so it's a clean Earth orbit.
+    e = nb.EARTH.state_at(0.0)
+    return StateVector(r=e.r + np.array([r, 0.0, 0.0]),
+                       v=e.v + np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                       mu=MU_EARTH, epoch_s=0.0)
+
+
+def test_reduces_to_two_body_with_only_earth():
+    st = _leo_state()
+    period = 2 * np.pi * np.sqrt(7.0e6**3 / MU_EARTH)
+    # Geocentric two-body reference (subtract Earth's fixed barycentric offset).
+    e = nb.EARTH.state_at(0.0)
+    geo = StateVector(r=st.r - e.r, v=st.v - e.v, mu=MU_EARTH, epoch_s=0.0)
+    # Quarter orbit: fine step so 2nd-order Verlet error is sub-metre.
+    out = nb.propagate_nbody(st, period / 4, attractors=[nb.EARTH], max_step_s=0.5)
+    ref = propagate_kepler(geo, period / 4).r + nb.EARTH.state_at(period / 4).r
+    assert np.linalg.norm(out.r - ref) < 1.0
+    # One period closes.
+    out2 = nb.propagate_nbody(st, period, attractors=[nb.EARTH], max_step_s=0.5)
+    ref2 = propagate_kepler(geo, period).r + nb.EARTH.state_at(period).r
+    assert np.linalg.norm(out2.r - ref2) < 10.0
+
+
+def test_propagation_is_reversible():
+    st = _leo_state()
+    T = 3600.0 * 3
+    fwd = nb.propagate_nbody(st, T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    back = nb.propagate_nbody(fwd, -T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    assert np.linalg.norm(back.r - st.r) < 1.0
 
 
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON

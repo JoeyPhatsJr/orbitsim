@@ -43,3 +43,31 @@ def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
         d = r - body.state_at(t_s).r
         a += -body.mu * d / np.linalg.norm(d)**3
     return a
+
+
+def _substep_count(state, dt_s, attractors, max_step_s):
+    """Number of uniform Verlet sub-steps for |dt_s|: small enough to resolve the
+    closest body's local orbital timescale (1/200 of 2*pi*sqrt(r^3/mu))."""
+    r = np.asarray(state.r, dtype=np.float64)
+    cap = max_step_s
+    for body in attractors:
+        rb = np.linalg.norm(r - body.state_at(state.epoch_s).r)
+        cap = min(cap, (2 * np.pi * np.sqrt(rb**3 / body.mu)) / 200.0)
+    return max(1, int(np.ceil(abs(dt_s) / cap)))
+
+
+def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
+    """Advance the ship by dt_s using velocity Verlet (kick-drift-kick). Reversible."""
+    n = _substep_count(state, dt_s, attractors, max_step_s)
+    h = dt_s / n
+    r = np.asarray(state.r, dtype=np.float64).copy()
+    v = np.asarray(state.v, dtype=np.float64).copy()
+    t = state.epoch_s
+    a = gravity_accel(r, t, attractors)
+    for _ in range(n):
+        v_half = v + 0.5 * a * h
+        r = r + v_half * h
+        t = t + h
+        a = gravity_accel(r, t, attractors)
+        v = v_half + 0.5 * a * h
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
