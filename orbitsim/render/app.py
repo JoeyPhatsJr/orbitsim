@@ -685,6 +685,7 @@ class OrbitApp(ShowBase):
             periapsis_m=rp - self.world.central.radius_m,
             apoapsis_m=ra - self.world.central.radius_m,
             period_s=period,
+            inclination_rad=elem.i,
         )
         g_local = self.world.central.mu / max(v0.state.r_mag, 1.0) ** 2
         twr = (v0.max_thrust_n / (v0.mass_kg * g_local)) if v0.mass_kg > 0 else 0.0

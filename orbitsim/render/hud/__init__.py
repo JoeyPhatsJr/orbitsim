@@ -1,6 +1,43 @@
 """Minimal DirectGUI overlay. Converts SI -> km/UTC at this boundary only."""
+import numpy as np
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode
+
+_MI_PER_KM = 0.621371
+
+
+def _dist(meters: float, units: str) -> str:
+    """Format a distance [m] as km or mi (1 km = 0.621371 mi), one decimal."""
+    km = meters / 1000.0
+    if units == "mi":
+        return f"{km * _MI_PER_KM:,.1f} mi"
+    return f"{km:,.1f} km"
+
+
+def _speed(mps: float, units: str) -> str:
+    """Format a speed [m/s] as km/s or mi/s, three decimals."""
+    kms = mps / 1000.0
+    if units == "mi":
+        return f"{kms * _MI_PER_KM:,.3f} mi/s"
+    return f"{kms:,.3f} km/s"
+
+
+def orbit_panel_lines(
+    *, sim_time_s: float, warp: float, altitude_m: float, speed_mps: float,
+    periapsis_m: float, apoapsis_m: float, period_s: float,
+    inclination_rad: float, units: str,
+) -> list[str]:
+    """Build the orbit-info panel text lines. Pure (no DirectGUI) so it is unit-testable."""
+    return [
+        f"Sim time: {sim_time_s:,.0f} s past J2000",
+        f"Warp: x{warp:,.0f}",
+        f"Altitude: {_dist(altitude_m, units)}",
+        f"Speed: {_speed(speed_mps, units)}",
+        f"Periapsis: {_dist(periapsis_m, units)}",
+        f"Apoapsis: {_dist(apoapsis_m, units)}",
+        f"Inclination: {np.degrees(inclination_rad):,.1f}°",
+        f"Period: {period_s / 60.0:,.1f} min",
+    ]
 
 
 class Hud:
@@ -30,6 +67,11 @@ class Hud:
             mayChange=True,
             parent=base.a2dTopRight,
         )
+        self.units = "km"  # distance/speed units for readouts ("km" or "mi")
+
+    def set_units(self, units: str) -> None:
+        """Set distance units for HUD readouts ('km' or 'mi')."""
+        self.units = units
 
     def update(
         self,
@@ -41,16 +83,13 @@ class Hud:
         periapsis_m: float,
         apoapsis_m: float,
         period_s: float,
+        inclination_rad: float,
     ) -> None:
-        lines = [
-            f"Sim time: {sim_time_s:,.0f} s past J2000",
-            f"Warp: x{warp:,.0f}",
-            f"Altitude: {altitude_m / 1000.0:,.1f} km",
-            f"Speed: {speed_mps / 1000.0:,.3f} km/s",
-            f"Periapsis: {periapsis_m / 1000.0:,.1f} km",
-            f"Apoapsis: {apoapsis_m / 1000.0:,.1f} km",
-            f"Period: {period_s / 60.0:,.1f} min",
-        ]
+        lines = orbit_panel_lines(
+            sim_time_s=sim_time_s, warp=warp, altitude_m=altitude_m, speed_mps=speed_mps,
+            periapsis_m=periapsis_m, apoapsis_m=apoapsis_m, period_s=period_s,
+            inclination_rad=inclination_rad, units=self.units,
+        )
         self.text.setText("\n".join(lines))
 
     def update_flight(
