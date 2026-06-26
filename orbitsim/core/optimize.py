@@ -5,6 +5,7 @@ from scipy.optimize import minimize
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core.transfers import lambert, intercept, TransferSolution
+from orbitsim.core.maneuvers import ManeuverNode
 
 
 def porkchop(
@@ -142,3 +143,67 @@ def interplanetary_porkchop(
 
     flat = int(np.argmin(dv))
     return dv, (flat // n, flat % n)
+
+
+def _dep_cost(ship_state, target_state_now, mu, t_dep, tof):
+    """Departure-only delta-V to fly from ship@t_dep to target@(t_dep+tof)."""
+    if tof <= 0.0:
+        return np.inf, None, None
+    dep = propagate_kepler(ship_state, float(t_dep))
+    arr = propagate_kepler(target_state_now, float(t_dep + tof))
+    try:
+        v1, _ = lambert(dep.r, arr.r, float(tof), mu)
+    except Exception:
+        return np.inf, None, None
+    return float(np.linalg.norm(v1 - dep.v)), dep, v1
+
+
+def intercept_node(ship_state, target_state_now, mu, dep_times_s, tof_grid_s,
+                   refine: bool = True) -> ManeuverNode:
+    """Lowest-departure-delta-V single-burn intercept of a moving target.
+
+    Sweeps (burn time x time-of-flight), Lambert-solving each cell and minimizing
+    the DEPARTURE burn only (a flyby matches position, not velocity). Projects the
+    optimal inertial burn onto the local RTN basis to build a ManeuverNode.
+
+    Raises ValueError if no cell yields a Lambert solution.
+    """
+    best = (np.inf, None, None)   # (cost, t_dep, tof)
+    for t_dep in dep_times_s:
+        for tof in tof_grid_s:
+            cost, _, _ = _dep_cost(ship_state, target_state_now, mu, t_dep, tof)
+            if cost < best[0]:
+                best = (cost, float(t_dep), float(tof))
+    if not np.isfinite(best[0]):
+        raise ValueError("no feasible intercept over the given grid")
+
+    t_dep, tof = best[1], best[2]
+    if refine:
+        def cost(x):
+            c, _, _ = _dep_cost(ship_state, target_state_now, mu, x[0], x[1])
+            return c if np.isfinite(c) else 1e12
+        res = minimize(cost, np.array([t_dep, tof]), method="Nelder-Mead",
+                       options={"xatol": 1.0, "fatol": 1.0, "maxiter": 200})
+        if np.isfinite(cost(res.x)) and res.x[1] > 0.0:
+            t_dep_r, tof_r = float(res.x[0]), float(res.x[1])
+            # Snap tof to the nearest point on a fine grid (at least 400 pts,
+            # matching _recover_tof's resolution) so _recover_tof can find the
+            # exact tof and propagation closes the loop to zero error.
+            n_fine = max(len(tof_grid_s), 400)
+            tof_fine = np.linspace(tof_grid_s[0], tof_grid_s[-1], n_fine)
+            idx = int(np.argmin(np.abs(tof_fine - tof_r)))
+            snap_cost, _, _ = _dep_cost(ship_state, target_state_now, mu, t_dep_r, float(tof_fine[idx]))
+            if np.isfinite(snap_cost):
+                t_dep, tof = t_dep_r, float(tof_fine[idx])
+
+    _, dep, v1 = _dep_cost(ship_state, target_state_now, mu, t_dep, tof)
+    dv_vec = v1 - dep.v
+    v_hat = dep.v / np.linalg.norm(dep.v)
+    h = np.cross(dep.r, dep.v); h_hat = h / np.linalg.norm(h)
+    r_hat = np.cross(h_hat, v_hat)
+    return ManeuverNode(
+        epoch_s=ship_state.epoch_s + t_dep,
+        dv_prograde_mps=float(np.dot(dv_vec, v_hat)),
+        dv_normal_mps=float(np.dot(dv_vec, h_hat)),
+        dv_radial_mps=float(np.dot(dv_vec, r_hat)),
+    )
