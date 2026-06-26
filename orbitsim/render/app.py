@@ -28,6 +28,7 @@ from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
+from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
 from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
 
@@ -149,6 +150,8 @@ class OrbitApp(ShowBase):
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
+        bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
+        self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self._build_warp_controls()
 
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
@@ -409,6 +412,7 @@ class OrbitApp(ShowBase):
         self.accept("period", self._warp_up_guarded)  # ">" key (blocked while thrusting)
         self.accept("comma", self.clock.warp_down)  # "<" key
         self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
+        self.accept("f1", self.keybind_overlay.toggle)  # keybind help overlay
 
         if not self.solar_system and self.world.vessels:
             self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
