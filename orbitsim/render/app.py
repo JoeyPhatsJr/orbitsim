@@ -442,6 +442,9 @@ class OrbitApp(ShowBase):
         ttn = self._time_to_node()
         if ttn is not None and ttn > self.EXECUTE_TOLERANCE_S:
             return  # scheduled node not due yet
+        if ttn is not None and ttn < -self.EXECUTE_TOLERANCE_S:
+            self._clear_node()  # node already passed; discard rather than burn backward in time
+            return
         v0 = self.world.vessels[0]
         node = self._current_node()
         dv = node.magnitude_mps
@@ -725,6 +728,12 @@ class OrbitApp(ShowBase):
         node = self._current_node()
         v0 = self.world.vessels[0]
         ttn = self._time_to_node()
+        # Discard a node that slipped well past its epoch unexecuted, so it can't linger
+        # invisibly or later execute backward in time.
+        if ttn is not None and ttn < -self.EXECUTE_TOLERANCE_S:
+            self._clear_node()
+            ttn = None
+            node = self._current_node()
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
         # Post-burn orbit preview.
         if node.magnitude_mps > 0.0:
@@ -737,9 +746,10 @@ class OrbitApp(ShowBase):
         elif self._preview_np is not None:
             self._preview_np.remove_node()
             self._preview_np = None
-        # Node marker at the node's predicted position on the orbit.
-        if self._node_epoch_s is not None and ttn is not None and ttn >= 0.0:
-            npos = propagate_kepler(v0.state, ttn).r
+        # Node marker at the node's predicted position on the orbit (held at the vessel
+        # through the brief execute window once the node is due).
+        if self._node_epoch_s is not None and ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
+            npos = propagate_kepler(v0.state, max(0.0, ttn)).r
             mx, my, mz = self.transform.to_render(npos)
             if self._node_marker_np is None:
                 self._node_marker_np = make_uv_sphere(1.0, 8, 12)
@@ -754,11 +764,14 @@ class OrbitApp(ShowBase):
         # Auto-warp-down as the node nears (never warps up).
         if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.clock.warp and self.clock.warp > 1.0:
             self.clock.warp_down()
-        # Pending-node readout (single node).
-        if ttn is not None and ttn >= 0.0:
-            mm, ss = divmod(int(ttn), 60)
-            self._node_ttn_text.setText(
-                f"Node in T-{mm:02d}:{ss:02d}   dV {node.magnitude_mps:,.1f} m/s")
+        # Pending-node readout (single node); shows "DUE" once within the execute window.
+        if ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
+            if ttn <= self.EXECUTE_TOLERANCE_S:
+                label = "DUE — press Execute"
+            else:
+                mm, ss = divmod(int(ttn), 60)
+                label = f"in T-{mm:02d}:{ss:02d}"
+            self._node_ttn_text.setText(f"Node {label}   dV {node.magnitude_mps:,.1f} m/s")
         else:
             self._node_ttn_text.setText("")
 
