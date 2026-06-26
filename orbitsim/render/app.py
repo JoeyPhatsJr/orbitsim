@@ -230,8 +230,10 @@ class OrbitApp(ShowBase):
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
 
-            # Moon (idealized Keplerian) as an intercept target: marker + orbit ring.
-            self._target_moon = False
+            # Targetable bodies (Moon today; ships later). Click a marker to select.
+            from orbitsim.render.targets import MoonTarget
+            self._targets = [MoonTarget()]
+            self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
             self._ca = None
             self._ca_traj = None
@@ -385,7 +387,7 @@ class OrbitApp(ShowBase):
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
-            ("Target", self._toggle_target),
+            ("Clear Tgt", self._clear_target),
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.06),
@@ -419,9 +421,54 @@ class OrbitApp(ShowBase):
             self._refresh_readout()
 
     def _release_jogs(self) -> None:
-        """Spring all jog thumbs back to center so the value stops changing on release."""
+        """Spring all jog thumbs back to center so the value stops changing on release.
+
+        Also attempt a target pick: a left-click that didn't drag is a tap on a body."""
+        self._try_pick_target()
         for slider in self._jog.values():
             slider["value"] = 0.0
+
+    def _on_mouse1_down(self):
+        mw = self.mouseWatcherNode
+        self._mouse1_down_px = self._mouse_px() if (mw and mw.has_mouse()) else None
+
+    def _mouse_px(self):
+        """Current mouse position in pixels, or None if off-window."""
+        mw = self.mouseWatcherNode
+        if mw is None or not mw.has_mouse():
+            return None
+        w, h = self.win.get_x_size(), self.win.get_y_size()
+        return ((mw.get_mouse_x() * 0.5 + 0.5) * w, (mw.get_mouse_y() * 0.5 + 0.5) * h)
+
+    def _marker_px(self, world_r):
+        """Project an inertial position to pixels, or None if behind the camera/off-lens."""
+        from panda3d.core import Point2
+        rp = self.transform.to_render(world_r)
+        p = self.cam.get_relative_point(self.render, rp)
+        proj = Point2()
+        if not self.camLens.project(p, proj):
+            return None
+        w, h = self.win.get_x_size(), self.win.get_y_size()
+        return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
+
+    def _try_pick_target(self):
+        """On a left-click tap (not a drag), select the nearest target marker."""
+        from orbitsim.render.picking import nearest_marker
+        down = getattr(self, "_mouse1_down_px", None)
+        self._mouse1_down_px = None
+        if down is None:
+            return
+        click = self._mouse_px()
+        if click is None:
+            return
+        if abs(click[0] - down[0]) > 6.0 or abs(click[1] - down[1]) > 6.0:
+            return  # was a drag, not a tap
+        now = self.clock.sim_time_s
+        proj = [self._marker_px(t.state_at(now).r) for t in self._targets]
+        idxs = [i for i, p in enumerate(proj) if p is not None]
+        hit = nearest_marker(click, [proj[i] for i in idxs], tol_px=22.0)
+        if hit is not None:
+            self._target = self._targets[idxs[hit]]
 
     def _current_node(self) -> ManeuverNode:
         """Build the node from the current dV values at the scheduled epoch (or now if none)."""
@@ -466,17 +513,16 @@ class OrbitApp(ShowBase):
             self._node_marker_np.remove_node()
             self._node_marker_np = None
 
-    def _toggle_target(self):
-        """Toggle the Moon as the intercept target; clear markers/readout when off."""
-        self._target_moon = not self._target_moon
-        if not self._target_moon:
-            for attr in ("_ca_marker_ship", "_ca_marker_moon"):
-                np_ = getattr(self, attr, None)
-                if np_ is not None:
-                    np_.remove_node()
-                    setattr(self, attr, None)
-            self._ca = None
-            self._target_text.setText("")
+    def _clear_target(self):
+        """Deselect the current target; remove its closest-approach markers + readout."""
+        self._target = None
+        for attr in ("_ca_marker_ship", "_ca_marker_moon"):
+            np_ = getattr(self, attr, None)
+            if np_ is not None:
+                np_.remove_node()
+                setattr(self, attr, None)
+        self._ca = None
+        self._target_text.setText("Target: none")
 
     def _ca_marker(self, attr, color):
         """Lazily create/reuse a closest-approach marker NodePath."""
@@ -574,6 +620,8 @@ class OrbitApp(ShowBase):
             for k in list(self._keys):
                 self.accept(k, self._set_key, [k, True])
                 self.accept(f"{k}-up", self._set_key, [k, False])
+            self._mouse1_down_px = None
+            self.accept("mouse1", self._on_mouse1_down)   # tap (no drag) picks a target
             self.accept("z", self._throttle_full)
             self.accept("x", self._throttle_cut)
             self.accept("u", self._toggle_unlimited_dv)
@@ -778,6 +826,11 @@ class OrbitApp(ShowBase):
         self._apply_flight_input(real_dt)
         if self.world.any_thrusting() and self.clock.warp != 1.0:
             self.clock.warp = 1.0
+        # Feed the current target's position to the TARGET/ANTITARGET SAS hold.
+        target_pos = (self._target.state_at(self.clock.sim_time_s).r
+                      if self._target is not None else None)
+        for v in self.world.vessels:
+            v.sas_target_pos = target_pos
         sim_dt = self.clock.advance(real_dt)
         self.world.step(sim_dt)
 
@@ -885,11 +938,11 @@ class OrbitApp(ShowBase):
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
-        # Closest approach to the Moon when targeted (throttled recompute). Both the ship
-        # trajectory and the Moon are referenced to the same base epoch (the node epoch when
-        # a burn is planned, else now) so they are compared at matching absolute times; the
-        # absolute CA epoch is cached so the markers hold steady between recomputes (under warp).
-        if self._target_moon:
+        # Closest approach to the current target (throttled recompute). Both the ship
+        # trajectory and the target are referenced to the same base epoch (the node epoch
+        # when a burn is planned, else now) so they are compared at matching absolute times;
+        # the absolute CA epoch is cached so the markers hold steady between recomputes (warp).
+        if self._target is not None:
             import time as _time
             now_real = _time.monotonic()
             if self._ca is None or now_real - self._ca_recompute_t > 0.5:
@@ -906,21 +959,21 @@ class OrbitApp(ShowBase):
                     period = 14.0 * 86400.0
                 window = min(period, 14.0 * 86400.0)
                 self._ca = closest_approach(
-                    traj, moon_state_at(base_epoch), window_s=window, coarse_samples=720)
+                    traj, self._target.state_at(base_epoch), window_s=window, coarse_samples=720)
                 self._ca_traj = traj
                 self._ca_abs_epoch = base_epoch + self._ca.t_ca_s
             ca = self._ca
             ship_at = propagate_kepler(self._ca_traj, ca.t_ca_s).r
-            moon_at = moon_state_at(self._ca_abs_epoch).r
+            tgt_at = self._target.state_at(self._ca_abs_epoch).r
             self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
                 *self.transform.to_render(ship_at))
             self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
-                *self.transform.to_render(moon_at))
+                *self.transform.to_render(tgt_at))
             countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
             mm, ss = divmod(int(countdown), 60)
             self._target_text.setText(
-                f"Target: Moon   CA T-{mm:02d}:{ss:02d}   sep {ca.separation_m / 1000:,.0f} km"
-                f"   rel {ca.rel_speed_mps:,.0f} m/s")
+                f"Target: {self._target.name}   CA T-{mm:02d}:{ss:02d}"
+                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s")
 
         self._apply_mouse_orbit()
         self._update_starfield()
@@ -958,7 +1011,7 @@ class OrbitApp(ShowBase):
             dv_remaining=v0.delta_v_remaining,
             warp_locked=self.world.any_thrusting(),
         )
-        self.navball.update(orientation_q=v0.orientation, state=v0.state)
+        self.navball.update(orientation_q=v0.orientation, state=v0.state, target_pos=target_pos)
         self._update_warp_readout()
         return task.cont
 
