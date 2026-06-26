@@ -29,6 +29,7 @@ from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
+from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
 
@@ -152,6 +153,7 @@ class OrbitApp(ShowBase):
         self.hud = Hud(self)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
+        self.settings_panel = SettingsPanel(self.aspect2d, self.hud.set_units)
         self._build_warp_controls()
 
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
@@ -413,6 +415,7 @@ class OrbitApp(ShowBase):
         self.accept("comma", self.clock.warp_down)  # "<" key
         self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
         self.accept("f1", self.keybind_overlay.toggle)  # keybind help overlay
+        self.accept("escape", self.settings_panel.toggle)  # settings panel
 
         if not self.solar_system and self.world.vessels:
             self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
