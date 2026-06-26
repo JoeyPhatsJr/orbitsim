@@ -134,7 +134,9 @@ def test_intercept_node_rtn_projection_is_lossless():
     recomposed = (node.dv_prograde_mps * v_hat + node.dv_normal_mps * h_hat
                   + node.dv_radial_mps * r_hat)
     assert node.magnitude_mps > 0.0
-    assert np.isfinite(recomposed).all()
+    # Orthonormal RTN basis -> recomposed magnitude must equal the node magnitude
+    # (lossless projection); a wrong/ non-orthonormal basis would break this.
+    assert abs(np.linalg.norm(recomposed) - node.magnitude_mps) < 1e-9
 
 
 def test_intercept_node_raises_when_infeasible():

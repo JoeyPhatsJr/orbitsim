@@ -139,12 +139,13 @@ class OrbitApp(ShowBase):
         for vessel in self.world.vessels:
             vessel.fuel_mass_kg = fuel
         self._fuel_capacity = fuel if self.world.vessels else 0.0
-        if bool(self._unlimited_check["indicatorValue"]):
-            self._apply_unlimited(True)   # UI-free: _start_sim hasn't built the HUD yet
+        want_unlimited = bool(self._unlimited_check["indicatorValue"])
         for node in self._title_nodes:
             node.destroy() if hasattr(node, "destroy") else node.remove_node()
         self._title_nodes = []
-        self._start_sim()
+        self._start_sim()                # builds the HUD + settings panel
+        if want_unlimited:
+            self._set_unlimited_dv(True)  # now applies flag + syncs panel + readout
 
     # ------------------------------------------------------------------ sim scene
 
@@ -166,7 +167,8 @@ class OrbitApp(ShowBase):
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self.settings_panel = SettingsPanel(
             self.aspect2d, self.hud.set_units,
-            on_unlimited_toggle=self._set_unlimited_dv)
+            on_unlimited_toggle=self._set_unlimited_dv,
+            enable_unlimited=not self.solar_system)
         self._build_warp_controls()
 
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
@@ -595,6 +597,7 @@ class OrbitApp(ShowBase):
         if self.solar_system or not self.world.vessels:
             return  # no flyable vessel (solar viewer) — nothing to toggle
         self._apply_unlimited(on)
+        self.settings_panel.sync(on)   # keep the Esc-panel label in step with key/title
         self._flash_message(f"Unlimited dV {'ON' if on else 'OFF'}")
         self._refresh_readout()
 
@@ -660,7 +663,7 @@ class OrbitApp(ShowBase):
             self.accept("u", self._toggle_unlimited_dv)
             self.accept("t", self._toggle_sas)
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
-                        "RADIAL_IN", "RADIAL_OUT", "TARGET"]
+                        "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET"]
             for i, mode in enumerate(sas_keys, start=1):
                 self.accept(str(i), self._set_sas, [mode])
             self.accept("f5", self._quicksave)
