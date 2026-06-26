@@ -54,6 +54,7 @@ class Vessel:
     max_turn_rate_radps: float = 0.6
     throttle: float = 0.0
     sas_mode: str = "OFF"
+    unlimited_dv: bool = False
     orientation: np.ndarray = field(default_factory=quat_identity)
 
     @property
@@ -63,7 +64,9 @@ class Vessel:
 
     @property
     def delta_v_remaining(self) -> float:
-        """Remaining delta-V from the rocket equation [m/s]; 0 if no fuel."""
+        """Remaining delta-V from the rocket equation [m/s]; inf if unlimited, 0 if no fuel."""
+        if self.unlimited_dv:
+            return float("inf")
         if self.fuel_mass_kg <= 0.0:
             return 0.0
         return tsiolkovsky_dv(self.exhaust_velocity_mps, self.mass_kg,

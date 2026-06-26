@@ -114,3 +114,12 @@ def test_world_step_slews_attitude_toward_prograde():
     prograde = v.state.v / v.state.v_mag
     # Nose should have turned to (near) prograde.
     assert np.dot(nose_direction(v.orientation), prograde) > 0.999
+
+
+def test_unlimited_dv_is_infinite_regardless_of_fuel():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.5e3, 0]),
+                     mu=3.986e14, epoch_s=0.0)
+    v = Vessel(name="x", state=st, fuel_mass_kg=0.0, unlimited_dv=True)
+    assert v.delta_v_remaining == float("inf")
+    v2 = Vessel(name="y", state=st, fuel_mass_kg=500.0, unlimited_dv=False)
+    assert v2.delta_v_remaining < float("inf")
