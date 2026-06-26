@@ -53,20 +53,23 @@ def _leo_state():
                        mu=MU_EARTH, epoch_s=0.0)
 
 
-def test_reduces_to_two_body_with_only_earth():
-    st = _leo_state()
-    period = 2 * np.pi * np.sqrt(7.0e6**3 / MU_EARTH)
-    # Geocentric two-body reference (subtract Earth's fixed barycentric offset).
-    e = nb.EARTH.state_at(0.0)
-    geo = StateVector(r=st.r - e.r, v=st.v - e.v, mu=MU_EARTH, epoch_s=0.0)
+def test_reduces_to_two_body_with_stationary_earth():
+    # A point mass fixed at the origin (radius 0 => never moves) makes the ship's
+    # motion a clean Kepler orbit, isolating the Verlet integrator from the moving-
+    # frame residual a barycentrically-orbiting Earth would add (Omega^2 * r_earth,
+    # ~35 m/quarter-orbit — that residual is real physics, not integrator error).
+    earth0 = nb._CircularBody(MU_EARTH, 0.0)
+    r = 7.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
     # Quarter orbit: fine step so 2nd-order Verlet error is sub-metre.
-    out = nb.propagate_nbody(st, period / 4, attractors=[nb.EARTH], max_step_s=0.5)
-    ref = propagate_kepler(geo, period / 4).r + nb.EARTH.state_at(period / 4).r
-    assert np.linalg.norm(out.r - ref) < 1.0
+    out = nb.propagate_nbody(st, period / 4, attractors=[earth0], max_step_s=0.5)
+    assert np.linalg.norm(out.r - propagate_kepler(st, period / 4).r) < 1.0
     # One period closes.
-    out2 = nb.propagate_nbody(st, period, attractors=[nb.EARTH], max_step_s=0.5)
-    ref2 = propagate_kepler(geo, period).r + nb.EARTH.state_at(period).r
-    assert np.linalg.norm(out2.r - ref2) < 10.0
+    out2 = nb.propagate_nbody(st, period, attractors=[earth0], max_step_s=0.5)
+    assert np.linalg.norm(out2.r - propagate_kepler(st, period).r) < 10.0
 
 
 def test_propagation_is_reversible():
