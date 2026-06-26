@@ -56,6 +56,7 @@ class Vessel:
     sas_mode: str = "OFF"
     unlimited_dv: bool = False
     orientation: np.ndarray = field(default_factory=quat_identity)
+    sas_target_pos: object = None   # inertial target position [m] for TARGET/ANTITARGET, or None
 
     @property
     def mass_kg(self) -> float:
@@ -103,14 +104,12 @@ class World:
             # 1) Attitude: slew toward the SAS hold direction (if any) each tick.
             if vessel.sas_mode not in ("OFF", "STABILITY"):
                 try:
-                    target = sas_target_dir(vessel.sas_mode, vessel.state)
+                    target = sas_target_dir(vessel.sas_mode, vessel.state, vessel.sas_target_pos)
                 except ValueError:
                     target = None
                 if target is not None:
                     vessel.orientation = slew_toward(
-                        vessel.orientation, target,
-                        vessel.max_turn_rate_radps, sim_dt_s
-                    )
+                        vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
             # 2) Translation.
             if vessel.throttle > 0.0 and (vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv):
                 new_state, new_fuel = integrate_powered(

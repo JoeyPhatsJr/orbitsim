@@ -147,3 +147,30 @@ def test_unlimited_dv_locks_warp_even_with_zero_fuel():
                throttle=1.0, unlimited_dv=True)
     w = World(central=EARTH, vessels=[v])
     assert w.any_thrusting() is True
+
+
+def test_target_sas_slews_nose_toward_target():
+    from orbitsim.core.attitude import nose_direction
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, sas_mode="TARGET", max_turn_rate_radps=1.0)
+    v.sas_target_pos = np.array([7.0e6, 1.0e8, 0.0])   # far +Y of the ship
+    w = World(central=EARTH, vessels=[v])
+    want = v.sas_target_pos - v.state.r
+    want = want / np.linalg.norm(want)
+    a0 = float(np.dot(nose_direction(v.orientation), want))
+    for _ in range(120):
+        w.step(0.05)
+    a1 = float(np.dot(nose_direction(v.orientation), want))
+    assert a1 > a0           # nose turned toward the target
+    assert a1 > 0.9          # and got close to pointing at it
+
+
+def test_target_sas_with_no_target_does_not_crash():
+    st = StateVector(r=np.array([7.0e6, 0, 0]), v=np.array([0, 7.546e3, 0]),
+                     mu=EARTH.mu, epoch_s=0.0)
+    v = Vessel(name="x", state=st, sas_mode="TARGET")   # sas_target_pos stays None
+    w = World(central=EARTH, vessels=[v])
+    q0 = v.orientation.copy()
+    w.step(1.0)
+    np.testing.assert_array_equal(v.orientation, q0)    # attitude held, no error
