@@ -1,5 +1,13 @@
 # Orbit-Line Caching + Orbit Frame (Phase 6.3 B) Implementation Plan
 
+> **STATUS: COMPLETE** (verified 2026-06-26 — 178 tests green + headless math/identity checks).
+> Two deliberate divergences from the steps below, both kept: (1) orbit geometry is baked in
+> **render units** (`p / scale_m_per_unit`) and the orbit frame is **translate-only** (scale fixed
+> at 1.0) — a tiny node scale made Panda flag the frame as singular; (2) the vessel-orbit cache and
+> the Moon ring therefore key on **`(elem, scale)`** and rebuild on zoom, since the baked vertices
+> are scale-dependent. The Moon ring is rebuilt in the update loop when `scale` changes rather than
+> once in `_start_sim`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Execution note:** Task 1 is a pure helper (TDD). Task 2 is the render refactor, executed **inline by the controller** with headless math/identity verification per project convention.
@@ -44,7 +52,7 @@ Reference shapes (existing):
 **Interfaces:**
 - Produces: `orbit_shape_changed(a: KeplerianElements, b: KeplerianElements, tol: float = 1e-9) -> bool` — True if any of `(a, e, i, raan, argp)` differs beyond tolerance (`a` compared relative, the rest absolute), or if either side is None.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/render/test_orbit_lines.py`:
 
@@ -82,12 +90,12 @@ def test_none_counts_as_changed():
     assert orbit_shape_changed(_elem(), None) is True
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/Scripts/python -m pytest tests/render/test_orbit_lines.py -q -k shape`
 Expected: FAIL — `ImportError: cannot import name 'orbit_shape_changed'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `orbitsim/render/orbit_lines.py` (after the imports):
 
@@ -106,12 +114,12 @@ def orbit_shape_changed(a, b, tol: float = 1e-9) -> bool:
             or abs(a.raan - b.raan) > tol or abs(a.argp - b.argp) > tol)
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `.venv/Scripts/python -m pytest tests/render/test_orbit_lines.py -q`
 Expected: PASS (existing + 5 new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add orbitsim/render/orbit_lines.py tests/render/test_orbit_lines.py
@@ -137,7 +145,7 @@ EOF
 - Consumes: `orbit_shape_changed` (Task 1), `build_orbit_node`, `sample_orbit_points`, `state_to_elements`.
 - Produces (app state): `self._orbit_frame: NodePath`, `self._orbit_elem_cache: list`; modified `_rebuild_orbit`; per-frame orbit-frame update; preview + Moon ring under the frame.
 
-- [ ] **Step 1: Create the orbit frame + caches; build Moon ring in world meters under it**
+- [x] **Step 1: Create the orbit frame + caches; build Moon ring in world meters under it**
 
 In `_start_sim`, near where `self.orbit_nps`/`self.vessel_nps` are set up (sandbox path), add:
 
@@ -156,7 +164,7 @@ Change the Moon ring build (in `_start_sim`) from render-space to world-meter un
 
 (Note: `self._orbit_frame` must be created before the Moon ring build — ensure ordering.)
 
-- [ ] **Step 2: Per-frame orbit-frame placement**
+- [x] **Step 2: Per-frame orbit-frame placement**
 
 In the sandbox update loop, right after `self.central_np.set_pos(cx, cy, cz)` (origin already set this frame), add:
 
@@ -167,7 +175,7 @@ In the sandbox update loop, right after `self.central_np.set_pos(cx, cy, cz)` (o
 
 (`cx, cy, cz` is `to_render(zeros)`, already computed at ~747.)
 
-- [ ] **Step 3: Cache `_rebuild_orbit` — rebuild geometry only on shape change, world-meter under frame**
+- [x] **Step 3: Cache `_rebuild_orbit` — rebuild geometry only on shape change, world-meter under frame**
 
 Replace `_rebuild_orbit`:
 
@@ -187,7 +195,7 @@ Replace `_rebuild_orbit`:
 
 Add the import at the top of `app.py`: `from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node, orbit_shape_changed` (extend the existing import line).
 
-- [ ] **Step 4: Move the maneuver preview to world-meter under the frame**
+- [x] **Step 4: Move the maneuver preview to world-meter under the frame**
 
 In the preview block (maneuver section), change the preview build:
 
@@ -204,7 +212,7 @@ In the preview block (maneuver section), change the preview build:
             self._preview_np = None
 ```
 
-- [ ] **Step 5: Headless math + caching + Moon-ring verification**
+- [x] **Step 5: Headless math + caching + Moon-ring verification**
 
 ```bash
 PYTHONPATH=. .venv/Scripts/python - <<'PY'
@@ -253,7 +261,7 @@ PY
 
 Expected: `OK: math identity, coast cache hit, burn rebuild, Moon ring placement`.
 
-- [ ] **Step 6: Full suite + commit**
+- [x] **Step 6: Full suite + commit**
 
 Run: `.venv/Scripts/python -m pytest tests/ -q` → all pass.
 
