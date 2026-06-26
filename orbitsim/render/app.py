@@ -489,8 +489,8 @@ class OrbitApp(ShowBase):
     QUICKSAVE_PATH = "saves/quicksave.json"
 
     def _flash_message(self, text: str) -> None:
-        """Transient user feedback; console fallback until the HUD toast (6.2)."""
-        print(f"[orbitsim] {text}")
+        """Transient on-screen user feedback (toast)."""
+        self.hud.flash(text)
 
     def _quicksave(self) -> None:
         """F5: write the current sandbox world + clock to the quicksave slot."""

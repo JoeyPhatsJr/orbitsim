@@ -68,10 +68,32 @@ class Hud:
             parent=base.a2dTopRight,
         )
         self.units = "km"  # distance/speed units for readouts ("km" or "mi")
+        # Transient center-screen "toast" message (e.g. "Quicksaved").
+        self._base = base
+        self._toast_task = None
+        self.toast = OnscreenText(
+            text="", pos=(0.0, 0.6), scale=0.07, fg=(1.0, 1.0, 0.6, 1),
+            shadow=(0, 0, 0, 1), mayChange=True, parent=base.aspect2d,
+        )
 
     def set_units(self, units: str) -> None:
         """Set distance units for HUD readouts ('km' or 'mi')."""
         self.units = units
+
+    def flash(self, text: str, seconds: float = 2.0) -> None:
+        """Show a transient center-screen message that clears after `seconds`."""
+        if self._toast_task is not None:
+            self._base.taskMgr.remove(self._toast_task)
+            self._toast_task = None
+        self.toast.setText(text)
+        self._toast_task = self._base.taskMgr.doMethodLater(
+            seconds, self._clear_toast, "hud-toast-clear"
+        )
+
+    def _clear_toast(self, task):
+        self.toast.setText("")
+        self._toast_task = None
+        return task.done
 
     def update(
         self,
