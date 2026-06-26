@@ -2,6 +2,7 @@
 ship propagator, the Jacobi constant, and the Lagrange points. Barycentric inertial,
 SI, float64. The ship is a massless test particle; the bodies are on rails."""
 import numpy as np
+from scipy.optimize import brentq
 
 from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
@@ -95,3 +96,29 @@ def jacobi_constant(state, t_s):
     r2 = np.linalg.norm(r_rot - np.array([MOON_X, 0.0, 0.0]))
     omega2 = 0.5 * OMEGA_EM**2 * (x**2 + y**2) + MU_EARTH / r1 + MU_MOON / r2
     return float(2.0 * omega2 - np.dot(v_rot, v_rot))
+
+
+def _collinear_accel_x(x):
+    """Net rotating-frame x-acceleration for a point on the Earth-Moon axis at x."""
+    ax_g = (-MU_EARTH * (x - EARTH_X) / abs(x - EARTH_X)**3
+            - MU_MOON * (x - MOON_X) / abs(x - MOON_X)**3)
+    return OMEGA_EM**2 * x + ax_g
+
+
+def lagrange_points(t_s):
+    """Inertial positions of L1..L5 at t_s [m]."""
+    eps = 1e-3 * D_EM
+    x1 = brentq(_collinear_accel_x, EARTH_X + eps, MOON_X - eps)      # between bodies
+    x2 = brentq(_collinear_accel_x, MOON_X + eps, MOON_X + 0.4 * D_EM)  # beyond Moon
+    x3 = brentq(_collinear_accel_x, -1.6 * D_EM, EARTH_X - eps)       # beyond Earth
+    h = np.sqrt(3.0) / 2.0 * D_EM
+    xtri = (0.5 - MASS_RATIO) * D_EM
+    rot = {
+        "L1": np.array([x1, 0.0, 0.0]),
+        "L2": np.array([x2, 0.0, 0.0]),
+        "L3": np.array([x3, 0.0, 0.0]),
+        "L4": np.array([xtri, h, 0.0]),
+        "L5": np.array([xtri, -h, 0.0]),
+    }
+    Rinv = _rot_z(OMEGA_EM * t_s).T   # rotating -> inertial
+    return {k: Rinv @ v for k, v in rot.items()}

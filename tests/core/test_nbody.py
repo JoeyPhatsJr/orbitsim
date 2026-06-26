@@ -93,4 +93,38 @@ def test_jacobi_constant_conserved_over_seven_days():
     assert abs(c1 - c0) / abs(c0) < 1e-6
 
 
+def test_L4_L5_exact_equilateral_geometry():
+    L = nb.lagrange_points(0.0)
+    e = np.array([nb.EARTH_X, 0.0, 0.0])
+    m = np.array([nb.MOON_X, 0.0, 0.0])
+    for key, sign in (("L4", +1), ("L5", -1)):
+        p = L[key]
+        assert abs(np.linalg.norm(p - e) - nb.D_EM) < 1e-3   # distance d from Earth
+        assert abs(np.linalg.norm(p - m) - nb.D_EM) < 1e-3   # distance d from Moon
+        assert np.sign(p[1]) == sign                          # L4 leads (+y), L5 trails
+
+
+def test_collinear_points_match_known_positions_and_balance():
+    L = nb.lagrange_points(0.0)
+    # Published Earth-Moon CR3BP rotating-frame x (units of d), barycenter origin.
+    for key, x_over_d in (("L1", 0.8369), ("L2", 1.1557), ("L3", -1.0051)):
+        x = L[key][0]                              # at t=0 rotating == inertial x
+        assert abs(x / nb.D_EM - x_over_d) < 1e-3
+        # Net effective (gravity + centrifugal) acceleration ~ 0 at the point.
+        p = L[key]
+        g = nb.gravity_accel(p, 0.0, attractors=nb.EARTH_MOON)
+        centrifugal = nb.OMEGA_EM**2 * np.array([p[0], p[1], 0.0])
+        assert np.linalg.norm(g + centrifugal) < 1e-6
+
+
+def test_L4_stays_bounded_over_a_day():
+    L = nb.lagrange_points(0.0)
+    p = L["L4"]
+    v = np.cross([0.0, 0.0, nb.OMEGA_EM], p)       # co-rotating: stationary in rot frame
+    st = StateVector(r=p, v=v, mu=MU_EARTH, epoch_s=0.0)
+    out = nb.propagate_nbody(st, 86400.0, attractors=nb.EARTH_MOON, max_step_s=60.0)
+    moved_L4 = nb.lagrange_points(86400.0)["L4"]
+    assert np.linalg.norm(out.r - moved_L4) < 0.1 * nb.D_EM   # stable: doesn't escape
+
+
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON
