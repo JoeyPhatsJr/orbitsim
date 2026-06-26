@@ -219,6 +219,8 @@ class OrbitApp(ShowBase):
             self._target_moon = False
             self._ca_recompute_t = 0.0
             self._ca = None
+            self._ca_traj = None
+            self._ca_abs_epoch = 0.0
             self._ca_marker_ship = None
             self._ca_marker_moon = None
             self._moon_np = make_uv_sphere(1.0, 12, 16)
@@ -824,29 +826,39 @@ class OrbitApp(ShowBase):
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
-        # Closest approach to the Moon when targeted (throttled recompute).
+        # Closest approach to the Moon when targeted (throttled recompute). Both the ship
+        # trajectory and the Moon are referenced to the same base epoch (the node epoch when
+        # a burn is planned, else now) so they are compared at matching absolute times; the
+        # absolute CA epoch is cached so the markers hold steady between recomputes (under warp).
         if self._target_moon:
             import time as _time
-            traj = (apply_maneuver(v0.state, node)
-                    if (self._node_epoch_s is not None and node.magnitude_mps > 0.0)
-                    else v0.state)
             now_real = _time.monotonic()
             if self._ca is None or now_real - self._ca_recompute_t > 0.5:
                 self._ca_recompute_t = now_real
+                if self._node_epoch_s is not None and node.magnitude_mps > 0.0:
+                    base_epoch = self._node_epoch_s
+                    traj = apply_maneuver(v0.state, node)
+                else:
+                    base_epoch = self.clock.sim_time_s
+                    traj = v0.state
                 try:
                     period = state_to_elements(traj).period_s
                 except ValueError:
                     period = 14.0 * 86400.0
                 window = min(period, 14.0 * 86400.0)
-                self._ca = closest_approach(traj, moon_now, window_s=window, coarse_samples=720)
+                self._ca = closest_approach(
+                    traj, moon_state_at(base_epoch), window_s=window, coarse_samples=720)
+                self._ca_traj = traj
+                self._ca_abs_epoch = base_epoch + self._ca.t_ca_s
             ca = self._ca
-            ship_at = propagate_kepler(traj, ca.t_ca_s).r
-            moon_at = moon_state_at(self.clock.sim_time_s + ca.t_ca_s).r
+            ship_at = propagate_kepler(self._ca_traj, ca.t_ca_s).r
+            moon_at = moon_state_at(self._ca_abs_epoch).r
             self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
                 *self.transform.to_render(ship_at))
             self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
                 *self.transform.to_render(moon_at))
-            mm, ss = divmod(int(max(0.0, ca.t_ca_s)), 60)
+            countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
+            mm, ss = divmod(int(countdown), 60)
             self._target_text.setText(
                 f"Target: Moon   CA T-{mm:02d}:{ss:02d}   sep {ca.separation_m / 1000:,.0f} km"
                 f"   rel {ca.rel_speed_mps:,.0f} m/s")

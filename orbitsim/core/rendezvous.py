@@ -63,6 +63,11 @@ def closest_approach(
             lo = m1
     t_ca = 0.5 * (lo + hi)
 
+    # Guard: never return a separation worse than the coarse minimum (ternary refine
+    # only guarantees improvement when the bracket is unimodal).
+    if seps[k] <= _sep(state_a, state_b, t_ca):
+        t_ca = float(times[k])
+
     sa = propagate_kepler(state_a, t_ca)
     sb = propagate_kepler(state_b, t_ca)
     sep = float(np.linalg.norm(sa.r - sb.r))
