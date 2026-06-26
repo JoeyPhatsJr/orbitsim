@@ -112,7 +112,7 @@ class World:
                         vessel.max_turn_rate_radps, sim_dt_s
                     )
             # 2) Translation.
-            if vessel.throttle > 0.0 and vessel.fuel_mass_kg > 0.0:
+            if vessel.throttle > 0.0 and (vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv):
                 new_state, new_fuel = integrate_powered(
                     vessel.state,
                     dry_mass_kg=vessel.dry_mass_kg,
@@ -124,12 +124,13 @@ class World:
                     dt_s=sim_dt_s,
                 )
                 vessel.state = new_state
-                vessel.fuel_mass_kg = new_fuel
+                if not vessel.unlimited_dv:
+                    vessel.fuel_mass_kg = new_fuel
             else:
                 vessel.state = propagate_kepler(vessel.state, sim_dt_s)
 
     def any_thrusting(self) -> bool:
         """True if any vessel is currently producing thrust (throttle>0 and
         fuel)."""
-        return any(v.throttle > 0.0 and v.fuel_mass_kg > 0.0
+        return any(v.throttle > 0.0 and (v.fuel_mass_kg > 0.0 or v.unlimited_dv)
                    for v in self.vessels)
