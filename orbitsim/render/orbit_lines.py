@@ -4,6 +4,20 @@ import numpy as np
 from orbitsim.core.elements import KeplerianElements, elements_to_state
 
 
+def orbit_shape_changed(a, b, tol: float = 1e-9) -> bool:
+    """True if the orbit *shape* (a, e, i, raan, argp) differs beyond tolerance.
+
+    True anomaly (position along the orbit) is ignored. A None on either side
+    counts as changed (forces an initial build).
+    """
+    if a is None or b is None:
+        return True
+    if abs(a.a - b.a) > tol * max(abs(a.a), 1.0):
+        return True
+    return (abs(a.e - b.e) > tol or abs(a.i - b.i) > tol
+            or abs(a.raan - b.raan) > tol or abs(a.argp - b.argp) > tol)
+
+
 def sample_orbit_points(elements: KeplerianElements, n: int = 256) -> np.ndarray:
     """Sample physics-space positions along an orbit.
 

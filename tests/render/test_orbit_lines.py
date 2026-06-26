@@ -1,8 +1,35 @@
 """Tests for orbit-line sampling (pure math)."""
 import numpy as np
-from orbitsim.render.orbit_lines import sample_orbit_points
+from orbitsim.render.orbit_lines import sample_orbit_points, orbit_shape_changed
 from orbitsim.core.elements import KeplerianElements
 from orbitsim.core.constants import MU_EARTH
+
+
+def _elem(**over):
+    base = dict(a=7.0e6, e=0.1, i=0.5, raan=0.3, argp=0.4, nu=0.0, mu=MU_EARTH)
+    base.update(over)
+    return KeplerianElements(**base)
+
+
+def test_shape_unchanged_for_identical():
+    assert orbit_shape_changed(_elem(), _elem()) is False
+
+
+def test_shape_unchanged_ignores_true_anomaly():
+    assert orbit_shape_changed(_elem(nu=0.0), _elem(nu=1.7)) is False
+
+
+def test_shape_changed_on_semimajor_axis():
+    assert orbit_shape_changed(_elem(a=7.0e6), _elem(a=7.0e6 + 1.0)) is True
+
+
+def test_shape_changed_on_angles():
+    assert orbit_shape_changed(_elem(argp=0.4), _elem(argp=0.4 + 1e-6)) is True
+
+
+def test_none_counts_as_changed():
+    assert orbit_shape_changed(None, _elem()) is True
+    assert orbit_shape_changed(_elem(), None) is True
 
 
 def test_ellipse_sample_shape_and_radius():
