@@ -114,6 +114,9 @@ before any rendering/Phase-2 work begins.
 - [ ] Round-trip and/or conservation test passes.
 - [ ] `black` formatted, no unused imports.
 - [ ] No `core/` file imports anything from `render/` or `panda3d`.
+- [ ] **Committed and pushed to GitHub** (`origin/main`) after the change is verified — stage the
+      specific files you changed by explicit path (never `git add -A`/`.`; keep `data/`, scratch
+      files, and `.claude/settings.local.json` out), then `git push`.
 
 ---
 
