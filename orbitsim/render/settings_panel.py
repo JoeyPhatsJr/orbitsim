@@ -8,12 +8,14 @@ from panda3d.core import TextNode
 class SettingsPanel:
     """A hidden-by-default settings panel; toggled with Esc."""
 
-    def __init__(self, parent, on_units_change):
+    def __init__(self, parent, on_units_change, on_unlimited_toggle=None):
         self.visible = False
         self.units = "km"
         self._on_units_change = on_units_change
+        self._on_unlimited_toggle = on_unlimited_toggle or (lambda on: None)
+        self._unlimited_on = False
         self._frame = DirectFrame(
-            frameColor=(0, 0, 0, 0.7), frameSize=(-0.45, 0.45, -0.25, 0.25),
+            frameColor=(0, 0, 0, 0.7), frameSize=(-0.45, 0.45, -0.32, 0.25),
             pos=(0, 0, 0), parent=parent,
         )
         OnscreenText(
@@ -24,12 +26,21 @@ class SettingsPanel:
             text="Units: km", scale=0.05, pos=(0, 0, 0.0),
             command=self._cycle_units, parent=self._frame,
         )
+        self._unlimited_btn = DirectButton(
+            text="Unlimited dV: off", scale=0.05, pos=(0, 0, -0.12),
+            command=self._toggle_unlimited, parent=self._frame,
+        )
         self._frame.hide()
 
     def _cycle_units(self):
         self.units = "mi" if self.units == "km" else "km"
         self._units_btn["text"] = f"Units: {self.units}"
         self._on_units_change(self.units)
+
+    def _toggle_unlimited(self):
+        self._unlimited_on = not self._unlimited_on
+        self._unlimited_btn["text"] = f"Unlimited dV: {'on' if self._unlimited_on else 'off'}"
+        self._on_unlimited_toggle(self._unlimited_on)
 
     def show(self):
         self._frame.show()

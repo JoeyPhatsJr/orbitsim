@@ -1,4 +1,6 @@
 """Minimal DirectGUI overlay. Converts SI -> km/UTC at this boundary only."""
+import math
+
 import numpy as np
 from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import TextNode
@@ -131,7 +133,8 @@ class Hud:
             f"Fuel: {fuel_frac * 100:,.0f}%  ({fuel_kg:,.0f} kg)",
             f"Mass: {mass_kg:,.0f} kg",
             f"Thrust: {thrust_n / 1000:,.1f} kN   TWR: {twr:,.2f}",
-            f"dV left: {dv_remaining:,.0f} m/s",
+            ("dV left: ∞" if not math.isfinite(dv_remaining)
+             else f"dV left: {dv_remaining:,.0f} m/s"),
         ]
         if warp_locked:
             lines.append("WARP LOCKED - thrusting")

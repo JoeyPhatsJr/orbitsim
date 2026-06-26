@@ -2,6 +2,7 @@
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectButton import DirectButton
+from direct.gui.DirectCheckButton import DirectCheckButton
 from direct.gui.DirectSlider import DirectSlider
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
@@ -92,7 +93,7 @@ class OrbitApp(ShowBase):
         self._budget_slider = DirectSlider(
             pos=(0.0, 0.0, -0.08),
             scale=0.6,
-            range=(0.0, 4000.0),
+            range=(0.0, 20000.0),
             value=default_fuel,
             pageSize=100.0,
             command=self._refresh_budget_label,
@@ -105,6 +106,10 @@ class OrbitApp(ShowBase):
             fg=(0.6, 0.7, 0.85, 1.0),
             parent=self.aspect2d,
         )
+        self._unlimited_check = DirectCheckButton(
+            text="Unlimited dV", scale=0.05, pos=(0.0, 0.0, -0.32),
+            text_fg=(1, 1, 1, 1), boxPlacement="left", parent=self.aspect2d,
+        )
         play = DirectButton(
             text="  PLAY  ",
             scale=0.1,
@@ -112,7 +117,8 @@ class OrbitApp(ShowBase):
             command=self._on_play,
             parent=self.aspect2d,
         )
-        self._title_nodes = [backdrop, title, subtitle, self._budget_label, self._budget_slider, hint, play]
+        self._title_nodes = [backdrop, title, subtitle, self._budget_label,
+                             self._budget_slider, hint, self._unlimited_check, play]
         self._refresh_budget_label()
 
     def _refresh_budget_label(self) -> None:
@@ -133,6 +139,8 @@ class OrbitApp(ShowBase):
         for vessel in self.world.vessels:
             vessel.fuel_mass_kg = fuel
         self._fuel_capacity = fuel if self.world.vessels else 0.0
+        if bool(self._unlimited_check["indicatorValue"]):
+            self._apply_unlimited(True)   # UI-free: _start_sim hasn't built the HUD yet
         for node in self._title_nodes:
             node.destroy() if hasattr(node, "destroy") else node.remove_node()
         self._title_nodes = []
@@ -156,7 +164,9 @@ class OrbitApp(ShowBase):
         self.hud = Hud(self)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
-        self.settings_panel = SettingsPanel(self.aspect2d, self.hud.set_units)
+        self.settings_panel = SettingsPanel(
+            self.aspect2d, self.hud.set_units,
+            on_unlimited_toggle=self._set_unlimited_dv)
         self._build_warp_controls()
 
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
@@ -481,12 +491,37 @@ class OrbitApp(ShowBase):
         return np_
 
     def _refresh_readout(self) -> None:
+        import math
         node = self._current_node()
         # One budget: the fuel-derived delta-V (rocket equation), shared with flight.
         budget = self.world.vessels[0].delta_v_remaining
+        left = "∞" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
         self._dv_readout.setText(
-            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {budget:,.0f} m/s)"
+            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
         )
+
+    UNLIMITED_RESERVE_KG = 1000.0   # min propellant kept while unlimited (so thrust works at empty)
+
+    def _apply_unlimited(self, on: bool) -> None:
+        """Set the unlimited-dV flag on all vessels (no UI). When enabling with a
+        ~empty tank, top fuel up to a reserve so continuous thrust still produces
+        acceleration (integrate_powered needs propellant for its substep impulse;
+        fuel never depletes under unlimited, so this is set once)."""
+        for vessel in self.world.vessels:
+            vessel.unlimited_dv = on
+            if on and vessel.fuel_mass_kg < self.UNLIMITED_RESERVE_KG:
+                vessel.fuel_mass_kg = self.UNLIMITED_RESERVE_KG
+
+    def _set_unlimited_dv(self, on: bool) -> None:
+        if self.solar_system or not self.world.vessels:
+            return  # no flyable vessel (solar viewer) — nothing to toggle
+        self._apply_unlimited(on)
+        self._flash_message(f"Unlimited dV {'ON' if on else 'OFF'}")
+        self._refresh_readout()
+
+    def _toggle_unlimited_dv(self) -> None:
+        cur = bool(self.world.vessels and self.world.vessels[0].unlimited_dv)
+        self._set_unlimited_dv(not cur)
 
     def _execute_burn(self) -> None:
         from orbitsim.core.flight import fuel_burned_for_dv
@@ -503,9 +538,10 @@ class OrbitApp(ShowBase):
         if 0.0 < dv <= v0.delta_v_remaining:
             v0.state = apply_maneuver(v0.state, node)
             # Spend fuel for this impulse, so maneuver nodes and live thrust draw
-            # from the same tank (no separate budget pool).
-            burned = fuel_burned_for_dv(v0.exhaust_velocity_mps, v0.mass_kg, dv)
-            v0.fuel_mass_kg = max(0.0, v0.fuel_mass_kg - burned)
+            # from the same tank (no separate budget pool) — unless unlimited.
+            if not v0.unlimited_dv:
+                burned = fuel_burned_for_dv(v0.exhaust_velocity_mps, v0.mass_kg, dv)
+                v0.fuel_mass_kg = max(0.0, v0.fuel_mass_kg - burned)
         self._clear_node()
         for axis in self._dv:
             self._dv[axis] = 0.0
@@ -540,6 +576,7 @@ class OrbitApp(ShowBase):
                 self.accept(f"{k}-up", self._set_key, [k, False])
             self.accept("z", self._throttle_full)
             self.accept("x", self._throttle_cut)
+            self.accept("u", self._toggle_unlimited_dv)
             self.accept("t", self._toggle_sas)
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
                         "RADIAL_IN", "RADIAL_OUT", "TARGET"]
