@@ -3,6 +3,7 @@ from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core import nbody as nb
+from orbitsim.core.moon import moon_state_at
 
 
 def test_bodies_sit_on_the_barycenter_axis_at_t0():
@@ -128,3 +129,30 @@ def test_L4_stays_bounded_over_a_day():
 
 
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON
+
+
+def test_earth_moon_accel_has_indirect_term():
+    r = np.array([2.0e7, 1.0e7, 0.0])
+    a = nb.earth_moon_accel(r, 0.0)
+    rM = moon_state_at(0.0).r
+    direct = (-MU_EARTH * r / np.linalg.norm(r)**3
+              - MU_MOON * (r - rM) / np.linalg.norm(r - rM)**3)
+    indirect = -MU_MOON * rM / np.linalg.norm(rM)**3
+    assert np.allclose(a, direct + indirect, rtol=1e-12)
+
+
+def test_L4_balances_in_the_earth_fixed_model():
+    # L4: 60 deg ahead of the Moon in its orbital plane, distance d from Earth and Moon.
+    t = 1.0e5
+    m = moon_state_at(t)
+    d = np.linalg.norm(m.r)
+    w = np.cross(m.r, m.v) / d**2                 # Moon's angular velocity vector
+    omega = np.linalg.norm(w)
+    axis = w / omega
+    # Rodrigues rotation of r_M by +60 deg about the orbit normal.
+    c, s = np.cos(np.radians(60)), np.sin(np.radians(60))
+    L4 = m.r * c + np.cross(axis, m.r) * s + axis * np.dot(axis, m.r) * (1 - c)
+    # Net rotating-frame acceleration (gravity + centrifugal) must vanish.
+    centrifugal = -np.cross(w, np.cross(w, L4))
+    net = nb.earth_moon_accel(L4, t) + centrifugal
+    assert np.linalg.norm(net) < 1e-7, np.linalg.norm(net)

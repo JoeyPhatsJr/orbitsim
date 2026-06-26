@@ -6,6 +6,7 @@ from scipy.optimize import brentq
 
 from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
+from orbitsim.core.moon import moon_state_at
 
 D_EM = 3.844e8                          # Earth-Moon separation [m]
 MU_TOTAL = MU_EARTH + MU_MOON
@@ -43,6 +44,18 @@ def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
     for body in attractors:
         d = r - body.state_at(t_s).r
         a += -body.mu * d / np.linalg.norm(d)**3
+    return a
+
+
+def earth_moon_accel(r_m, t_s):
+    """Ship acceleration in the EARTH-CENTERED frame [m/s^2]: central Earth plus the
+    Moon's third-body perturbation. The indirect term (+mu_M * r_M/|r_M|^3) is required
+    because Earth is held fixed at the origin (non-inertial frame); it is also what makes
+    the Lagrange points balance."""
+    r = np.asarray(r_m, dtype=np.float64)
+    rM = moon_state_at(t_s).r
+    a = -MU_EARTH * r / np.linalg.norm(r)**3
+    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM)**3 + rM / np.linalg.norm(rM)**3)
     return a
 
 
