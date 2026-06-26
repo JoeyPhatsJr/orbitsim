@@ -16,6 +16,7 @@ from panda3d.core import (
 
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
+from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core.attitude import (
     quat_from_axis_angle, quat_multiply, quat_normalize, quat_rotate_vector, nose_direction,
 )
@@ -275,6 +276,11 @@ class OrbitApp(ShowBase):
     JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
     JOG_DEADZONE = 0.02  # |value| below this contributes no change
 
+    # Scheduled maneuver node.
+    NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press
+    AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
+    EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
+
     def _build_maneuver_ui(self) -> None:
         """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
 
@@ -283,6 +289,8 @@ class OrbitApp(ShowBase):
         mouse springs the thumb back to center and the value stops changing.
         """
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
+        self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
+        self._node_marker_np = None
         self._dv_value_text = {}
         self._jog = {}
         rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
@@ -329,6 +337,21 @@ class OrbitApp(ShowBase):
             mayChange=True,
             parent=self.a2dTopLeft,
         )
+        # Scheduled-node controls: step time-to-node, jump to next apsis, clear.
+        self._node_ttn_text = OnscreenText(
+            text="", pos=(0.08, -0.42), scale=0.045, fg=(0.4, 1.0, 1.0, 1),
+            shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
+        )
+        node_btns = [
+            ("Node -", lambda: self._step_node_time(-self.NODE_TIME_STEP_S)),
+            ("Node +", lambda: self._step_node_time(self.NODE_TIME_STEP_S)),
+            ("Next Pe", self._node_to_pe),
+            ("Next Ap", self._node_to_ap),
+            ("Clear", self._clear_node),
+        ]
+        for i, (label, cmd) in enumerate(node_btns):
+            DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.06),
+                         command=cmd, parent=self.a2dBottomRight)
         # Releasing the mouse springs every jog slider back to its center (zero rate).
         self.accept("mouse1-up", self._release_jogs)
         self._refresh_readout()
@@ -363,13 +386,47 @@ class OrbitApp(ShowBase):
             slider["value"] = 0.0
 
     def _current_node(self) -> ManeuverNode:
-        """Build the node from the current dV values, burning at vessel 0's current epoch."""
+        """Build the node from the current dV values at the scheduled epoch (or now if none)."""
+        epoch = (self._node_epoch_s if self._node_epoch_s is not None
+                 else self.world.vessels[0].state.epoch_s)
         return ManeuverNode(
-            epoch_s=self.world.vessels[0].state.epoch_s,
+            epoch_s=epoch,
             dv_prograde_mps=self._dv["pro"],
             dv_normal_mps=self._dv["nrm"],
             dv_radial_mps=self._dv["rad"],
         )
+
+    def _time_to_node(self):
+        """Seconds until the scheduled node, or None if no node is scheduled."""
+        if self._node_epoch_s is None:
+            return None
+        return self._node_epoch_s - self.clock.sim_time_s
+
+    def _step_node_time(self, delta_s):
+        """Nudge the node epoch by delta_s (creating one at now+delta if none), clamped >= now."""
+        now = self.clock.sim_time_s
+        base = self._node_epoch_s if self._node_epoch_s is not None else now
+        self._node_epoch_s = max(now, base + delta_s)
+
+    def _node_to_pe(self):
+        from orbitsim.core.maneuvers import time_to_periapsis
+        try:
+            self._node_epoch_s = self.clock.sim_time_s + time_to_periapsis(self.world.vessels[0].state)
+        except ValueError:
+            pass  # unbound orbit: no apsis to target
+
+    def _node_to_ap(self):
+        from orbitsim.core.maneuvers import time_to_apoapsis
+        try:
+            self._node_epoch_s = self.clock.sim_time_s + time_to_apoapsis(self.world.vessels[0].state)
+        except ValueError:
+            pass
+
+    def _clear_node(self):
+        self._node_epoch_s = None
+        if self._node_marker_np is not None:
+            self._node_marker_np.remove_node()
+            self._node_marker_np = None
 
     def _refresh_readout(self) -> None:
         node = self._current_node()
@@ -382,6 +439,9 @@ class OrbitApp(ShowBase):
     def _execute_burn(self) -> None:
         from orbitsim.core.flight import fuel_burned_for_dv
 
+        ttn = self._time_to_node()
+        if ttn is not None and ttn > self.EXECUTE_TOLERANCE_S:
+            return  # scheduled node not due yet
         v0 = self.world.vessels[0]
         node = self._current_node()
         dv = node.magnitude_mps
@@ -391,6 +451,7 @@ class OrbitApp(ShowBase):
             # from the same tank (no separate budget pool).
             burned = fuel_burned_for_dv(v0.exhaust_velocity_mps, v0.mass_kg, dv)
             v0.fuel_mass_kg = max(0.0, v0.fuel_mass_kg - burned)
+        self._clear_node()
         for axis in self._dv:
             self._dv[axis] = 0.0
             self._dv_value_text[axis].setText("+0")
@@ -659,10 +720,15 @@ class OrbitApp(ShowBase):
             self.vessel_nps[idx].set_pos(vx, vy, vz)
             self._rebuild_orbit(idx, vessel)
 
-        # Live maneuver preview (magenta) for vessel 0.
+        # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
+        # readout, and a vessel.nodes mirror so quicksave persists the plan.
         node = self._current_node()
+        v0 = self.world.vessels[0]
+        ttn = self._time_to_node()
+        v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
+        # Post-burn orbit preview.
         if node.magnitude_mps > 0.0:
-            pred = predict_elements_after(self.world.vessels[0].state, node)
+            pred = predict_elements_after(v0.state, node)
             ppts = [self.transform.to_render(p) for p in sample_orbit_points(pred, n=256)]
             if self._preview_np is not None:
                 self._preview_np.remove_node()
@@ -671,6 +737,30 @@ class OrbitApp(ShowBase):
         elif self._preview_np is not None:
             self._preview_np.remove_node()
             self._preview_np = None
+        # Node marker at the node's predicted position on the orbit.
+        if self._node_epoch_s is not None and ttn is not None and ttn >= 0.0:
+            npos = propagate_kepler(v0.state, ttn).r
+            mx, my, mz = self.transform.to_render(npos)
+            if self._node_marker_np is None:
+                self._node_marker_np = make_uv_sphere(1.0, 8, 12)
+                self._node_marker_np.reparent_to(self.render)
+                self._node_marker_np.set_color(0.3, 1.0, 1.0, 1.0)
+                self._node_marker_np.set_light_off()
+                self._node_marker_np.set_scale(6.0)
+            self._node_marker_np.set_pos(mx, my, mz)
+        elif self._node_marker_np is not None:
+            self._node_marker_np.remove_node()
+            self._node_marker_np = None
+        # Auto-warp-down as the node nears (never warps up).
+        if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.clock.warp and self.clock.warp > 1.0:
+            self.clock.warp_down()
+        # Pending-node readout (single node).
+        if ttn is not None and ttn >= 0.0:
+            mm, ss = divmod(int(ttn), 60)
+            self._node_ttn_text.setText(
+                f"Node in T-{mm:02d}:{ss:02d}   dV {node.magnitude_mps:,.1f} m/s")
+        else:
+            self._node_ttn_text.setText("")
 
         self._apply_mouse_orbit()
         self._update_starfield()
