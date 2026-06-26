@@ -177,3 +177,29 @@ def test_propagate_earth_moon_reversible():
     fwd = nb.propagate_earth_moon(st, T, max_step_s=20.0)
     back = nb.propagate_earth_moon(fwd, -T, max_step_s=20.0)
     assert np.linalg.norm(back.r - st.r) < 1.0
+
+
+from orbitsim.core.elements import state_to_elements
+
+
+def test_osculating_elements_earth_dominant_matches_two_body():
+    r = 8.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    osc = nb.osculating_elements(st, 0.0)
+    ref = state_to_elements(StateVector(st.r, st.v, MU_EARTH, 0.0))
+    assert abs(osc.a - ref.a) < 1.0 and abs(osc.e - ref.e) < 1e-9
+
+
+def test_osculating_elements_switches_to_moon_inside_soi():
+    t = 0.0
+    m = moon_state_at(t)
+    r_lo = 3.0e6                                   # 3000 km lunar orbit (inside SOI)
+    # Circular about the Moon, in the Moon's frame.
+    st = StateVector(r=m.r + np.array([r_lo, 0.0, 0.0]),
+                     v=m.v + np.array([0.0, np.sqrt(MU_MOON / r_lo), 0.0]),
+                     mu=MU_EARTH, epoch_s=t)
+    osc = nb.osculating_elements(st, t)
+    assert osc.mu == MU_MOON                       # dominant body is the Moon
+    assert abs(osc.a - r_lo) < 1.0e4 and osc.e < 0.01   # ~circular lunar orbit

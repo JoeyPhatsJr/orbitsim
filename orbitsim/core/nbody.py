@@ -7,6 +7,7 @@ from scipy.optimize import brentq
 from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
 from orbitsim.core.moon import moon_state_at
+from orbitsim.core.elements import state_to_elements
 
 D_EM = 3.844e8                          # Earth-Moon separation [m]
 MU_TOTAL = MU_EARTH + MU_MOON
@@ -110,6 +111,20 @@ def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
     n = _earth_moon_substeps(state, dt_s, max_step_s)
     r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, earth_moon_accel, n)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+MOON_SOI_M = 3.844e8 * (MU_MOON / MU_EARTH)**0.4   # Moon sphere of influence [m]
+
+
+def osculating_elements(state, t_s):
+    """Instantaneous Keplerian elements about the dominant body (Moon if the ship is
+    within MOON_SOI_M of it, else Earth). Used for the HUD; drifts under perturbation."""
+    rM = moon_state_at(t_s)
+    if np.linalg.norm(state.r - rM.r) < MOON_SOI_M:
+        rel = StateVector(state.r - rM.r, state.v - rM.v, MU_MOON, state.epoch_s)
+    else:
+        rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
+    return state_to_elements(rel)
 
 
 def _rot_z(theta):
