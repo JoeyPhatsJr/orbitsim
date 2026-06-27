@@ -212,6 +212,23 @@ class OrbitApp(ShowBase):
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
+        # Ship view: a true-scale, lit, oriented model of vessel 0 that cross-fades
+        # in from the constant-size marker as the camera zooms close. (ship_model.py)
+        self._ship_model_np = None
+        if not self.solar_system and self.world.vessels:
+            from orbitsim.render.ship_model import build_ship_model
+            from panda3d.core import TransparencyAttrib
+            self._ship_model_np = build_ship_model()
+            self._ship_model_np.reparent_to(self.render)
+            self._ship_model_np.hide()  # shown only when model_alpha > 0
+            # Marker fades via alpha; enable transparency on vessel 0's marker.
+            self.vessel_nps[0].set_transparency(TransparencyAttrib.M_alpha)
+            # Exhaust plume (parented to the model: inherits its orient + scale).
+            from orbitsim.render.ship_model import build_plume
+            self._plume_np = build_plume()
+            self._plume_np.reparent_to(self._ship_model_np)
+            self._plume_np.hide()
+
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
         # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
         self._orbit_frame = self.render.attach_new_node("orbit_frame")
@@ -684,6 +701,7 @@ class OrbitApp(ShowBase):
             self.accept("x", self._throttle_cut)
             self.accept("u", self._toggle_unlimited_dv)
             self.accept("t", self._toggle_sas)
+            self.accept("m", self._toggle_ship_view)   # snap map <-> ship view
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
                         "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET"]
             for i, mode in enumerate(sas_keys, start=1):
@@ -693,6 +711,20 @@ class OrbitApp(ShowBase):
 
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
+    SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
+
+    def _toggle_ship_view(self) -> None:
+        """Snap the camera between remembered map and ship-view distances ('m')."""
+        from orbitsim.render.ship_model import SHIP_VIEW_NEAR_M
+        # "In ship view" means already in close framing; anything farther (incl. a
+        # mid-fade zoom) counts as the map side and is remembered as such.
+        in_ship_view = self.rig.distance_m <= SHIP_VIEW_NEAR_M
+        if in_ship_view:
+            self._ship_distance_m = self.rig.distance_m       # remember ship framing
+            self.rig.set_distance(getattr(self, "_map_distance_m", 2.0e7))
+        else:
+            self._map_distance_m = self.rig.distance_m        # remember map framing
+            self.rig.set_distance(getattr(self, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M))
 
     def _build_warp_controls(self) -> None:
         """Top-center on-screen warp control: slower / faster buttons + readout.
@@ -989,6 +1021,32 @@ class OrbitApp(ShowBase):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
             self._rebuild_trajectory(idx, vessel)
+
+        # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
+        if self._ship_model_np is not None:
+            from orbitsim.render.ship_model import view_blend, model_node_scale
+            v0 = self.world.vessels[0]
+            marker_a, model_a = view_blend(self.rig.distance_m)
+            self.vessel_nps[0].set_alpha_scale(marker_a)
+            if model_a > 0.0:
+                from panda3d.core import LQuaternion
+                self._ship_model_np.show()
+                self._ship_model_np.set_pos(*self.transform.to_render(v0.state.r))
+                self._ship_model_np.set_scale(model_node_scale(self.transform.scale_m_per_unit))
+                q = v0.orientation  # [w, x, y, z]
+                self._ship_model_np.set_quat(LQuaternion(float(q[0]), float(q[1]),
+                                                         float(q[2]), float(q[3])))
+                self._ship_model_np.set_alpha_scale(model_a)
+                thr = getattr(v0, "throttle", 0.0)
+                if thr > 0.0:
+                    self._plume_np.show()
+                    self._plume_np.set_sz(0.5 + thr)        # longer at higher throttle
+                    self._plume_np.set_alpha_scale(model_a * thr)
+                else:
+                    self._plume_np.hide()
+            else:
+                self._ship_model_np.hide()
+                self._plume_np.hide()
 
         # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
         # readout, and a vessel.nodes mirror so quicksave persists the plan.
