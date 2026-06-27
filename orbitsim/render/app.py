@@ -696,6 +696,7 @@ class OrbitApp(ShowBase):
             self.accept("x", self._throttle_cut)
             self.accept("u", self._toggle_unlimited_dv)
             self.accept("t", self._toggle_sas)
+            self.accept("m", self._toggle_ship_view)   # snap map <-> ship view
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
                         "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET"]
             for i, mode in enumerate(sas_keys, start=1):
@@ -705,6 +706,18 @@ class OrbitApp(ShowBase):
 
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
+    SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
+
+    def _toggle_ship_view(self) -> None:
+        """Snap the camera between remembered map and ship-view distances ('m')."""
+        from orbitsim.render.ship_model import SHIP_VIEW_NEAR_M
+        in_ship_view = self.rig.distance_m <= SHIP_VIEW_NEAR_M
+        if in_ship_view:
+            self._ship_distance_m = self.rig.distance_m       # remember ship framing
+            self.rig.set_distance(getattr(self, "_map_distance_m", 2.0e7))
+        else:
+            self._map_distance_m = self.rig.distance_m        # remember map framing
+            self.rig.set_distance(getattr(self, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M))
 
     def _build_warp_controls(self) -> None:
         """Top-center on-screen warp control: slower / faster buttons + readout.

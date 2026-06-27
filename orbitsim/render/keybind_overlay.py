@@ -14,6 +14,7 @@ SANDBOX_BINDINGS = [
     ("Z", "Full throttle"),
     ("X", "Cut throttle"),
     ("T", "SAS on/off"),
+    ("M", "Toggle ship view / map"),
     ("1-7", "SAS mode (pro/retro/normal/...)"),
     (", / .", "Warp down / up"),
     ("F5 / F9", "Quicksave / Quickload"),
