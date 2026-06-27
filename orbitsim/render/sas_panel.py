@@ -68,3 +68,47 @@ class SasPanel:
         for mode, button in self._buttons.items():
             active = sas_mode != "OFF" if mode == "__TOGGLE__" else mode == sas_mode
             button["frameColor"] = _ACTIVE if active else _IDLE
+
+
+class VelocityReadout:
+    """Clickable chip toggling between orbital and target-relative speed."""
+
+    def __init__(self, base, units_getter):
+        from direct.gui import DirectGuiGlobals as DGG
+        from direct.gui.DirectButton import DirectButton
+
+        self._units_getter = units_getter
+        self._mode = "ORBITAL"
+        self._orbital = 0.0
+        self._target = None
+        self._button = DirectButton(
+            text="",
+            scale=0.045,
+            pos=(0.0, 0.0, 0.90),
+            frameColor=_BG,
+            text_fg=(1.0, 1.0, 1.0, 1.0),
+            relief=DGG.FLAT,
+            command=self._toggle,
+            parent=base.a2dBottomCenter,
+        )
+        self._refresh()
+
+    def _toggle(self) -> None:
+        self._mode = "TARGET" if self._mode == "ORBITAL" else "ORBITAL"
+        self._refresh()
+
+    def update(self, orbital_speed_mps: float, target_rel_speed_mps) -> None:
+        self._orbital = orbital_speed_mps
+        self._target = target_rel_speed_mps
+        self._refresh()
+
+    def _refresh(self) -> None:
+        from orbitsim.render.hud import _speed
+
+        if self._mode == "ORBITAL":
+            text = f"Orbital  {_speed(self._orbital, self._units_getter())}"
+        elif self._target is None:
+            text = "Target  \N{EM DASH}"
+        else:
+            text = f"Target  {_speed(self._target, self._units_getter())}"
+        self._button["text"] = text

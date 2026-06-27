@@ -248,10 +248,11 @@ class OrbitApp(ShowBase):
             )
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
-            from orbitsim.render.sas_panel import SasPanel
+            from orbitsim.render.sas_panel import SasPanel, VelocityReadout
             self.sas_panel = SasPanel(
                 self, on_set_mode=self._set_sas, on_toggle=self._toggle_sas
             )
+            self.vel_readout = VelocityReadout(self, lambda: self.hud.units)
 
             # Targetable bodies (Moon today; ships later). Click a marker to select.
             from orbitsim.render.targets import MoonTarget, LagrangePointTarget
@@ -1225,6 +1226,11 @@ class OrbitApp(ShowBase):
         from orbitsim.core.attitude import heading_pitch
         heading, pitch = heading_pitch(v0.orientation, v0.state)
         self.sas_panel.update(v0.sas_mode, heading, pitch)
+        target_rel_speed = None
+        if self._target is not None:
+            target_velocity = self._target.state_at(self.clock.sim_time_s).v
+            target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
+        self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_warp_readout()
         return task.cont
 
