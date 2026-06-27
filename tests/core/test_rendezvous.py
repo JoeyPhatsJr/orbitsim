@@ -52,3 +52,22 @@ def test_rejects_bad_window():
         closest_approach(s, s, window_s=0.0)
     with pytest.raises(ValueError):
         closest_approach(s, s, window_s=100.0, coarse_samples=1)
+
+
+def test_nbody_ca_differs_from_keplerian_near_moon():
+    """Near the Moon, N-body CA differs measurably from Keplerian CA."""
+    from orbitsim.core.nbody import propagate_earth_moon
+    from orbitsim.core.moon import moon_state_at
+    # Ship and target both near the Moon (strong perturbation).
+    rM = moon_state_at(0.0).r
+    s_a = StateVector(r=rM + np.array([5.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 900.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    s_b = StateVector(r=rM + np.array([-5.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, -900.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    window = 6 * 3600.0    # 6-hour window
+    ca_kep = closest_approach(s_a, s_b, window_s=window, coarse_samples=360)
+    ca_nbody = closest_approach(s_a, s_b, window_s=window, coarse_samples=360,
+                                propagator=propagate_earth_moon)
+    # N-body and Keplerian CAs must differ by > 1 km (Moon bends trajectories).
+    diff = abs(ca_nbody.separation_m - ca_kep.separation_m)
+    assert diff > 1000.0, f"expected N-body CA to differ from Keplerian, got {diff:.1f} m"

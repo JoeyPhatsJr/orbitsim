@@ -1,4 +1,4 @@
-"""Closest approach between two Keplerian trajectories (coarse scan + refine)."""
+"""Closest approach between two trajectories (coarse scan + refine)."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -26,27 +26,36 @@ class ClosestApproach:
     rel_speed_mps: float
 
 
-def _sep(state_a: StateVector, state_b: StateVector, t: float) -> float:
-    ra = propagate_kepler(state_a, t).r
-    rb = propagate_kepler(state_b, t).r
-    return float(np.linalg.norm(ra - rb))
-
-
 def closest_approach(
-    state_a: StateVector, state_b: StateVector, window_s: float, coarse_samples: int = 720
+    state_a: StateVector,
+    state_b: StateVector,
+    window_s: float,
+    coarse_samples: int = 720,
+    propagator=propagate_kepler,
 ) -> ClosestApproach:
     """Minimum separation of two trajectories over ``[0, window_s]``.
 
     Coarse-scans ``coarse_samples+1`` uniform times, then refines the best one with a
     ternary search over its bracketing interval. Raises ValueError on bad inputs.
+
+    Parameters
+    ----------
+    propagator : callable
+        Function ``(StateVector, float) -> StateVector`` used to advance each state.
+        Defaults to ``propagate_kepler``; pass ``propagate_earth_moon`` for N-body CA.
     """
     if window_s <= 0.0:
         raise ValueError(f"window_s must be positive, got {window_s}")
     if coarse_samples < 2:
         raise ValueError(f"coarse_samples must be >= 2, got {coarse_samples}")
 
+    def _sep(t):
+        ra = propagator(state_a, t).r
+        rb = propagator(state_b, t).r
+        return float(np.linalg.norm(ra - rb))
+
     times = np.linspace(0.0, window_s, coarse_samples + 1)
-    seps = np.array([_sep(state_a, state_b, float(t)) for t in times])
+    seps = np.array([_sep(float(t)) for t in times])
     k = int(np.argmin(seps))
 
     # Ternary-search refine within [t_{k-1}, t_{k+1}].
@@ -57,19 +66,18 @@ def closest_approach(
             break
         m1 = lo + (hi - lo) / 3.0
         m2 = hi - (hi - lo) / 3.0
-        if _sep(state_a, state_b, m1) < _sep(state_a, state_b, m2):
+        if _sep(m1) < _sep(m2):
             hi = m2
         else:
             lo = m1
     t_ca = 0.5 * (lo + hi)
 
-    # Guard: never return a separation worse than the coarse minimum (ternary refine
-    # only guarantees improvement when the bracket is unimodal).
-    if seps[k] <= _sep(state_a, state_b, t_ca):
+    # Guard: never return a separation worse than the coarse minimum.
+    if seps[k] <= _sep(t_ca):
         t_ca = float(times[k])
 
-    sa = propagate_kepler(state_a, t_ca)
-    sb = propagate_kepler(state_b, t_ca)
+    sa = propagator(state_a, t_ca)
+    sb = propagator(state_b, t_ca)
     sep = float(np.linalg.norm(sa.r - sb.r))
     rel = float(np.linalg.norm(sa.v - sb.v))
     return ClosestApproach(t_ca_s=t_ca, separation_m=sep, rel_speed_mps=rel)
