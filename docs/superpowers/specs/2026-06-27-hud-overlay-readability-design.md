@@ -14,8 +14,9 @@ independently-positioned `a2dTopLeft` readouts whose hardcoded y-positions now c
 orbit panel (starts y=-0.12) grows straight through the magenta dV-left readout (-0.36), the cyan
 node-time readout (-0.42), and the orange target readout (-0.48). This cycle replaces hardcoded
 stacking with a reusable, self-sizing **panel** component that groups and color-codes readouts over
-subtle backgrounds, and adds a navball **SAS chip** (mode + heading/pitch readout) with a row of
-**clickable SAS-mode buttons** mirroring the existing SAS number keys (1–8) and T.
+subtle backgrounds, adds a navball **SAS chip** (mode + heading/pitch readout) with a row of
+**clickable SAS-mode buttons** mirroring the existing SAS number keys (1–8) and T, and adds a
+**velocity readout above the navball** that click-toggles between **orbital** and **target** speed.
 
 ## Constraints / non-goals
 
@@ -87,6 +88,20 @@ Beside/above the navball:
   `vessel.sas_mode` is highlighted (distinct frameColor) each frame. Buttons are additive — the 1–8/T
   keys still work and stay in the F1 overlay.
 
+### 4. Velocity readout above the navball — `render/navball.py` (or `render/sas_panel.py`)
+
+A clickable speed readout placed **above** the navball (a `DirectButton` styled as a chip so the
+click toggles, with the same `(0,0,0,0.45)` background). It holds a `_vel_mode` ∈ {"ORBITAL",
+"TARGET"} (default "ORBITAL"); a click flips it. Each frame it shows:
+- **ORBITAL:** `Orbital  8.074 km/s` — magnitude of `vessel.state.v` (speed about the central body),
+  formatted with the existing `_speed` (km/mi).
+- **TARGET:** `Target  1.231 km/s` — the relative speed `|vessel.state.v − target_v|`, where
+  `target_v` is the selected target's velocity (`target.state_at(now).v`, the same source the
+  closest-approach / Lagrange rel-vel readout already uses). When **no target is selected**, show
+  `Target  —` (em dash) rather than a number.
+
+The toggle is independent of the SAS controls; it only changes which speed is displayed.
+
 ## Components & content (the panels)
 
 - **Top-left `HudPanel`** (`a2dTopLeft`), sections in order:
@@ -115,14 +130,18 @@ text nodes. The old `_dv_readout` / `_node_ttn_text` / `_target_text` nodes are 
 - `hud.update_flight(...)` → builds VESSEL section.
 - `hud.update_maneuver(dv_left, ttn, target_name)` (new) → builds/omits the MANEUVER section.
 - `sas_panel.update(sas_mode, heading_rad, pitch_rad)` (new) → readout text + active-button highlight.
+- `vel_readout.update(orbital_speed_mps, target_rel_speed_mps_or_None)` (new) → shows the speed for the
+  current `_vel_mode`, or `Target  —` when target mode is active with no target.
 
 ## Error handling / edge cases
 
 - Empty MANEUVER section → omitted; panel shrinks (covered by `layout_panel` empty-section invariant).
 - `heading_pitch` at the velocity/position degeneracies: `horizon_frame` already assumes `v≠0` and
   `r×v≠0` (true for any real orbit); clamp `arcsin` arg. No new degeneracy handling beyond the clamp.
-- Solar-system mode has no vessel/navball/maneuver UI → the SAS panel and MANEUVER section are
-  sandbox-only (guard like existing `if not self.solar_system`).
+- Solar-system mode has no vessel/navball/maneuver UI → the SAS panel, velocity readout, and MANEUVER
+  section are sandbox-only (guard like existing `if not self.solar_system`).
+- Velocity readout in TARGET mode with no target selected → `Target  —`; toggling back to ORBITAL
+  always shows a number. The `_vel_mode` persists across target select/deselect.
 
 ## Testing
 
@@ -140,6 +159,9 @@ text nodes. The old `_dv_readout` / `_node_ttn_text` / `_target_text` nodes are 
   - Top-right VESSEL panel + backgrounds; warp control background.
   - Navball SAS chip: mode + heading/pitch readout; button grid; clicking a button sets the mode and
     highlights it; active highlight tracks key-driven changes too.
+  - Velocity readout above the navball: shows orbital speed by default; clicking toggles to target
+    speed (relative) when a target is selected, and to `Target  —` when none is; toggling back returns
+    to orbital speed.
 
 ## Out of scope (YAGNI / deferred to 2b)
 
