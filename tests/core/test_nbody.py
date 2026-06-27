@@ -203,3 +203,26 @@ def test_osculating_elements_switches_to_moon_inside_soi():
     osc = nb.osculating_elements(st, t)
     assert osc.mu == MU_MOON                       # dominant body is the Moon
     assert abs(osc.a - r_lo) < 1.0e4 and osc.e < 0.01   # ~circular lunar orbit
+
+
+WARP_STEPS = (1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0, 100000.0)
+
+
+def test_max_safe_warp_is_low_near_earth_high_in_deep_space():
+    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    deep = StateVector(r=np.array([3.0e8, 1.0e8, 0.0]),
+                       v=np.array([0.0, 200.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    w_leo = nb.max_safe_warp(leo, 0.0, WARP_STEPS)
+    w_deep = nb.max_safe_warp(deep, 0.0, WARP_STEPS)
+    assert w_leo in WARP_STEPS and w_deep in WARP_STEPS
+    assert w_deep > w_leo                     # smoother far out => faster warp allowed
+    assert w_leo >= 1.0                        # never below the floor
+
+
+def test_max_safe_warp_respects_substep_budget():
+    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
+    n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
+    assert n <= 200

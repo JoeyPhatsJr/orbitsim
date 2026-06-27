@@ -175,3 +175,11 @@ def lagrange_points(t_s):
     }
     Rinv = _rot_z(OMEGA_EM * t_s).T   # rotating -> inertial
     return {k: Rinv @ v for k, v in rot.items()}
+
+
+def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
+    """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
+    sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
+    allowed = [w for w in warp_steps
+               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+    return max(allowed) if allowed else min(warp_steps)
