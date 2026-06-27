@@ -223,6 +223,11 @@ class OrbitApp(ShowBase):
             self._ship_model_np.hide()  # shown only when model_alpha > 0
             # Marker fades via alpha; enable transparency on vessel 0's marker.
             self.vessel_nps[0].set_transparency(TransparencyAttrib.M_alpha)
+            # Exhaust plume (parented to the model: inherits its orient + scale).
+            from orbitsim.render.ship_model import build_plume
+            self._plume_np = build_plume()
+            self._plume_np.reparent_to(self._ship_model_np)
+            self._plume_np.hide()
 
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
         # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
@@ -1030,8 +1035,16 @@ class OrbitApp(ShowBase):
                 self._ship_model_np.set_quat(LQuaternion(float(q[0]), float(q[1]),
                                                          float(q[2]), float(q[3])))
                 self._ship_model_np.set_alpha_scale(model_a)
+                thr = getattr(v0, "throttle", 0.0)
+                if thr > 0.0:
+                    self._plume_np.show()
+                    self._plume_np.set_sz(0.5 + thr)        # longer at higher throttle
+                    self._plume_np.set_alpha_scale(model_a * thr)
+                else:
+                    self._plume_np.hide()
             else:
                 self._ship_model_np.hide()
+                self._plume_np.hide()
 
         # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
         # readout, and a vessel.nodes mirror so quicksave persists the plan.

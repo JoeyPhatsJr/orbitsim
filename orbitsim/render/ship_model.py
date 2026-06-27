@@ -101,3 +101,34 @@ def build_ship_model():
     np_ = NodePath(node)
     np_.set_color(0.85, 0.87, 0.9, 1.0)
     return np_
+
+
+def build_plume():
+    """Translucent additive exhaust cone along -Z (tail). Length 1 at unit scale."""
+    import math
+    from panda3d.core import (
+        Geom, GeomNode, GeomTriangles, GeomVertexData, GeomVertexFormat,
+        GeomVertexWriter, NodePath, ColorBlendAttrib, TransparencyAttrib,
+    )
+    fmt = GeomVertexFormat.get_v3()
+    vdata = GeomVertexData("plume", fmt, Geom.UHStatic)
+    vtx = GeomVertexWriter(vdata, "vertex")
+    tris = GeomTriangles(Geom.UHStatic)
+    seg, r, z0, z1 = 12, 0.8, -3.0, -7.0   # base at tail (-3), apex further -Z
+    apex = 0
+    vtx.add_data3(0, 0, z1)
+    base = []
+    for j in range(seg + 1):
+        a = 2.0 * math.pi * j / seg
+        vtx.add_data3(math.cos(a) * r, math.sin(a) * r, z0)
+        base.append(j + 1)
+    for j in range(seg):
+        tris.add_vertices(apex, base[j], base[j + 1])
+    geom = Geom(vdata); geom.add_primitive(tris)
+    node = GeomNode("plume"); node.add_geom(geom)
+    np_ = NodePath(node)
+    np_.set_light_off()
+    np_.set_transparency(TransparencyAttrib.M_alpha)
+    np_.set_attrib(ColorBlendAttrib.make(ColorBlendAttrib.M_add))
+    np_.set_color(1.0, 0.6, 0.2, 0.6)
+    return np_
