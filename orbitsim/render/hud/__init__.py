@@ -3,7 +3,8 @@ import math
 
 import numpy as np
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import TextNode
+
+from orbitsim.render.hud.panel import HudPanel
 
 _MI_PER_KM = 0.621371
 
@@ -25,14 +26,13 @@ def _speed(mps: float, units: str) -> str:
 
 
 def orbit_panel_lines(
-    *, sim_time_s: float, warp: float, altitude_m: float, speed_mps: float,
+    *, sim_time_s: float, altitude_m: float, speed_mps: float,
     periapsis_m: float, apoapsis_m: float, period_s: float,
     inclination_rad: float, units: str,
 ) -> list[str]:
     """Build the orbit-info panel text lines. Pure (no DirectGUI) so it is unit-testable."""
     return [
         f"Sim time: {sim_time_s:,.0f} s past J2000",
-        f"Warp: x{warp:,.0f}",
         f"Altitude: {_dist(altitude_m, units)}",
         f"Speed: {_speed(speed_mps, units)}",
         f"Periapsis: {_dist(periapsis_m, units)}",
@@ -43,32 +43,13 @@ def orbit_panel_lines(
 
 
 class Hud:
-    """On-screen text panel showing time, warp, and focused-vessel orbit info."""
+    """Grouped orbit, maneuver, and vessel HUD panels."""
 
     def __init__(self, base) -> None:
-        # Anchor to the top-left corner; pos is corner-relative (x right, y down),
-        # so a small +x / -y nudge places the text just inside the corner.
-        self.text = OnscreenText(
-            text="",
-            pos=(0.08, -0.12),
-            scale=0.05,
-            fg=(1, 1, 1, 1),
-            shadow=(0, 0, 0, 1),
-            align=TextNode.ALeft,
-            mayChange=True,
-            parent=base.a2dTopLeft,
-        )
-        # Flight readout in the top-right corner.
-        self.flight = OnscreenText(
-            text="",
-            pos=(-0.05, -0.12),
-            scale=0.05,
-            fg=(0.8, 1.0, 0.8, 1),
-            shadow=(0, 0, 0, 1),
-            align=TextNode.ARight,
-            mayChange=True,
-            parent=base.a2dTopRight,
-        )
+        self._left = HudPanel(base.a2dTopLeft, x=0.08, top=-0.10, width=0.92)
+        self._right = HudPanel(base.a2dTopRight, x=-0.62, top=-0.10)
+        self._orbit_lines = []
+        self._maneuver_lines = ("", "", "")
         self.units = "km"  # distance/speed units for readouts ("km" or "mi")
         # Transient center-screen "toast" message (e.g. "Quicksaved").
         self._base = base
@@ -97,11 +78,41 @@ class Hud:
         self._toast_task = None
         return task.done
 
+    def _rebuild_left(self) -> None:
+        cyan = (0.7, 0.95, 1.0, 1.0)
+        magenta = (1.0, 0.4, 1.0, 1.0)
+        orange = (1.0, 0.7, 0.4, 1.0)
+        time_line = self._orbit_lines[0] if self._orbit_lines else ""
+        sections = [
+            {"header": None, "rows": [(time_line, cyan)] if time_line else []},
+            {
+                "header": "ORBIT",
+                "header_color": cyan,
+                "rows": [(line, (1.0, 1.0, 1.0, 1.0)) for line in self._orbit_lines[1:]],
+            },
+        ]
+        dv_line, node_line, target_line = self._maneuver_lines
+        maneuver_rows = []
+        if dv_line:
+            maneuver_rows.append((dv_line, magenta))
+        if node_line:
+            maneuver_rows.append((node_line, cyan))
+        if target_line:
+            maneuver_rows.append((target_line, orange))
+        if maneuver_rows:
+            sections.append(
+                {"header": "MANEUVER", "header_color": magenta, "rows": maneuver_rows}
+            )
+        self._left.set_sections(sections)
+
+    def set_maneuver(self, dv_line: str, node_line: str, target_line: str) -> None:
+        self._maneuver_lines = (dv_line, node_line, target_line)
+        self._rebuild_left()
+
     def update(
         self,
         *,
         sim_time_s: float,
-        warp: float,
         altitude_m: float,
         speed_mps: float,
         periapsis_m: float,
@@ -110,11 +121,12 @@ class Hud:
         inclination_rad: float,
     ) -> None:
         lines = orbit_panel_lines(
-            sim_time_s=sim_time_s, warp=warp, altitude_m=altitude_m, speed_mps=speed_mps,
+            sim_time_s=sim_time_s, altitude_m=altitude_m, speed_mps=speed_mps,
             periapsis_m=periapsis_m, apoapsis_m=apoapsis_m, period_s=period_s,
             inclination_rad=inclination_rad, units=self.units,
         )
-        self.text.setText("\n".join(lines))
+        self._orbit_lines = lines
+        self._rebuild_left()
 
     def update_flight(
         self,
@@ -138,4 +150,7 @@ class Hud:
         ]
         if warp_locked:
             lines.append("WARP LOCKED - thrusting")
-        self.flight.setText("\n".join(lines))
+        green = (0.6, 1.0, 0.6, 1.0)
+        self._right.set_sections(
+            [{"header": "VESSEL", "header_color": green, "rows": [(line, green) for line in lines]}]
+        )

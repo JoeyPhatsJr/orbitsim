@@ -49,7 +49,16 @@ def layout_panel(
 class HudPanel:
     """Reusable grouped HUD text with a self-sizing translucent background."""
 
-    def __init__(self, parent, *, x: float, top: float, scale: float = 0.045, align="left"):
+    def __init__(
+        self,
+        parent,
+        *,
+        x: float,
+        top: float,
+        scale: float = 0.045,
+        align="left",
+        width: float = 0.62,
+    ):
         from direct.gui.DirectFrame import DirectFrame
 
         if align != "left":
@@ -58,12 +67,14 @@ class HudPanel:
         self._x = x
         self._top = top
         self._scale = scale
+        self._width = width
         self._texts = []
         self._bg = DirectFrame(
             frameColor=(0.0, 0.0, 0.0, 0.45),
-            frameSize=(x - PADDING, x + 0.62, top - PADDING, top + PADDING),
+            frameSize=(x - PADDING, x + width, top - PADDING, top + PADDING),
             parent=parent,
         )
+        self._bg.set_bin("fixed", 0)
         self._bg.hide()
 
     def _row(self, index):
@@ -81,6 +92,7 @@ class HudPanel:
                 parent=self._parent,
             )
             text.hide()
+            text.set_bin("fixed", 1)
             self._texts.append(text)
         return self._texts[index]
 
@@ -116,7 +128,7 @@ class HudPanel:
         if rows:
             self._bg["frameSize"] = (
                 self._x - PADDING,
-                self._x + 0.62,
+                self._x + self._width,
                 layout.frame_bottom,
                 layout.frame_top,
             )

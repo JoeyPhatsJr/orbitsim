@@ -4,7 +4,7 @@ from orbitsim.render.hud import orbit_panel_lines
 
 def _lines(**over):
     base = dict(
-        sim_time_s=0.0, warp=1.0, altitude_m=500_000.0, speed_mps=7600.0,
+        sim_time_s=0.0, altitude_m=500_000.0, speed_mps=7600.0,
         periapsis_m=400_000.0, apoapsis_m=600_000.0, period_s=5400.0,
         inclination_rad=0.5, units="km",
     )
@@ -33,3 +33,7 @@ def test_mi_units_conversion():
 def test_period_always_minutes_unit_agnostic():
     text = "\n".join(_lines(period_s=5400.0))
     assert "Period: 90.0 min" in text
+
+
+def test_no_warp_line():
+    assert "Warp" not in "\n".join(_lines())

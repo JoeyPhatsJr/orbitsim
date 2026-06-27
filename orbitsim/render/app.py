@@ -286,11 +286,6 @@ class OrbitApp(ShowBase):
                 lbl.set_billboard_point_eye()
                 lbl.set_light_off()
                 self._lagrange_labels.append(lbl)
-            self._target_text = OnscreenText(
-                text="", pos=(0.08, -0.48), scale=0.045, fg=(1.0, 0.7, 0.4, 1),
-                shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
-            )
-
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
         self.starfield.reparent_to(self.render)
@@ -368,6 +363,7 @@ class OrbitApp(ShowBase):
         mouse springs the thumb back to center and the value stops changing.
         """
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
+        self._dv_line = self._node_line = self._target_line = ""
         self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self._node_marker_np = None
         self._dv_value_text = {}
@@ -406,21 +402,7 @@ class OrbitApp(ShowBase):
             command=self._execute_burn,
             parent=self.a2dBottomRight,
         )
-        self._dv_readout = OnscreenText(
-            text="",
-            pos=(0.08, -0.36),
-            scale=0.045,
-            fg=(1.0, 0.4, 1.0, 1),
-            shadow=(0, 0, 0, 1),
-            align=TextNode.ALeft,
-            mayChange=True,
-            parent=self.a2dTopLeft,
-        )
         # Scheduled-node controls: step time-to-node, jump to next apsis, clear.
-        self._node_ttn_text = OnscreenText(
-            text="", pos=(0.08, -0.42), scale=0.045, fg=(0.4, 1.0, 1.0, 1),
-            shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
-        )
         node_btns = [
             ("Node -", lambda: self._step_node_time(-self.NODE_TIME_STEP_S)),
             ("Node +", lambda: self._step_node_time(self.NODE_TIME_STEP_S)),
@@ -596,7 +578,8 @@ class OrbitApp(ShowBase):
                 np_.remove_node()
                 setattr(self, attr, None)
         self._ca = None
-        self._target_text.setText("Target: none")
+        self._target_line = ""
+        self._sync_maneuver_hud()
 
     def _ca_marker(self, attr, color):
         """Lazily create/reuse a closest-approach marker NodePath."""
@@ -616,9 +599,15 @@ class OrbitApp(ShowBase):
         # One budget: the fuel-derived delta-V (rocket equation), shared with flight.
         budget = self.world.vessels[0].delta_v_remaining
         left = "∞" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
-        self._dv_readout.setText(
+        self._dv_line = (
             f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
+            if node.magnitude_mps > 0.0
+            else ""
         )
+        self._sync_maneuver_hud()
+
+    def _sync_maneuver_hud(self) -> None:
+        self.hud.set_maneuver(self._dv_line, self._node_line, self._target_line)
 
     UNLIMITED_RESERVE_KG = 1000.0   # min propellant kept while unlimited (so thrust works at empty)
 
@@ -1111,9 +1100,10 @@ class OrbitApp(ShowBase):
             else:
                 mm, ss = divmod(int(ttn), 60)
                 label = f"in T-{mm:02d}:{ss:02d}"
-            self._node_ttn_text.setText(f"Node {label}   dV {node.magnitude_mps:,.1f} m/s")
+            self._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
         else:
-            self._node_ttn_text.setText("")
+            self._node_line = ""
+        self._sync_maneuver_hud()
 
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
@@ -1137,9 +1127,11 @@ class OrbitApp(ShowBase):
             L = self._target.state_at(self.clock.sim_time_s)
             dist = float(np.linalg.norm(v0.state.r - L.r))
             relsp = float(np.linalg.norm(v0.state.v - L.v))
-            self._target_text.setText(
+            self._target_line = (
                 f"Target: {self._target.name}   dist {dist / 1000:,.0f} km"
-                f"   rel {relsp:,.0f} m/s")
+                f"   rel {relsp:,.0f} m/s"
+            )
+            self._sync_maneuver_hud()
         elif self._target is not None:
             import time as _time
             now_real = _time.monotonic()
@@ -1176,9 +1168,11 @@ class OrbitApp(ShowBase):
                 *self.transform.to_render(tgt_at))
             countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
             mm, ss = divmod(int(countdown), 60)
-            self._target_text.setText(
+            self._target_line = (
                 f"Target: {self._target.name}   CA T-{mm:02d}:{ss:02d}"
-                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s")
+                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
+            )
+            self._sync_maneuver_hud()
 
         self._apply_mouse_orbit()
         self._update_starfield()
@@ -1202,7 +1196,6 @@ class OrbitApp(ShowBase):
         ref_radius = MOON_BODY.radius_m if moon_dominant else self.world.central.radius_m
         self.hud.update(
             sim_time_s=self.clock.sim_time_s,
-            warp=self.clock.warp,
             altitude_m=v0.state.r_mag - self.world.central.radius_m,
             speed_mps=v0.state.v_mag,
             periapsis_m=rp - ref_radius,
