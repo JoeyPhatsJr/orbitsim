@@ -109,3 +109,66 @@ def test_burn_stops_when_fuel_exhausted():
     expected_dv = 3000.0 * np.log(1100.0 / 1000.0)
     assert fuel == 0.0
     assert abs(out.v[0] - expected_dv) / expected_dv < 2e-3
+
+
+from orbitsim.core.nbody import earth_moon_accel, propagate_earth_moon
+
+
+def test_nbody_free_space_burn_matches_rocket_equation():
+    """In free space (mu=0, no gravity), N-body burn dV telescopes to ve*ln(m0/mf)."""
+    from orbitsim.core.flight import integrate_powered_nbody
+    s = StateVector(r=np.array([0.0, 0.0, 0.0]), v=np.array([0.0, 0.0, 0.0]),
+                    mu=0.0, epoch_s=0.0)
+    dry, fuel0, thrust, ve = 1000.0, 1000.0, 30000.0, 3000.0
+    mdot = thrust / ve          # 10 kg/s
+    burn_time = fuel0 / mdot    # 100 s
+    out, fuel = integrate_powered_nbody(
+        s, dry_mass_kg=dry, fuel_kg=fuel0,
+        thrust_dir_unit=np.array([1.0, 0.0, 0.0]),
+        throttle=1.0, max_thrust_n=thrust, ve_mps=ve, dt_s=burn_time,
+    )
+    expected_dv = ve * np.log((dry + fuel0) / dry)   # 3000*ln(2) ≈ 2079.44 m/s
+    assert abs(out.v[0] - expected_dv) / expected_dv < 1e-3
+    assert abs(fuel) < 1e-6     # fuel depleted to exactly 0
+
+
+def test_nbody_fuel_reaches_zero_exactly():
+    """Asking for more burn time than fuel allows: fuel ends at 0, not negative."""
+    from orbitsim.core.flight import integrate_powered_nbody
+    s = StateVector(r=np.array([0.0, 0.0, 0.0]), v=np.array([0.0, 0.0, 0.0]),
+                    mu=0.0, epoch_s=0.0)
+    out, fuel = integrate_powered_nbody(
+        s, dry_mass_kg=1000.0, fuel_kg=100.0,
+        thrust_dir_unit=np.array([1.0, 0.0, 0.0]),
+        throttle=1.0, max_thrust_n=30000.0, ve_mps=3000.0, dt_s=1000.0,
+    )
+    expected_dv = 3000.0 * np.log(1100.0 / 1000.0)
+    assert fuel == 0.0
+    assert abs(out.v[0] - expected_dv) / expected_dv < 2e-3
+
+
+def test_nbody_moon_perturbation_diverges_from_twobody():
+    """Near the Moon, N-body trajectory diverges measurably from two-body."""
+    from orbitsim.core.flight import integrate_powered_nbody, integrate_powered
+    from orbitsim.core.moon import moon_state_at
+    # Place ship 5000 km from the Moon (deep in its gravity well).
+    t0 = 0.0
+    rM = moon_state_at(t0).r
+    r_ship = rM + np.array([5.0e6, 0.0, 0.0])
+    v_ship = np.array([0.0, 500.0, 0.0])
+    s = StateVector(r=r_ship, v=v_ship, mu=MU_EARTH, epoch_s=t0)
+    dt = 3600.0   # 1 hour burn
+    # N-body burn
+    out_nbody, _ = integrate_powered_nbody(
+        s, dry_mass_kg=1000.0, fuel_kg=5000.0,
+        thrust_dir_unit=np.array([0.0, 1.0, 0.0]),
+        throttle=0.1, max_thrust_n=10000.0, ve_mps=3000.0, dt_s=dt,
+    )
+    # Two-body burn (same call, two-body gravity)
+    out_2body, _ = integrate_powered(
+        s, dry_mass_kg=1000.0, fuel_kg=5000.0,
+        thrust_dir_unit=np.array([0.0, 1.0, 0.0]),
+        throttle=0.1, max_thrust_n=10000.0, ve_mps=3000.0, dt_s=dt, substeps=50,
+    )
+    divergence = np.linalg.norm(out_nbody.r - out_2body.r)
+    assert divergence > 1000.0, f"expected N-body divergence near Moon, got {divergence:.1f} m"

@@ -109,3 +109,59 @@ def integrate_powered(
         StateVector(r=r, v=v, mu=mu, epoch_s=state.epoch_s + dt_s),
         float(fuel),
     )
+
+
+def integrate_powered_nbody(
+    state: StateVector,
+    dry_mass_kg: float,
+    fuel_kg: float,
+    thrust_dir_unit: np.ndarray,
+    throttle: float,
+    max_thrust_n: float,
+    ve_mps: float,
+    dt_s: float,
+) -> tuple:
+    """Integrate r, v, fuel over dt_s under earth_moon_accel + thrust.
+
+    Operator splitting per substep: exact rocket-equation velocity impulse,
+    then velocity-Verlet drift under earth_moon_accel. Same fuel-reaches-zero
+    guarantee as integrate_powered; substep count is proximity-aware.
+
+    Returns
+    -------
+    (StateVector, float)
+        New state (epoch_s + dt_s) and remaining fuel [kg].
+    """
+    from orbitsim.core.nbody import earth_moon_accel, _earth_moon_substeps
+
+    thrust_dir_unit = np.asarray(thrust_dir_unit, dtype=np.float64)
+    r = np.asarray(state.r, dtype=np.float64).copy()
+    v = np.asarray(state.v, dtype=np.float64).copy()
+    fuel = float(fuel_kg)
+    t = state.epoch_s
+
+    n = _earth_moon_substeps(state, dt_s, max_step_s=3600.0)
+    h = dt_s / n
+    mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
+
+    for _ in range(n):
+        # Thrust: exact rocket-equation impulse over the burning portion of h.
+        if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
+            t_burn = min(h, fuel / mdot)
+            m_start = dry_mass_kg + fuel
+            m_end = m_start - mdot * t_burn
+            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
+            fuel = max(0.0, fuel - mdot * t_burn)
+        # Gravity: velocity-Verlet under earth_moon_accel (zero if mu==0).
+        if state.mu != 0.0:
+            a0 = earth_moon_accel(r, t)
+            v_half = v + 0.5 * a0 * h
+            r = r + v_half * h
+            t = t + h
+            a1 = earth_moon_accel(r, t)
+            v = v_half + 0.5 * a1 * h
+        else:
+            r = r + v * h
+            t = t + h
+
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s), float(fuel)
