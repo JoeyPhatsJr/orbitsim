@@ -4,7 +4,6 @@ import numpy as np
 
 from orbitsim.core.bodies import CelestialBody
 from orbitsim.core.state import StateVector
-from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core.maneuvers import ManeuverNode
 from orbitsim.core.attitude import quat_identity
 from orbitsim.core.flight import tsiolkovsky_dv
@@ -92,10 +91,11 @@ class World:
     def step(self, sim_dt_s: float) -> None:
         """Advance every vessel by sim_dt_s: slew attitude, then translate.
 
-        Coasting vessels propagate analytically (on rails); thrusting vessels
-        (throttle>0 and fuel) integrate numerically under gravity + thrust.
+        Coasting vessels propagate under earth_moon_accel (N-body, velocity-Verlet);
+        thrusting vessels integrate under earth_moon_accel + rocket equation.
         """
-        from orbitsim.core.flight import integrate_powered
+        from orbitsim.core.nbody import propagate_earth_moon
+        from orbitsim.core.flight import integrate_powered_nbody
         from orbitsim.core.attitude import (
             slew_toward, sas_target_dir, nose_direction,
         )
@@ -112,7 +112,7 @@ class World:
                         vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
             # 2) Translation.
             if vessel.throttle > 0.0 and (vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv):
-                new_state, new_fuel = integrate_powered(
+                new_state, new_fuel = integrate_powered_nbody(
                     vessel.state,
                     dry_mass_kg=vessel.dry_mass_kg,
                     fuel_kg=vessel.fuel_mass_kg,
@@ -126,7 +126,7 @@ class World:
                 if not vessel.unlimited_dv:
                     vessel.fuel_mass_kg = new_fuel
             else:
-                vessel.state = propagate_kepler(vessel.state, sim_dt_s)
+                vessel.state = propagate_earth_moon(vessel.state, sim_dt_s)
 
     def any_thrusting(self) -> bool:
         """True if any vessel is currently producing thrust (throttle>0 and

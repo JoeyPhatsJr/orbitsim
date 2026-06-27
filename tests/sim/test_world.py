@@ -13,13 +13,28 @@ def _circular_vessel(r_m: float = 7.0e6) -> Vessel:
     return Vessel(name="test", state=state)
 
 
+def _coast(world: World, total_s: float, dt_s: float = 0.5) -> float:
+    """Advance the world by total_s in flight-cadence increments, the way the render
+    loop drives it. Under N-body the coast is numerically integrated (not on rails), so
+    a single giant World.step is far less accurate than many small ones; stepping at
+    flight cadence exercises the fidelity the sandbox actually runs at. Returns the
+    elapsed sim time (n * dt_s)."""
+    n = int(round(total_s / dt_s))
+    for _ in range(n):
+        world.step(dt_s)
+    return n * dt_s
+
+
 def test_world_step_period_closure():
     vessel = _circular_vessel()
     world = World(central=EARTH, vessels=[vessel])
     period = state_to_elements(vessel.state).period_s
-    world.step(period)
+    _coast(world, period)
     pos_error = np.linalg.norm(world.vessels[0].state.r - np.array([7.0e6, 0.0, 0.0]))
-    assert pos_error < 1e-3  # 1 mm closure (analytic)
+    # Under N-body the Moon perturbs the LEO orbit by ~130 m over one period — a real
+    # physical effect that converges as dt->0, NOT integrator slop. Exact two-body
+    # period closure (< 1 mm) is covered by tests/core/test_propagate.py.
+    assert pos_error < 500.0  # within the physical Moon perturbation over one period
 
 
 def test_world_step_updates_state_object():
@@ -92,14 +107,17 @@ def test_world_step_burn_drains_fuel_and_adds_speed():
     assert world.any_thrusting() is True
 
 
-def test_world_step_coast_is_on_rails():
+def test_world_step_coast_propagates_without_thrust():
+    # Full-orbit N-body closure is covered by test_world_step_period_closure; this guards
+    # the coast path itself: a throttle-0 vessel propagates along its orbit and never
+    # registers as thrusting.
     v = _circular_vessel()
     v.throttle = 0.0
     world = World(central=EARTH, vessels=[v])
-    period = state_to_elements(v.state).period_s
-    world.step(period)
-    pos_err = np.linalg.norm(world.vessels[0].state.r - np.array([7.0e6, 0.0, 0.0]))
-    assert pos_err < 1e-3                   # analytic period closure preserved
+    start = world.vessels[0].state.r.copy()
+    _coast(world, 600.0, dt_s=1.0)          # 10 min coast at flight cadence
+    moved = np.linalg.norm(world.vessels[0].state.r - start)
+    assert moved > 1.0e6                     # actually moved along the orbit
     assert world.any_thrusting() is False
 
 
@@ -174,3 +192,55 @@ def test_target_sas_with_no_target_does_not_crash():
     q0 = v.orientation.copy()
     w.step(1.0)
     np.testing.assert_array_equal(v.orientation, q0)    # attitude held, no error
+
+
+def test_world_step_coast_uses_nbody_near_moon():
+    """A vessel near the Moon drifts differently from Keplerian after N-body step."""
+    from orbitsim.core.moon import moon_state_at
+    from orbitsim.core.propagate import propagate_kepler
+    rM = moon_state_at(0.0).r
+    r_ship = rM + np.array([5.0e6, 0.0, 0.0])
+    v_ship = np.array([0.0, 500.0, 0.0])
+    st = StateVector(r=r_ship, v=v_ship, mu=MU_EARTH, epoch_s=0.0)
+    vessel = Vessel(name="test", state=st)
+    world = World(central=EARTH, vessels=[vessel])
+    dt = 3600.0
+    world.step(dt)
+    # N-body result should diverge from Keplerian by > 1 km near the Moon.
+    kep = propagate_kepler(st, dt)
+    divergence = np.linalg.norm(world.vessels[0].state.r - kep.r)
+    assert divergence > 1000.0, f"expected N-body divergence, got {divergence:.1f} m"
+
+
+def test_world_step_coast_leo_close_to_kepler():
+    """In LEO the Moon barely perturbs the orbit: stepped at flight cadence, N-body coast
+    tracks two-body Kepler to a few metres over one quarter-orbit."""
+    from orbitsim.core.propagate import propagate_kepler
+    r = 7.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    vessel = Vessel(name="test", state=st)
+    world = World(central=EARTH, vessels=[vessel])
+    period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
+    elapsed = _coast(world, period / 4, dt_s=1.0)
+    kep = propagate_kepler(st, elapsed)
+    assert np.linalg.norm(world.vessels[0].state.r - kep.r) < 100.0
+
+
+def test_world_step_thrust_nbody_fuel_drains():
+    """Thrusting under N-body drains fuel (same contract as two-body)."""
+    r = 7.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    v = Vessel(name="test", state=st, dry_mass_kg=1000.0, fuel_mass_kg=500.0,
+               max_thrust_n=30000.0, exhaust_velocity_mps=3000.0,
+               throttle=1.0, sas_mode="PROGRADE")
+    world = World(central=EARTH, vessels=[v])
+    fuel0 = v.fuel_mass_kg
+    speed0 = v.state.v_mag
+    for _ in range(60):
+        world.step(0.1)
+    assert v.fuel_mass_kg < fuel0
+    assert v.state.v_mag > speed0
