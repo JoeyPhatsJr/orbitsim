@@ -248,6 +248,10 @@ class OrbitApp(ShowBase):
             )
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
+            from orbitsim.render.sas_panel import SasPanel
+            self.sas_panel = SasPanel(
+                self, on_set_mode=self._set_sas, on_toggle=self._toggle_sas
+            )
 
             # Targetable bodies (Moon today; ships later). Click a marker to select.
             from orbitsim.render.targets import MoonTarget, LagrangePointTarget
@@ -1218,6 +1222,9 @@ class OrbitApp(ShowBase):
             warp_locked=self.world.any_thrusting(),
         )
         self.navball.update(orientation_q=v0.orientation, state=v0.state, target_pos=target_pos)
+        from orbitsim.core.attitude import heading_pitch
+        heading, pitch = heading_pitch(v0.orientation, v0.state)
+        self.sas_panel.update(v0.sas_mode, heading, pitch)
         self._update_warp_readout()
         return task.cont
 
