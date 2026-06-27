@@ -55,11 +55,7 @@ def earth_moon_accel(r_m, t_s):
     the Lagrange points balance."""
     r = np.asarray(r_m, dtype=np.float64)
     rM = moon_state_at(t_s).r
-    rn = np.linalg.norm(r)
-    if rn > 0.0:
-        a = -MU_EARTH * r / rn**3
-    else:
-        a = np.zeros(3)
+    a = -MU_EARTH * r / np.linalg.norm(r)**3
     a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM)**3 + rM / np.linalg.norm(rM)**3)
     return a
 
@@ -104,19 +100,9 @@ def _earth_moon_substeps(state, dt_s, max_step_s):
     r = np.asarray(state.r, dtype=np.float64)
     cap = max_step_s
     rE = np.linalg.norm(r)
-    if rE > 0.0:
-        period_E = 2 * np.pi * np.sqrt(rE**3 / MU_EARTH)
-        cap = min(cap, period_E / 200.0)
-    else:
-        # At origin: use very small cap for accuracy in free-space/low-thrust scenarios
-        cap = min(cap, 0.1)
+    cap = min(cap, (2 * np.pi * np.sqrt(rE**3 / MU_EARTH)) / 200.0)
     rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
-    if rM > 0.0:
-        period_M = 2 * np.pi * np.sqrt(rM**3 / MU_MOON)
-        cap = min(cap, period_M / 200.0)
-    # Ensure cap is finite and positive to avoid divide by zero
-    if cap <= 0.0 or not np.isfinite(cap):
-        cap = max_step_s
+    cap = min(cap, (2 * np.pi * np.sqrt(rM**3 / MU_MOON)) / 200.0)
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 

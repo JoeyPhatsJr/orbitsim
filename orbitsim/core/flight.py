@@ -140,7 +140,10 @@ def integrate_powered_nbody(
     fuel = float(fuel_kg)
     t = state.epoch_s
 
-    n = _earth_moon_substeps(state, dt_s, max_step_s=3600.0)
+    # Proximity sub-stepping is only meaningful when the bodies act (mu != 0).
+    # In free space (mu == 0, e.g. the rocket-equation unit test) there are no
+    # bodies, so use a fixed grid; the exact impulse telescopes regardless of n.
+    n = _earth_moon_substeps(state, dt_s, max_step_s=3600.0) if state.mu != 0.0 else 50
     h = dt_s / n
     mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
 
