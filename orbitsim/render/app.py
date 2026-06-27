@@ -716,6 +716,8 @@ class OrbitApp(ShowBase):
     def _toggle_ship_view(self) -> None:
         """Snap the camera between remembered map and ship-view distances ('m')."""
         from orbitsim.render.ship_model import SHIP_VIEW_NEAR_M
+        # "In ship view" means already in close framing; anything farther (incl. a
+        # mid-fade zoom) counts as the map side and is remembered as such.
         in_ship_view = self.rig.distance_m <= SHIP_VIEW_NEAR_M
         if in_ship_view:
             self._ship_distance_m = self.rig.distance_m       # remember ship framing
