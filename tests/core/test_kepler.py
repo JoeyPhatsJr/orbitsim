@@ -81,3 +81,14 @@ class TestHyperbolicAnomalies:
                 F = solve_kepler_hyperbolic(M, e)
                 residual = abs(e * np.sinh(F) - F - M)
                 assert residual < 1e-12, f"e={e}, M={M}: residual={residual}"
+
+    def test_solve_kepler_hyperbolic_large_M_and_e(self):
+        """Large M and e must converge: e*sinh(F)~1e3 makes the absolute residual
+        floor at ~1e-12 (float64 ULP), so convergence must be judged on the Newton
+        step, not |f|. Regression for the lunar-orbit closest-approach crash where
+        propagate_kepler hit M=2505, e=72.9 and the solver raised RuntimeError."""
+        for e, M in [(72.9379528600559, 2505.4340486855817), (50.0, 5000.0), (2.0, 1000.0)]:
+            F = solve_kepler_hyperbolic(M, e)  # must not raise
+            # F is the true root: round-trip M back to within a step-relative tolerance.
+            M_back = e * np.sinh(F) - F
+            assert abs(M_back - M) <= 1e-9 * max(1.0, abs(M)), f"e={e}, M={M}: F={F}"

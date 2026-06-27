@@ -182,7 +182,12 @@ def solve_kepler_hyperbolic(
         fp = e * np.cosh(F) - 1.0
         dF = f / fp
         F -= dF
-        if abs(f) < tol:
+        # Converge on the Newton step, not the absolute residual |f|. When M and e are
+        # large (e.g. a ship deep in the Moon's well has e~73, M~2500 about Earth),
+        # e*sinh(F) ~ M dwarfs 1.0, so |f| floors at the float64 ULP of that magnitude
+        # (~1e-12) and never drops below an absolute tol — Newton has converged but the
+        # |f|<tol test loops forever. |dF| reaches machine epsilon and is scale-free.
+        if abs(dF) <= tol * (1.0 + abs(F)):
             return F
 
     raise RuntimeError(f"Hyperbolic Kepler solve did not converge: M={M}, e={e}")
