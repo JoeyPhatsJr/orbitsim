@@ -27,8 +27,9 @@ class LagrangePointTarget:
     supports_closest_approach = False
 
     def __init__(self, name: str, point_id: str) -> None:
-        self.name = name
-        self.point_id = point_id
+        self.name = name            # display label shown in the HUD/picker
+        self.point_id = point_id    # key into earth_fixed_lagrange_points(t): "L1".."L5"
+        # (kept distinct so a future display name like "EML4" can map to point id "L4")
 
     def state_at(self, t_s: float) -> StateVector:
         r = earth_fixed_lagrange_points(t_s)[self.point_id]

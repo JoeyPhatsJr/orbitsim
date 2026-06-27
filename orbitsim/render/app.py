@@ -490,6 +490,7 @@ class OrbitApp(ShowBase):
         idxs = [i for i, p in enumerate(proj) if p is not None]
         hit = nearest_marker(click, [proj[i] for i in idxs], tol_px=22.0)
         if hit is not None:
+            self._clear_target()   # tear down any prior target's CA markers before switching
             self._target = self._targets[idxs[hit]]
 
     def _current_node(self) -> ManeuverNode:

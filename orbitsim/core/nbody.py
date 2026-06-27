@@ -187,8 +187,8 @@ def _earth_fixed_collinear_accel_along(s, u, t_s):
 
 
 def earth_fixed_lagrange_points(t_s):
-    """Inertial positions of L1..L5 [m] in the live Earth-fixed circular-Moon frame, consistent
-    with earth_moon_accel (indirect term) and the Moon's actual inclined geometry at t_s.
+    """Inertial positions of L1..L5 [m] in the live Earth-fixed frame, consistent with
+    earth_moon_accel (indirect term) and the Moon's actual geometry at t_s (e=0 but inclined).
 
     Collinear points solve net_along(s)=0 along the Earth-Moon line; the equilateral points are
     the Moon position rotated +/-60 deg about the orbit normal."""
