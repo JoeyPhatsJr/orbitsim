@@ -1043,15 +1043,19 @@ class OrbitApp(ShowBase):
                 except ValueError:
                     period = 14.0 * 86400.0
                 window = min(period, 14.0 * 86400.0)
-                from orbitsim.core.nbody import propagate_earth_moon
+                # CA stays Keplerian. The target is the on-rails Moon — propagating it under
+                # earth_moon_accel is singular (it sits at its own gravity source) — and a
+                # per-sample N-body re-integration over a multi-day window is O(samples x window),
+                # which would freeze the loop. The live N-body trajectory line already shows the
+                # true perturbed path; this readout is an approximate planning aid, consistent
+                # with the (also Keplerian) intercept/porkchop seeds.
                 self._ca = closest_approach(
-                    traj, self._target.state_at(base_epoch), window_s=window,
-                    coarse_samples=720, propagator=propagate_earth_moon)
+                    traj, self._target.state_at(base_epoch), window_s=window, coarse_samples=720)
                 self._ca_traj = traj
                 self._ca_abs_epoch = base_epoch + self._ca.t_ca_s
             ca = self._ca
-            from orbitsim.core.nbody import propagate_earth_moon
-            ship_at = propagate_earth_moon(self._ca_traj, ca.t_ca_s).r
+            from orbitsim.core.propagate import propagate_kepler
+            ship_at = propagate_kepler(self._ca_traj, ca.t_ca_s).r
             tgt_at = self._target.state_at(self._ca_abs_epoch).r
             self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
                 *self.transform.to_render(ship_at))
