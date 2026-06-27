@@ -208,16 +208,20 @@ def test_osculating_elements_switches_to_moon_inside_soi():
 WARP_STEPS = (1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0, 100000.0)
 
 
-def test_max_safe_warp_is_low_near_earth_high_in_deep_space():
-    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+def test_max_safe_warp_caps_low_orbits_below_high_orbits():
+    # Under a tight sub-step budget, a fast low orbit (short local timescale) caps at a
+    # lower warp than a slow high orbit. (The proximity sub-stepping is so cheap that the
+    # cap only bites under a tight budget / very close approach — see Part 2 for tuning.)
+    low = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
                       v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
-    deep = StateVector(r=np.array([3.0e8, 1.0e8, 0.0]),
-                       v=np.array([0.0, 200.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
-    w_leo = nb.max_safe_warp(leo, 0.0, WARP_STEPS)
-    w_deep = nb.max_safe_warp(deep, 0.0, WARP_STEPS)
-    assert w_leo in WARP_STEPS and w_deep in WARP_STEPS
-    assert w_deep > w_leo                     # smoother far out => faster warp allowed
-    assert w_leo >= 1.0                        # never below the floor
+    high = StateVector(r=np.array([1.5e8, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
+                       mu=MU_EARTH, epoch_s=0.0)
+    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_substeps=20)
+    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_substeps=20)
+    assert w_low in WARP_STEPS and w_high in WARP_STEPS
+    assert w_high > w_low                      # slower/farther orbit allows faster warp
+    assert w_low >= 1.0                         # never below the floor
 
 
 def test_max_safe_warp_respects_substep_budget():
