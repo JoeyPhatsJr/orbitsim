@@ -16,8 +16,7 @@ from panda3d.core import (
 )
 
 from orbitsim.core.elements import state_to_elements
-from orbitsim.core.maneuvers import ManeuverNode, predict_elements_after, apply_maneuver
-from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.core.moon import MOON_ORBIT, moon_state_at
 from orbitsim.core.rendezvous import closest_approach
 from orbitsim.core.attitude import (
@@ -28,7 +27,7 @@ from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node, orbit_shape_changed
+from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
@@ -216,7 +215,7 @@ class OrbitApp(ShowBase):
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
         # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
         self._orbit_frame = self.render.attach_new_node("orbit_frame")
-        self._orbit_elem_cache = [None for _ in world.vessels]
+        self._traj_state_cache = [None for _ in world.vessels]  # (StateVector, scale) per vessel
 
         self._preview_np = None
         self._porkchop_card = None
@@ -694,8 +693,16 @@ class OrbitApp(ShowBase):
             self._warp_readout.setText(f"Warp  x{self.clock.warp:,.0f}{suffix}")
 
     def _warp_up_guarded(self):
-        if not self.world.any_thrusting():
-            self.clock.warp_up()
+        if self.world.any_thrusting():
+            return
+        if self.world.vessels:
+            from orbitsim.core.nbody import max_safe_warp
+            from orbitsim.sim.clock import SimClock
+            cap = max_safe_warp(
+                self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            if self.clock.warp >= cap:
+                return  # already at the proximity cap; don't climb past it
+        self.clock.warp_up()
 
     def _rmb(self, down):
         self._rmb_down = down
@@ -836,14 +843,46 @@ class OrbitApp(ShowBase):
         card.set_texture(tex)
         self._porkchop_card = card
 
-    def _rebuild_orbit(self, idx, vessel) -> None:
-        elem = state_to_elements(vessel.state)
+    def _sample_trajectory(self, state, n_pts=256, max_horizon_s=7 * 86400):
+        """Forward-integrate state under earth_moon_accel and return ~n_pts positions [m].
+
+        Horizon is the osculating orbital period capped at max_horizon_s (7 days); for an
+        Earth-bound orbit this closes the loop, for a translunar/hyperbolic arc it shows the
+        next few days of the perturbed path. Returns an (n_pts, 3) float64 array of
+        world-meter positions in the Earth-centered inertial frame.
+        """
+        from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
+        try:
+            osc = osculating_elements(state, state.epoch_s)
+            horizon_s = min(float(osc.period_s), max_horizon_s)
+        except (ValueError, AttributeError):
+            horizon_s = float(max_horizon_s)
+        dt = horizon_s / n_pts
+        pts = np.empty((n_pts, 3), dtype=np.float64)
+        pts[0] = state.r
+        cur = state
+        for i in range(1, n_pts):
+            cur = propagate_earth_moon(cur, dt)
+            pts[i] = cur.r
+        return pts
+
+    def _rebuild_trajectory(self, idx, vessel) -> None:
+        """Rebuild the vessel trajectory line if state or zoom changed beyond tolerance.
+
+        Under N-body the state drifts continuously (Moon perturbation), so the cache keys on
+        the state vector itself (position/velocity tolerance) rather than Keplerian shape."""
+        state = vessel.state
         scale = self.transform.scale_m_per_unit
-        cached = self._orbit_elem_cache[idx]
-        if cached is not None and cached[1] == scale and not orbit_shape_changed(cached[0], elem):
-            return  # coasting at the same zoom: keep the cached geometry under the orbit frame
-        self._orbit_elem_cache[idx] = (elem, scale)
-        pts = [tuple(p / scale) for p in sample_orbit_points(elem, n=256)]  # render units
+        cached = self._traj_state_cache[idx]
+        if cached is not None:
+            cached_state, cached_scale = cached
+            if cached_scale == scale:
+                pos_ok = np.linalg.norm(state.r - cached_state.r) < 100.0
+                vel_ok = np.linalg.norm(state.v - cached_state.v) < 0.1
+                if pos_ok and vel_ok:
+                    return
+        self._traj_state_cache[idx] = (state, scale)
+        pts = [tuple(p / scale) for p in self._sample_trajectory(state)]
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()
         node = build_orbit_node(pts)
@@ -858,10 +897,19 @@ class OrbitApp(ShowBase):
             self._update_solar_system()
             return task.cont
 
-        # Flight input, then lock warp to 1x while thrusting (no RK4 through warp).
+        # Flight input, then bound warp: 1x while thrusting (no integrating through warp),
+        # else cap to the largest warp whose per-frame sub-step count stays in budget near
+        # bodies (silent — the readout just won't climb past the cap).
         self._apply_flight_input(real_dt)
-        if self.world.any_thrusting() and self.clock.warp != 1.0:
+        if self.world.any_thrusting():
             self.clock.warp = 1.0
+        elif self.world.vessels:
+            from orbitsim.core.nbody import max_safe_warp
+            from orbitsim.sim.clock import SimClock
+            cap = max_safe_warp(
+                self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            if self.clock.warp > cap:
+                self.clock.warp = cap
         # Feed the current target's position to the TARGET/ANTITARGET SAS hold.
         target_pos = (self._target.state_at(self.clock.sim_time_s).r
                       if self._target is not None else None)
@@ -916,7 +964,7 @@ class OrbitApp(ShowBase):
         for idx, vessel in enumerate(self.world.vessels):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
-            self._rebuild_orbit(idx, vessel)
+            self._rebuild_trajectory(idx, vessel)
 
         # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
         # readout, and a vessel.nodes mirror so quicksave persists the plan.
@@ -930,11 +978,11 @@ class OrbitApp(ShowBase):
             ttn = None
             node = self._current_node()
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
-        # Post-burn orbit preview.
+        # Post-burn trajectory preview (forward-integrated under N-body, same as the live line).
         if node.magnitude_mps > 0.0:
-            pred = predict_elements_after(v0.state, node)
+            post_burn = apply_maneuver(v0.state, node)
             ppts = [tuple(p / self.transform.scale_m_per_unit)
-                    for p in sample_orbit_points(pred, n=256)]
+                    for p in self._sample_trajectory(post_burn)]
             if self._preview_np is not None:
                 self._preview_np.remove_node()
             self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
@@ -945,7 +993,8 @@ class OrbitApp(ShowBase):
         # Node marker at the node's predicted position on the orbit (held at the vessel
         # through the brief execute window once the node is due).
         if self._node_epoch_s is not None and ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
-            npos = propagate_kepler(v0.state, max(0.0, ttn)).r
+            from orbitsim.core.nbody import propagate_earth_moon
+            npos = propagate_earth_moon(v0.state, max(0.0, ttn)).r
             mx, my, mz = self.transform.to_render(npos)
             if self._node_marker_np is None:
                 self._node_marker_np = make_uv_sphere(1.0, 8, 12)
@@ -994,12 +1043,15 @@ class OrbitApp(ShowBase):
                 except ValueError:
                     period = 14.0 * 86400.0
                 window = min(period, 14.0 * 86400.0)
+                from orbitsim.core.nbody import propagate_earth_moon
                 self._ca = closest_approach(
-                    traj, self._target.state_at(base_epoch), window_s=window, coarse_samples=720)
+                    traj, self._target.state_at(base_epoch), window_s=window,
+                    coarse_samples=720, propagator=propagate_earth_moon)
                 self._ca_traj = traj
                 self._ca_abs_epoch = base_epoch + self._ca.t_ca_s
             ca = self._ca
-            ship_at = propagate_kepler(self._ca_traj, ca.t_ca_s).r
+            from orbitsim.core.nbody import propagate_earth_moon
+            ship_at = propagate_earth_moon(self._ca_traj, ca.t_ca_s).r
             tgt_at = self._target.state_at(self._ca_abs_epoch).r
             self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
                 *self.transform.to_render(ship_at))
@@ -1016,20 +1068,28 @@ class OrbitApp(ShowBase):
         self.rig.apply()
 
         v0 = self.world.vessels[0]
-        elem = state_to_elements(v0.state)
+        # Osculating elements about the dominant body (Earth, or the Moon inside its SOI).
+        from orbitsim.core.nbody import osculating_elements
+        from orbitsim.core.constants import MU_MOON
+        from orbitsim.core.bodies import MOON as MOON_BODY
+        elem = osculating_elements(v0.state, self.clock.sim_time_s)
         rp = elem.a * (1 - elem.e)
         ra = elem.a * (1 + elem.e)
         try:
             period = elem.period_s
         except ValueError:
             period = float("nan")
+        # When Moon-dominant, Pe/Ap are Moon-relative — measure them against the Moon's
+        # radius (altitude stays Earth-surface-relative; it drives the atmosphere shell).
+        moon_dominant = elem.mu == MU_MOON
+        ref_radius = MOON_BODY.radius_m if moon_dominant else self.world.central.radius_m
         self.hud.update(
             sim_time_s=self.clock.sim_time_s,
             warp=self.clock.warp,
             altitude_m=v0.state.r_mag - self.world.central.radius_m,
             speed_mps=v0.state.v_mag,
-            periapsis_m=rp - self.world.central.radius_m,
-            apoapsis_m=ra - self.world.central.radius_m,
+            periapsis_m=rp - ref_radius,
+            apoapsis_m=ra - ref_radius,
             period_s=period,
             inclination_rad=elem.i,
         )
