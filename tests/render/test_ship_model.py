@@ -36,3 +36,17 @@ def test_alphas_bounded():
 def test_model_node_scale_is_inverse():
     assert model_node_scale(0.05) == pytest.approx(20.0)
     assert model_node_scale(2.0e4) == pytest.approx(5.0e-5)
+
+
+def test_build_ship_model_nose_points_plus_z():
+    # Headless: building geometry needs Panda but no window.
+    from panda3d.core import loadPrcFileData
+    loadPrcFileData("", "window-type none")
+    from orbitsim.render.ship_model import build_ship_model
+
+    np_ = build_ship_model()
+    lo, hi = np_.get_tight_bounds()
+    # Nose extends further along +Z than the tail does along -Z.
+    assert hi.z > abs(lo.z)
+    # Roughly ship-sized (metres), not a unit primitive.
+    assert (hi.z - lo.z) > 5.0
