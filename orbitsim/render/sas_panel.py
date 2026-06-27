@@ -29,7 +29,7 @@ class SasPanel:
         self._buttons = {}
         self._readout = OnscreenText(
             text="",
-            pos=(0.0, 0.78),
+            pos=(0.72, 0.80),
             scale=0.04,
             fg=(0.85, 0.95, 1.0, 1.0),
             shadow=(0.0, 0.0, 0.0, 1.0),
@@ -37,24 +37,18 @@ class SasPanel:
             mayChange=True,
             parent=base.a2dBottomCenter,
         )
-        self._buttons["__TOGGLE__"] = DirectButton(
-            text="SAS",
-            scale=0.04,
-            pos=(-0.78, 0.0, 0.68),
-            frameColor=_IDLE,
-            text_fg=(1.0, 1.0, 1.0, 1.0),
-            command=on_toggle,
-            parent=base.a2dBottomCenter,
-        )
-        for index, mode in enumerate(SAS_MODES):
-            self._buttons[mode] = DirectButton(
-                text=_SHORT[mode],
-                scale=0.035,
-                pos=(-0.62 + index * 0.155, 0.0, 0.68),
+        controls = [("__TOGGLE__", "SAS", on_toggle, [])]
+        controls.extend((mode, _SHORT[mode], on_set_mode, [mode]) for mode in SAS_MODES)
+        for index, (key, label, command, args) in enumerate(controls):
+            row, column = divmod(index, 3)
+            self._buttons[key] = DirectButton(
+                text=label,
+                scale=0.037,
+                pos=(0.48 + column * 0.18, 0.0, 0.68 - row * 0.10),
                 frameColor=_IDLE,
                 text_fg=(1.0, 1.0, 1.0, 1.0),
-                command=on_set_mode,
-                extraArgs=[mode],
+                command=command,
+                extraArgs=args,
                 parent=base.a2dBottomCenter,
             )
 
@@ -84,7 +78,7 @@ class VelocityReadout:
         self._button = DirectButton(
             text="",
             scale=0.045,
-            pos=(0.0, 0.0, 0.90),
+            pos=(0.0, 0.0, 0.70),
             frameColor=_BG,
             text_fg=(1.0, 1.0, 1.0, 1.0),
             relief=DGG.FLAT,
