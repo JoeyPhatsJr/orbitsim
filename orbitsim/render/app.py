@@ -218,6 +218,7 @@ class OrbitApp(ShowBase):
         self._traj_state_cache = [None for _ in world.vessels]  # (StateVector, scale) per vessel
 
         self._preview_np = None
+        self._preview_recompute_t = 0.0  # monotonic time of last preview rebuild (throttle)
         self._porkchop_card = None
         if self.solar_system:
             self._build_planets()
@@ -340,6 +341,7 @@ class OrbitApp(ShowBase):
     NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
+    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
 
     def _build_maneuver_ui(self) -> None:
         """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
@@ -1000,14 +1002,24 @@ class OrbitApp(ShowBase):
             node = self._current_node()
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
         # Post-burn trajectory preview (forward-integrated under N-body, same as the live line).
+        # Throttled like the closest-approach recompute below: the 256-step N-body integration +
+        # LineSegs rebuild is the heavy per-frame cost that made plotting a node laggy. The preview
+        # applies the burn at the *current* state ("burn now"), which the ship sweeps every frame
+        # (~128 m/frame in LEO at 1x), so the post-burn orbit genuinely changes each frame and no
+        # change-detection cache can skip it. Refreshing a few times a second instead of every
+        # frame keeps it visually live while cutting the cost ~90%.
         if node.magnitude_mps > 0.0:
-            post_burn = apply_maneuver(v0.state, node)
-            ppts = [tuple(p / self.transform.scale_m_per_unit)
-                    for p in self._sample_trajectory(post_burn)]
-            if self._preview_np is not None:
-                self._preview_np.remove_node()
-            self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
-            self._preview_np.reparent_to(self._orbit_frame)
+            import time as _time
+            now_real = _time.monotonic()
+            if self._preview_np is None or now_real - self._preview_recompute_t > self.PREVIEW_THROTTLE_S:
+                self._preview_recompute_t = now_real
+                post_burn = apply_maneuver(v0.state, node)
+                ppts = [tuple(p / self.transform.scale_m_per_unit)
+                        for p in self._sample_trajectory(post_burn)]
+                if self._preview_np is not None:
+                    self._preview_np.remove_node()
+                self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
+                self._preview_np.reparent_to(self._orbit_frame)
         elif self._preview_np is not None:
             self._preview_np.remove_node()
             self._preview_np = None
