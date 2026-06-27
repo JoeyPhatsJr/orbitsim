@@ -866,18 +866,19 @@ class OrbitApp(ShowBase):
         card.set_texture(tex)
         self._porkchop_card = card
 
-    def _sample_trajectory(self, state, n_pts=256, max_horizon_s=7 * 86400):
+    def _sample_trajectory(self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1):
         """Forward-integrate state under earth_moon_accel and return ~n_pts positions [m].
 
-        Horizon is the osculating orbital period capped at max_horizon_s (7 days); for an
-        Earth-bound orbit this closes the loop, for a translunar/hyperbolic arc it shows the
-        next few days of the perturbed path. Returns an (n_pts, 3) float64 array of
+        Horizon is ``n_orbits`` osculating orbital periods capped at max_horizon_s; for an
+        Earth-bound orbit this draws that many closed loops (successive loops drift slightly
+        under the Moon perturbation), for a translunar/hyperbolic arc (no period) it shows the
+        next ``max_horizon_s`` of the perturbed path. Returns an (n_pts, 3) float64 array of
         world-meter positions in the Earth-centered inertial frame.
         """
         from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
         try:
             osc = osculating_elements(state, state.epoch_s)
-            horizon_s = min(float(osc.period_s), max_horizon_s)
+            horizon_s = min(n_orbits * float(osc.period_s), max_horizon_s)
         except (ValueError, AttributeError):
             horizon_s = float(max_horizon_s)
         dt = horizon_s / n_pts
@@ -1014,8 +1015,11 @@ class OrbitApp(ShowBase):
             if self._preview_np is None or now_real - self._preview_recompute_t > self.PREVIEW_THROTTLE_S:
                 self._preview_recompute_t = now_real
                 post_burn = apply_maneuver(v0.state, node)
+                # Show 2 full post-burn orbits (512 pts keeps ~256/orbit resolution; the wider
+                # cap lets both loops of a large planned ellipse draw without truncation).
                 ppts = [tuple(p / self.transform.scale_m_per_unit)
-                        for p in self._sample_trajectory(post_burn)]
+                        for p in self._sample_trajectory(
+                            post_burn, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2)]
                 if self._preview_np is not None:
                     self._preview_np.remove_node()
                 self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
