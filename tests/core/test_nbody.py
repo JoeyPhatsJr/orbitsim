@@ -3,6 +3,7 @@ from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
 from orbitsim.core import nbody as nb
+from orbitsim.core.moon import moon_state_at
 
 
 def test_bodies_sit_on_the_barycenter_axis_at_t0():
@@ -128,3 +129,104 @@ def test_L4_stays_bounded_over_a_day():
 
 
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON
+
+
+def test_earth_moon_accel_has_indirect_term():
+    r = np.array([2.0e7, 1.0e7, 0.0])
+    a = nb.earth_moon_accel(r, 0.0)
+    rM = moon_state_at(0.0).r
+    direct = (-MU_EARTH * r / np.linalg.norm(r)**3
+              - MU_MOON * (r - rM) / np.linalg.norm(r - rM)**3)
+    indirect = -MU_MOON * rM / np.linalg.norm(rM)**3
+    assert np.allclose(a, direct + indirect, rtol=1e-12)
+
+
+def test_L4_balances_in_the_earth_fixed_model():
+    # L4: 60 deg ahead of the Moon in its orbital plane, distance d from Earth and Moon.
+    t = 1.0e5
+    m = moon_state_at(t)
+    d = np.linalg.norm(m.r)
+    w = np.cross(m.r, m.v) / d**2                 # Moon's angular velocity vector
+    omega = np.linalg.norm(w)
+    axis = w / omega
+    # Rodrigues rotation of r_M by +60 deg about the orbit normal.
+    c, s = np.cos(np.radians(60)), np.sin(np.radians(60))
+    L4 = m.r * c + np.cross(axis, m.r) * s + axis * np.dot(axis, m.r) * (1 - c)
+    # Net rotating-frame acceleration (gravity + centrifugal) must vanish.
+    centrifugal = -np.cross(w, np.cross(w, L4))
+    net = nb.earth_moon_accel(L4, t) + centrifugal
+    assert np.linalg.norm(net) < 1e-7, np.linalg.norm(net)
+
+
+def test_propagate_earth_moon_reduces_to_two_body_near_earth():
+    # A LEO orbit: the Moon's perturbation is tiny, so it tracks Kepler closely.
+    r = 7.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
+    out = nb.propagate_earth_moon(st, period / 4, max_step_s=0.5)
+    # Within ~1 km of two-body over a quarter LEO orbit (Moon tug is sub-km here).
+    assert np.linalg.norm(out.r - propagate_kepler(st, period / 4).r) < 1.0e3
+
+
+def test_propagate_earth_moon_reversible():
+    st = StateVector(r=np.array([5.0e7, 0.0, 0.0]),
+                     v=np.array([0.0, 1500.0, 100.0]), mu=MU_EARTH, epoch_s=0.0)
+    T = 3600.0 * 6
+    fwd = nb.propagate_earth_moon(st, T, max_step_s=20.0)
+    back = nb.propagate_earth_moon(fwd, -T, max_step_s=20.0)
+    assert np.linalg.norm(back.r - st.r) < 1.0
+
+
+from orbitsim.core.elements import state_to_elements
+
+
+def test_osculating_elements_earth_dominant_matches_two_body():
+    r = 8.0e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]),
+                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH, epoch_s=0.0)
+    osc = nb.osculating_elements(st, 0.0)
+    ref = state_to_elements(StateVector(st.r, st.v, MU_EARTH, 0.0))
+    assert abs(osc.a - ref.a) < 1.0 and abs(osc.e - ref.e) < 1e-9
+
+
+def test_osculating_elements_switches_to_moon_inside_soi():
+    t = 0.0
+    m = moon_state_at(t)
+    r_lo = 3.0e6                                   # 3000 km lunar orbit (inside SOI)
+    # Circular about the Moon, in the Moon's frame.
+    st = StateVector(r=m.r + np.array([r_lo, 0.0, 0.0]),
+                     v=m.v + np.array([0.0, np.sqrt(MU_MOON / r_lo), 0.0]),
+                     mu=MU_EARTH, epoch_s=t)
+    osc = nb.osculating_elements(st, t)
+    assert osc.mu == MU_MOON                       # dominant body is the Moon
+    assert abs(osc.a - r_lo) < 1.0e4 and osc.e < 0.01   # ~circular lunar orbit
+
+
+WARP_STEPS = (1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0, 100000.0)
+
+
+def test_max_safe_warp_caps_low_orbits_below_high_orbits():
+    # Under a tight sub-step budget, a fast low orbit (short local timescale) caps at a
+    # lower warp than a slow high orbit. (The proximity sub-stepping is so cheap that the
+    # cap only bites under a tight budget / very close approach — see Part 2 for tuning.)
+    low = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    high = StateVector(r=np.array([1.5e8, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
+                       mu=MU_EARTH, epoch_s=0.0)
+    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_substeps=20)
+    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_substeps=20)
+    assert w_low in WARP_STEPS and w_high in WARP_STEPS
+    assert w_high > w_low                      # slower/farther orbit allows faster warp
+    assert w_low >= 1.0                         # never below the floor
+
+
+def test_max_safe_warp_respects_substep_budget():
+    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
+    n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
+    assert n <= 200

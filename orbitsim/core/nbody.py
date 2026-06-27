@@ -6,6 +6,8 @@ from scipy.optimize import brentq
 
 from orbitsim.core.constants import MU_EARTH, MU_MOON
 from orbitsim.core.state import StateVector
+from orbitsim.core.moon import moon_state_at
+from orbitsim.core.elements import state_to_elements
 
 D_EM = 3.844e8                          # Earth-Moon separation [m]
 MU_TOTAL = MU_EARTH + MU_MOON
@@ -46,6 +48,18 @@ def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
     return a
 
 
+def earth_moon_accel(r_m, t_s):
+    """Ship acceleration in the EARTH-CENTERED frame [m/s^2]: central Earth plus the
+    Moon's third-body perturbation. The indirect term (+mu_M * r_M/|r_M|^3) is required
+    because Earth is held fixed at the origin (non-inertial frame); it is also what makes
+    the Lagrange points balance."""
+    r = np.asarray(r_m, dtype=np.float64)
+    rM = moon_state_at(t_s).r
+    a = -MU_EARTH * r / np.linalg.norm(r)**3
+    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM)**3 + rM / np.linalg.norm(rM)**3)
+    return a
+
+
 def _substep_count(state, dt_s, attractors, max_step_s):
     """Number of uniform Verlet sub-steps for |dt_s|: small enough to resolve the
     closest body's local orbital timescale (1/200 of 2*pi*sqrt(r^3/mu))."""
@@ -57,21 +71,60 @@ def _substep_count(state, dt_s, attractors, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
-    """Advance the ship by dt_s using velocity Verlet (kick-drift-kick). Reversible."""
-    n = _substep_count(state, dt_s, attractors, max_step_s)
-    h = dt_s / n
-    r = np.asarray(state.r, dtype=np.float64).copy()
-    v = np.asarray(state.v, dtype=np.float64).copy()
-    t = state.epoch_s
-    a = gravity_accel(r, t, attractors)
-    for _ in range(n):
+def _verlet(r, v, t, dt_s, accel_fn, n_sub):
+    """Velocity-Verlet (kick-drift-kick) for n_sub uniform steps. accel_fn(r, t)->a."""
+    r = np.asarray(r, dtype=np.float64).copy()
+    v = np.asarray(v, dtype=np.float64).copy()
+    h = dt_s / n_sub
+    a = accel_fn(r, t)
+    for _ in range(n_sub):
         v_half = v + 0.5 * a * h
         r = r + v_half * h
         t = t + h
-        a = gravity_accel(r, t, attractors)
+        a = accel_fn(r, t)
         v = v_half + 0.5 * a * h
+    return r, v, t
+
+
+def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
+    """Advance the ship by dt_s with velocity Verlet under summed attractors. Reversible."""
+    n = _substep_count(state, dt_s, attractors, max_step_s)
+    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s,
+                      lambda rr, tt: gravity_accel(rr, tt, attractors), n)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+def _earth_moon_substeps(state, dt_s, max_step_s):
+    """Sub-steps for propagate_earth_moon: cap by 1/200 of the local orbital timescale
+    at Earth (origin) and at the Moon."""
+    r = np.asarray(state.r, dtype=np.float64)
+    cap = max_step_s
+    rE = np.linalg.norm(r)
+    cap = min(cap, (2 * np.pi * np.sqrt(rE**3 / MU_EARTH)) / 200.0)
+    rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
+    cap = min(cap, (2 * np.pi * np.sqrt(rM**3 / MU_MOON)) / 200.0)
+    return max(1, int(np.ceil(abs(dt_s) / cap)))
+
+
+def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
+    """Advance the ship by dt_s under earth_moon_accel (central Earth + Moon + indirect)."""
+    n = _earth_moon_substeps(state, dt_s, max_step_s)
+    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, earth_moon_accel, n)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+MOON_SOI_M = 3.844e8 * (MU_MOON / MU_EARTH)**0.4   # Moon sphere of influence [m]
+
+
+def osculating_elements(state, t_s):
+    """Instantaneous Keplerian elements about the dominant body (Moon if the ship is
+    within MOON_SOI_M of it, else Earth). Used for the HUD; drifts under perturbation."""
+    rM = moon_state_at(t_s)
+    if np.linalg.norm(state.r - rM.r) < MOON_SOI_M:
+        rel = StateVector(state.r - rM.r, state.v - rM.v, MU_MOON, state.epoch_s)
+    else:
+        rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
+    return state_to_elements(rel)
 
 
 def _rot_z(theta):
@@ -122,3 +175,11 @@ def lagrange_points(t_s):
     }
     Rinv = _rot_z(OMEGA_EM * t_s).T   # rotating -> inertial
     return {k: Rinv @ v for k, v in rot.items()}
+
+
+def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
+    """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
+    sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
+    allowed = [w for w in warp_steps
+               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+    return max(allowed) if allowed else min(warp_steps)
