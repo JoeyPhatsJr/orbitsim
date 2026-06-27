@@ -7,8 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A desktop (Windows) 3D orbital mechanics simulator/game in Python — "KSP but the physics are
 real." Three pillars: transfer & ΔV planning (Hohmann/bi-elliptic/Lambert + porkchop optimizer),
 the real solar system (JPL/Skyfield ephemerides + patched conics with SOI handoffs), and a
-sandbox (maneuver nodes with live orbit prediction). Vessels are point masses with a ΔV budget —
-**no** rocket-part building, **no** aerodynamics/atmosphere (deliberately out of scope).
+sandbox (maneuver nodes with live orbit prediction). Vessels are point masses with a ΔV budget;
+**no** aerodynamics/atmosphere (out of scope). As of 2026-06-26 the sandbox is moving to a
+**restricted N-body** model (real Moon gravity + Lagrange points — see "Direction shift" below),
+and buildable/launchable ships (mass + 3D models, stations, landers) are a longer-term goal — so
+rocket-part building is no longer permanently off the table, though not yet built.
 
 ## Commands
 
@@ -16,7 +19,7 @@ Always use the venv interpreter. Bare `python` resolves to the global install, w
 dependencies and will fail with `ModuleNotFoundError: astropy` / `panda3d`.
 
 ```bash
-.venv/Scripts/python -m pytest tests/ -q                 # full suite (~131 tests)
+.venv/Scripts/python -m pytest tests/ -q                 # full suite (~211 tests)
 .venv/Scripts/python -m pytest tests/core -q             # physics core only (no graphics needed)
 .venv/Scripts/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/Scripts/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
@@ -69,6 +72,13 @@ through 10⁶×). Attitude slews toward the SAS target every tick regardless. Th
 drift — so Δv telescopes to `vₑ·ln(m₀/m_f)` and fuel hits exactly 0 (the naive "RK4 the fuel ODE
 with a switch" leaves residual fuel; that was a real bug fixed at review).
 
+> **In flux (N-body Part 2, not yet wired):** the tested N-body propagator (`core/nbody.py`:
+> `propagate_earth_moon`, velocity-Verlet) exists but `World.step` still uses `propagate_kepler` /
+> `integrate_powered`. Part 2 swaps the sandbox coast/powered to N-body, forward-integrates the
+> trajectory line, and caps warp via `core.nbody.max_safe_warp` (warp can't be unlimited under
+> numerical integration — it's bounded by a per-frame sub-step budget near bodies). Until then the
+> sandbox is still two-body on rails.
+
 ### The scale/precision problem (why `render/floating_origin.py` exists)
 
 The solar system spans ~1.5e11 m but a docking maneuver needs ~1e-3 m precision, and GPUs render
@@ -101,7 +111,7 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 
 | Area | Status |
 |---|---|
-| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete**, 136 tests green |
+| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete** (whole suite now **211 tests** green) |
 | Continuous-thrust flight (rocket eq, navball, controls) | **complete** (`...plans/2026-06-24-continuous-thrust-flight.md`) |
 | Realistic Earth (textured, day/night, atmosphere) | **complete** (`...plans/2026-06-25-realistic-earth.md`) |
 | Starfield / skybox | **complete** (`render/skybox.py`; `...plans/2026-06-25-starfield.md`) |
@@ -109,7 +119,20 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 | HUD/UX polish (Phase 6.2 A1: F1 overlay, inclination, toast, Esc settings/units) | **complete** (`render/keybind_overlay.py`, `render/settings_panel.py`; `...plans/2026-06-25-hud-ux-polish.md`) |
 | Scheduled maneuver nodes (Phase 6.2 A2: time-to-node, Pe/Ap presets, auto-warp-down) | **complete** (`core.maneuvers.time_to_periapsis/apoapsis`; `...plans/2026-06-25-scheduled-maneuver-nodes.md`) |
 | Moon intercept/target (Phase 6.2 A3: Keplerian Moon, closest-approach markers) | **complete** (`core/moon.py`, `core/rendezvous.py`; `...plans/2026-06-25-moon-intercept.md`) |
-| Rest of Phase 6: performance (orbit-line caching), docs, packaging | planned (later cycles) |
+| Orbit-line caching (Phase 6.3 B: render-unit orbit frame, rebuild on change) | **complete** (`...plans/2026-06-25-orbit-line-caching.md`) |
+| Targeting + ΔV controls (click-to-target, working TARGET SAS, unlimited-ΔV cheat, porkchop intercept node) | **complete** (`render/targets.py`, `render/picking.py`, `core.optimize.intercept_node`; `...plans/2026-06-26-{deltav-controls,target-selection,intercept-node}.md`) |
+| **Restricted N-body engine core (Cycle 1a)** | **complete** (`core/nbody.py`: CR3BP, velocity-Verlet, Jacobi, Lagrange points; `...plans/2026-06-26-nbody-engine-core.md`) |
+| **N-body flyable — core physics (Cycle 1b Part 1)** | **complete** (`core/nbody.py` `earth_moon_accel`/`propagate_earth_moon`/`osculating_elements`/`max_safe_warp`, circular Moon; `...plans/2026-06-26-nbody-flyable-core.md`) |
+| Rest of Phase 6: docs, packaging | planned (later cycles) |
+
+**Direction shift (2026-06-26):** the project is pivoting to a **restricted N-body** model (ship as a
+massless test particle; Earth fixed + circular Moon + indirect/third-body term) so it becomes an
+*alternative* to KSP with real Lagrange points — **reversing** the earlier "stick with patched conics"
+decision. Built in cycles: 1a engine core ✅ → 1b flyable (Part 1 physics ✅, **Part 2 render
+integration = next**) → 1c Lagrange-point visualization. Spec: `docs/superpowers/specs/2026-06-26-nbody-flyable-design.md`.
+Longer-term vision (not yet started): buildable/launchable ships with mass + 3D models, stations,
+landers — vessels stay point masses for *propagation* (mass only affects ΔV). Two-body `core/`
+remains the analysis layer (transfers, intercept seeds) and on-rails body motion; it is NOT discarded.
 
 Plans are executed via the `superpowers:subagent-driven-development` workflow: pure-physics tasks
 go to Haiku implementer subagents (TDD), render/visual tasks are done by the controller with

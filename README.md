@@ -21,8 +21,16 @@ aerodynamics/atmosphere (deliberately out of scope, to keep the focus on orbital
   ΔV optimizer with porkchop diagrams.
 - **Real solar system** — planet/moon positions from the DE440 ephemeris via Skyfield; patched
   conics with sphere-of-influence transitions.
-- **Sandbox** — scheduled maneuver nodes, Pe/Ap presets, auto-warp-to-node, Moon intercept with
-  closest-approach markers, and live predicted-orbit rendering.
+- **Sandbox** — scheduled maneuver nodes, Pe/Ap presets, auto-warp-to-node, and live
+  predicted-orbit rendering.
+- **Targeting & ΔV** — click a body to target it, target-relative closest-approach + relative
+  velocity, working TARGET/ANTITARGET SAS, a one-click porkchop **intercept** planner, a bigger
+  ΔV cap, and an **unlimited-ΔV** sandbox toggle.
+- **Restricted N-body engine** (`core/nbody.py`, in progress) — the ship as a massless test
+  particle under Earth + Moon gravity (velocity-Verlet, Jacobi constant, **Lagrange points** that
+  balance to machine precision). Moving the sandbox toward real lunar gravity and parkable L-points
+  — an alternative to KSP's patched conics. *Physics core is built and tested; render integration
+  is next.* See `docs/superpowers/specs/2026-06-26-nbody-flyable-design.md`.
 - **Realistic Earth** — textured, day/night terminator, atmosphere; starfield skybox.
 - **Save/load** — JSON sandbox saves, F5/F9 quicksave/quickload.
 

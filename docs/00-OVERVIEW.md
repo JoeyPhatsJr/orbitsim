@@ -3,6 +3,13 @@
 **Read this entire file before writing any code.** It defines how the project is structured,
 the rules every phase must follow, and how to know when a task is actually done.
 
+> **Status note (2026-06-26):** the original six phases are complete; current work is the
+> "playable game" effort, now pivoting the sandbox to a **restricted N-body** model (real Moon
+> gravity + Lagrange points). For the live feature status, the N-body direction, and the per-cycle
+> spec→plan→build workflow, see **`CLAUDE.md`** (the authoritative status) and
+> `docs/superpowers/{specs,plans}/`. This file remains the canonical reference for the
+> architecture rules and definition of done, which still hold.
+
 ---
 
 ## 1. What we are building
