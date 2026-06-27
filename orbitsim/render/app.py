@@ -232,8 +232,10 @@ class OrbitApp(ShowBase):
             self.navball = Navball(self)
 
             # Targetable bodies (Moon today; ships later). Click a marker to select.
-            from orbitsim.render.targets import MoonTarget
-            self._targets = [MoonTarget()]
+            from orbitsim.render.targets import MoonTarget, LagrangePointTarget
+            self._targets = [MoonTarget()] + [
+                LagrangePointTarget(n, n) for n in ("L1", "L2", "L3", "L4", "L5")
+            ]
             self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
             self._ca = None
@@ -248,6 +250,24 @@ class OrbitApp(ShowBase):
             self._moon_np.set_scale(7.0)
             self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
             self._moon_orbit_scale = None
+            # Lagrange-point markers (constant on-screen size) + billboard labels.
+            self._lagrange_nps = []
+            self._lagrange_labels = []
+            for name in ("L1", "L2", "L3", "L4", "L5"):
+                mk = make_uv_sphere(1.0, 8, 12)
+                mk.reparent_to(self.render)
+                mk.set_color(0.3, 0.9, 0.8, 1.0)   # teal — distinct from Moon/CA/node
+                mk.set_light_off()
+                mk.set_scale(4.0)
+                self._lagrange_nps.append(mk)
+                tn = TextNode(f"label_{name}")
+                tn.set_text(name)
+                tn.set_text_color(0.5, 1.0, 0.9, 1.0)
+                lbl = self.render.attach_new_node(tn)
+                lbl.set_scale(12.0)
+                lbl.set_billboard_point_eye()
+                lbl.set_light_off()
+                self._lagrange_labels.append(lbl)
             self._target_text = OnscreenText(
                 text="", pos=(0.08, -0.48), scale=0.045, fg=(1.0, 0.7, 0.4, 1),
                 shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
@@ -1023,11 +1043,29 @@ class OrbitApp(ShowBase):
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
+        # Lagrange points this frame (rotate with the Moon).
+        from orbitsim.core.nbody import earth_fixed_lagrange_points
+        lps = earth_fixed_lagrange_points(self.clock.sim_time_s)
+        for name, mk, lbl in zip(("L1", "L2", "L3", "L4", "L5"),
+                                 self._lagrange_nps, self._lagrange_labels):
+            rx, ry, rz = self.transform.to_render(lps[name])
+            mk.set_pos(rx, ry, rz)
+            lbl.set_pos(rx, ry, rz + 6.0)
         # Closest approach to the current target (throttled recompute). Both the ship
         # trajectory and the target are referenced to the same base epoch (the node epoch
         # when a burn is planned, else now) so they are compared at matching absolute times;
         # the absolute CA epoch is cached so the markers hold steady between recomputes (warp).
-        if self._target is not None:
+        if self._target is not None and not self._target.supports_closest_approach:
+            # Lagrange-point target: live distance + relative speed, no closest-approach
+            # prediction (an L-point is not Keplerian — you fly to it and null relative velocity).
+            self._ca = None
+            L = self._target.state_at(self.clock.sim_time_s)
+            dist = float(np.linalg.norm(v0.state.r - L.r))
+            relsp = float(np.linalg.norm(v0.state.v - L.v))
+            self._target_text.setText(
+                f"Target: {self._target.name}   dist {dist / 1000:,.0f} km"
+                f"   rel {relsp:,.0f} m/s")
+        elif self._target is not None:
             import time as _time
             now_real = _time.monotonic()
             if self._ca is None or now_real - self._ca_recompute_t > 0.5:
