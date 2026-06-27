@@ -230,3 +230,60 @@ def test_max_safe_warp_respects_substep_budget():
     w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
     n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
     assert n <= 200
+
+
+def test_earth_fixed_lagrange_points_are_equilibria():
+    # Each L-point nulls the rotating-frame acceleration (gravity+indirect + centrifugal),
+    # with the rotation about the Moon's ACTUAL orbit normal. Holds at t=0 and t!=0.
+    for t in (0.0, 1.0e5):
+        m = moon_state_at(t)
+        n = np.cross(m.r, m.v)
+        omega = nb.OMEGA_EM * (n / np.linalg.norm(n))
+        lps = nb.earth_fixed_lagrange_points(t)
+        assert set(lps) == {"L1", "L2", "L3", "L4", "L5"}
+        for name, r in lps.items():
+            centrifugal = -np.cross(omega, np.cross(omega, r))
+            net = nb.earth_moon_accel(r, t) + centrifugal
+            assert np.linalg.norm(net) < 1e-6, (name, t, float(np.linalg.norm(net)))
+
+
+def test_earth_fixed_L4_L5_equilateral():
+    t = 0.0
+    m = moon_state_at(t)
+    d = np.linalg.norm(m.r)
+    lps = nb.earth_fixed_lagrange_points(t)
+    for name in ("L4", "L5"):
+        L = lps[name]
+        assert abs(np.linalg.norm(L) - d) < 1.0          # distance d from Earth
+        assert abs(np.linalg.norm(L - m.r) - d) < 1.0    # distance d from the Moon
+        cosang = np.dot(L, m.r) / (np.linalg.norm(L) * d)
+        ang = np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
+        assert abs(ang - 60.0) < 1e-3                     # 60 deg from the Moon
+    # L4 leads the Moon, L5 trails (opposite sides of the Earth-Moon line).
+    nrm = np.cross(m.r, m.v)
+    assert np.dot(np.cross(m.r, lps["L4"]), nrm) > 0
+    assert np.dot(np.cross(m.r, lps["L5"]), nrm) < 0
+
+
+def test_earth_fixed_collinear_placement():
+    t = 0.0
+    m = moon_state_at(t)
+    d = np.linalg.norm(m.r)
+    u = m.r / d
+    lps = nb.earth_fixed_lagrange_points(t)
+    s = {k: float(np.dot(lps[k], u)) for k in ("L1", "L2", "L3")}
+    assert 0.0 < s["L1"] < d < s["L2"]      # L1 between bodies, L2 beyond the Moon
+    assert s["L3"] < 0.0                     # L3 beyond Earth
+    for k in ("L1", "L2", "L3"):
+        assert np.linalg.norm(np.cross(lps[k], u)) < 1.0   # on the Earth-Moon line
+
+
+def test_earth_fixed_lagrange_distance_invariant_under_rotation():
+    names = ("L1", "L2", "L3", "L4", "L5")
+    dist = {n: [] for n in names}
+    for t in (0.0, 3.0e5, 6.0e5, 9.0e5):
+        lps = nb.earth_fixed_lagrange_points(t)
+        for n in names:
+            dist[n].append(np.linalg.norm(lps[n]))
+    for n in names:
+        assert max(dist[n]) - min(dist[n]) < 1.0   # rigid rotation: |L| constant

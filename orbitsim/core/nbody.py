@@ -177,6 +177,45 @@ def lagrange_points(t_s):
     return {k: Rinv @ v for k, v in rot.items()}
 
 
+def _earth_fixed_collinear_accel_along(s, u, t_s):
+    """Net rotating-frame acceleration at the point p = s*u (signed distance s along the
+    Earth-Moon unit vector u), projected onto u: live gravity (with the indirect term) plus
+    the centrifugal term OMEGA_EM**2 * p about the origin."""
+    p = s * np.asarray(u, dtype=np.float64)
+    a = earth_moon_accel(p, t_s) + OMEGA_EM**2 * p
+    return float(np.dot(a, u))
+
+
+def earth_fixed_lagrange_points(t_s):
+    """Inertial positions of L1..L5 [m] in the live Earth-fixed circular-Moon frame, consistent
+    with earth_moon_accel (indirect term) and the Moon's actual inclined geometry at t_s.
+
+    Collinear points solve net_along(s)=0 along the Earth-Moon line; the equilateral points are
+    the Moon position rotated +/-60 deg about the orbit normal."""
+    m = moon_state_at(t_s)
+    rM = np.asarray(m.r, dtype=np.float64)
+    d = np.linalg.norm(rM)
+    u = rM / d
+    n_hat = np.cross(rM, m.v)
+    n_hat = n_hat / np.linalg.norm(n_hat)
+    eps = 1e-3 * d
+    s1 = brentq(_earth_fixed_collinear_accel_along, eps, d - eps, args=(u, t_s))           # L1
+    s2 = brentq(_earth_fixed_collinear_accel_along, d + eps, d + 0.4 * d, args=(u, t_s))   # L2
+    s3 = brentq(_earth_fixed_collinear_accel_along, -1.6 * d, -eps, args=(u, t_s))         # L3
+
+    def _rot(vec, ang):   # Rodrigues rotation of vec by ang about n_hat
+        c, sn = np.cos(ang), np.sin(ang)
+        return vec * c + np.cross(n_hat, vec) * sn + n_hat * np.dot(n_hat, vec) * (1.0 - c)
+
+    return {
+        "L1": s1 * u,
+        "L2": s2 * u,
+        "L3": s3 * u,
+        "L4": _rot(rM, np.radians(60.0)),
+        "L5": _rot(rM, np.radians(-60.0)),
+    }
+
+
 def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
     """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
     sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
