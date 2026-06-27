@@ -1,10 +1,12 @@
 """Tests for quaternion attitude helpers."""
+import math
+
 import numpy as np
 import pytest
 from orbitsim.core.attitude import (
     quat_identity, quat_normalize, quat_from_axis_angle, quat_multiply,
     quat_rotate_vector, angle_between, nose_direction, slew_toward,
-    sas_target_dir,
+    sas_target_dir, heading_pitch,
 )
 from orbitsim.core.state import StateVector
 from orbitsim.core.constants import MU_EARTH
@@ -132,3 +134,30 @@ def test_target_points_at_target():
 def test_target_without_position_raises():
     with pytest.raises(ValueError):
         sas_target_dir("TARGET", _leo_state())
+
+
+def test_identity_nose_has_east_heading():
+    heading, pitch = heading_pitch(quat_identity(), _leo_state())
+    assert abs(pitch) < 1e-9
+    assert abs(heading - math.pi / 2) < 1e-9
+
+
+def test_prograde_nose_has_zero_heading_and_pitch():
+    q = quat_from_axis_angle(np.array([1.0, 0.0, 0.0]), -math.pi / 2)
+    heading, pitch = heading_pitch(q, _leo_state())
+    assert abs(pitch) < 1e-9
+    assert abs(heading) < 1e-9
+
+
+def test_radial_out_nose_has_ninety_degree_pitch():
+    q = quat_from_axis_angle(np.array([0.0, 1.0, 0.0]), math.pi / 2)
+    _heading, pitch = heading_pitch(q, _leo_state())
+    assert abs(pitch - math.pi / 2) < 1e-9
+
+
+def test_heading_pitch_ranges():
+    for angle in np.linspace(-math.pi, math.pi, 7):
+        q = quat_from_axis_angle(np.array([0.3, 0.5, 0.8]), float(angle))
+        heading, pitch = heading_pitch(q, _leo_state())
+        assert 0.0 <= heading < 2.0 * math.pi
+        assert -math.pi / 2 <= pitch <= math.pi / 2

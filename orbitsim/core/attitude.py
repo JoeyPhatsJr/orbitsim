@@ -1,5 +1,7 @@
 """Pure quaternion attitude helpers (float64, SI). Convention: q = [w, x, y, z],
 unit norm. The ship's nose is the body +Z axis rotated by the orientation quaternion."""
+import math
+
 import numpy as np
 
 _NOSE_BODY = np.array([0.0, 0.0, 1.0])
@@ -114,6 +116,24 @@ SAS_MODES = (
     "PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
     "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET",
 )
+
+
+def heading_pitch(orientation_q: np.ndarray, state: StateVector) -> tuple[float, float]:
+    """Return ship-nose heading and pitch [rad] relative to the local horizon."""
+    r = np.asarray(state.r, dtype=np.float64)
+    v = np.asarray(state.v, dtype=np.float64)
+    prograde = v / np.linalg.norm(v)
+    radial_out = np.cross(v, np.cross(r, v))
+    radial_out = radial_out / np.linalg.norm(radial_out)
+    east = np.cross(radial_out, prograde)
+    nose = nose_direction(orientation_q)
+
+    pitch = math.asin(float(np.clip(np.dot(nose, radial_out), -1.0, 1.0)))
+    heading = math.atan2(float(np.dot(nose, east)), float(np.dot(nose, prograde)))
+    heading %= 2.0 * math.pi
+    if math.isclose(heading, 2.0 * math.pi, abs_tol=1e-12):
+        heading = 0.0
+    return heading, pitch
 
 
 def sas_target_dir(mode, state: StateVector, target_pos=None) -> np.ndarray:
