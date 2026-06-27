@@ -29,3 +29,15 @@ def test_moon_orbit_is_circular_at_earth_moon_rate():
     # Circular => distance is constant across the orbit.
     dists = [np.linalg.norm(moon_state_at(t).r) for t in (0.0, 5.0e5, 1.0e6, 1.5e6)]
     assert max(dists) - min(dists) < 1.0e3   # < 1 km variation
+
+
+def test_closed_form_matches_general_kepler_propagation():
+    from orbitsim.core.elements import elements_to_state
+    from orbitsim.core.propagate import propagate_kepler
+
+    epoch_state = elements_to_state(MOON_ORBIT)
+    for t_s in (0.0, 1.0e5, 1.0e6, 3.0e6):
+        actual = moon_state_at(t_s)
+        expected = propagate_kepler(epoch_state, t_s - epoch_state.epoch_s)
+        np.testing.assert_allclose(actual.r, expected.r, rtol=0.0, atol=1e-3)
+        np.testing.assert_allclose(actual.v, expected.v, rtol=0.0, atol=1e-9)

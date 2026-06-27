@@ -52,6 +52,13 @@ class OrbitApp(ShowBase):
         self._title_nodes = []
         self._build_title_screen()
 
+    def destroy(self) -> None:
+        executor = getattr(self, "_preview_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+            self._preview_executor = None
+        super().destroy()
+
     # ------------------------------------------------------------------ title screen
 
     def _build_title_screen(self) -> None:
@@ -235,7 +242,14 @@ class OrbitApp(ShowBase):
         self._traj_state_cache = [None for _ in world.vessels]  # (StateVector, scale) per vessel
 
         self._preview_np = None
-        self._preview_recompute_t = 0.0  # monotonic time of last preview rebuild (throttle)
+        self._preview_submit_t = 0.0
+        self._preview_future = None
+        self._preview_future_node = None
+        if not self.solar_system:
+            from concurrent.futures import ThreadPoolExecutor
+            self._preview_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="orbit-preview"
+            )
         self._porkchop_card = None
         if self.solar_system:
             self._build_planets()
@@ -916,6 +930,52 @@ class OrbitApp(ShowBase):
             pts[i] = cur.r
         return pts
 
+    def _sample_preview(self, state, scale):
+        """Compute render-space preview points without touching Panda3D scene objects."""
+        points = self._sample_trajectory(
+            state, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2
+        )
+        return [tuple(point / scale) for point in points]
+
+    def _update_maneuver_preview(self, node, vessel, now_real) -> None:
+        """Poll/submit preview work while keeping N-body integration off the render thread."""
+        future = self._preview_future
+        if future is not None and future.done():
+            points = future.result()
+            completed_node = self._preview_future_node
+            self._preview_future = None
+            self._preview_future_node = None
+            if node == completed_node and node.magnitude_mps > 0.0:
+                if self._preview_np is not None:
+                    self._preview_np.remove_node()
+                self._preview_np = build_orbit_node(points, color=(1.0, 0.2, 1.0, 1.0))
+                self._preview_np.reparent_to(self._orbit_frame)
+
+        if node.magnitude_mps <= 0.0:
+            if self._preview_future is not None:
+                self._preview_future_node = None
+                if self._preview_future.cancel():
+                    self._preview_future = None
+            if self._preview_np is not None:
+                self._preview_np.remove_node()
+                self._preview_np = None
+            return
+
+        if (
+            self._preview_future is None
+            and (
+                self._preview_np is None
+                or now_real - self._preview_submit_t > self.PREVIEW_THROTTLE_S
+            )
+        ):
+            post_burn = apply_maneuver(vessel.state, node)
+            scale = self.transform.scale_m_per_unit
+            self._preview_submit_t = now_real
+            self._preview_future_node = node
+            self._preview_future = self._preview_executor.submit(
+                self._sample_preview, post_burn, scale
+            )
+
     def _rebuild_trajectory(self, idx, vessel) -> None:
         """Rebuild the vessel trajectory line if state or zoom changed beyond tolerance.
 
@@ -1054,36 +1114,17 @@ class OrbitApp(ShowBase):
             ttn = None
             node = self._current_node()
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
-        # Post-burn trajectory preview (forward-integrated under N-body, same as the live line).
-        # Throttled like the closest-approach recompute below: the 256-step N-body integration +
-        # LineSegs rebuild is the heavy per-frame cost that made plotting a node laggy. The preview
-        # applies the burn at the *current* state ("burn now"), which the ship sweeps every frame
-        # (~128 m/frame in LEO at 1x), so the post-burn orbit genuinely changes each frame and no
-        # change-detection cache can skip it. Refreshing a few times a second instead of every
-        # frame keeps it visually live while cutting the cost ~90%.
-        if node.magnitude_mps > 0.0:
-            import time as _time
-            now_real = _time.monotonic()
-            if self._preview_np is None or now_real - self._preview_recompute_t > self.PREVIEW_THROTTLE_S:
-                self._preview_recompute_t = now_real
-                post_burn = apply_maneuver(v0.state, node)
-                # Show 2 full post-burn orbits (512 pts keeps ~256/orbit resolution; the wider
-                # cap lets both loops of a large planned ellipse draw without truncation).
-                ppts = [tuple(p / self.transform.scale_m_per_unit)
-                        for p in self._sample_trajectory(
-                            post_burn, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2)]
-                if self._preview_np is not None:
-                    self._preview_np.remove_node()
-                self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
-                self._preview_np.reparent_to(self._orbit_frame)
-        elif self._preview_np is not None:
-            self._preview_np.remove_node()
-            self._preview_np = None
+        # N-body preview sampling is CPU-heavy, so it runs on one worker. Only the cheap
+        # LineSegs swap happens here on the render thread when a result is ready.
+        import time as _time
+        self._update_maneuver_preview(node, v0, _time.monotonic())
         # Node marker at the node's predicted position on the orbit (held at the vessel
         # through the brief execute window once the node is due).
         if self._node_epoch_s is not None and ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
-            from orbitsim.core.nbody import propagate_earth_moon
-            npos = propagate_earth_moon(v0.state, max(0.0, ttn)).r
+            # Match the marker to the same planned (Keplerian-to-node) state used to seed
+            # the post-burn preview. Re-integrating a distant node under N-body every frame
+            # can take hundreds of milliseconds and is redundant.
+            npos = apply_maneuver(v0.state, node).r
             mx, my, mz = self.transform.to_render(npos)
             if self._node_marker_np is None:
                 self._node_marker_np = make_uv_sphere(1.0, 8, 12)
