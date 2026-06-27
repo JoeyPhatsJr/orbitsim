@@ -212,6 +212,18 @@ class OrbitApp(ShowBase):
             self.vessel_nps.append(m)
             self.orbit_nps.append(None)
 
+        # Ship view: a true-scale, lit, oriented model of vessel 0 that cross-fades
+        # in from the constant-size marker as the camera zooms close. (ship_model.py)
+        self._ship_model_np = None
+        if not self.solar_system and self.world.vessels:
+            from orbitsim.render.ship_model import build_ship_model
+            from panda3d.core import TransparencyAttrib
+            self._ship_model_np = build_ship_model()
+            self._ship_model_np.reparent_to(self.render)
+            self._ship_model_np.hide()  # shown only when model_alpha > 0
+            # Marker fades via alpha; enable transparency on vessel 0's marker.
+            self.vessel_nps[0].set_transparency(TransparencyAttrib.M_alpha)
+
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
         # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
         self._orbit_frame = self.render.attach_new_node("orbit_frame")
@@ -989,6 +1001,24 @@ class OrbitApp(ShowBase):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
             self._rebuild_trajectory(idx, vessel)
+
+        # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
+        if self._ship_model_np is not None:
+            from orbitsim.render.ship_model import view_blend, model_node_scale
+            v0 = self.world.vessels[0]
+            marker_a, model_a = view_blend(self.rig.distance_m)
+            self.vessel_nps[0].set_alpha_scale(marker_a)
+            if model_a > 0.0:
+                from panda3d.core import LQuaternion
+                self._ship_model_np.show()
+                self._ship_model_np.set_pos(*self.transform.to_render(v0.state.r))
+                self._ship_model_np.set_scale(model_node_scale(self.transform.scale_m_per_unit))
+                q = v0.orientation  # [w, x, y, z]
+                self._ship_model_np.set_quat(LQuaternion(float(q[0]), float(q[1]),
+                                                         float(q[2]), float(q[3])))
+                self._ship_model_np.set_alpha_scale(model_a)
+            else:
+                self._ship_model_np.hide()
 
         # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
         # readout, and a vessel.nodes mirror so quicksave persists the plan.
