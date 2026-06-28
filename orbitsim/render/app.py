@@ -27,12 +27,15 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
-from orbitsim.render.geometry import make_uv_sphere
+from orbitsim.render.geometry import make_uv_sphere, make_ring
 from orbitsim.core.nbody import MOON_SOI_M
 from orbitsim.core.planets import (
     sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
+    jupiter_state_at, saturn_state_at, uranus_state_at, neptune_state_at,
     EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
+    JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
     A_MERCURY, A_VENUS, A_EARTH, A_MARS,
+    A_JUPITER, A_SATURN, A_URANUS, A_NEPTUNE,
 )
 from orbitsim.render.world_markers import distance_fade
 from orbitsim.render.orbit_lines import (
@@ -324,6 +327,10 @@ class OrbitApp(ShowBase):
                 PlanetTarget("Mercury", mercury_state_at),
                 PlanetTarget("Venus", venus_state_at),
                 PlanetTarget("Mars", mars_state_at),
+                PlanetTarget("Jupiter", jupiter_state_at),
+                PlanetTarget("Saturn", saturn_state_at),
+                PlanetTarget("Uranus", uranus_state_at),
+                PlanetTarget("Neptune", neptune_state_at),
             ]
             self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
@@ -395,7 +402,10 @@ class OrbitApp(ShowBase):
                 )
                 self._lagrange_labels.append(lbl)
             # Inner planets + Sun: markers, true-scale bodies, SOI spheres, orbit lines.
-            from orbitsim.core.constants import R_SUN, R_MERCURY, R_VENUS, R_MARS, R_MOON
+            from orbitsim.core.constants import (
+                R_SUN, R_MERCURY, R_VENUS, R_MARS, R_MOON,
+                R_JUPITER, R_SATURN, R_URANUS, R_NEPTUNE,
+            )
             from orbitsim.render.textures import texture_path
             self._planet_sandbox_nps = {}    # name -> marker NodePath (constant on-screen size)
             self._planet_sandbox_labels = {}
@@ -408,11 +418,19 @@ class OrbitApp(ShowBase):
                 ("Mercury", (0.6, 0.6, 0.6, 1.0), 4.0, MERCURY_SOI_M, R_MERCURY, "mercury"),
                 ("Venus", (0.9, 0.8, 0.5, 1.0), 5.0, VENUS_SOI_M, R_VENUS, "venus_surface"),
                 ("Mars", (0.9, 0.4, 0.2, 1.0), 5.0, MARS_SOI_M, R_MARS, "mars"),
+                ("Jupiter", (0.8, 0.7, 0.5, 1.0), 7.0, JUPITER_SOI_M, R_JUPITER, "jupiter"),
+                ("Saturn", (0.9, 0.8, 0.6, 1.0), 6.5, SATURN_SOI_M, R_SATURN, "saturn"),
+                ("Uranus", (0.6, 0.85, 0.9, 1.0), 5.5, URANUS_SOI_M, R_URANUS, "uranus"),
+                ("Neptune", (0.3, 0.4, 0.9, 1.0), 5.5, NEPTUNE_SOI_M, R_NEPTUNE, "neptune"),
             ]
             _soi_colors = {
                 "Mercury": (0.6, 0.6, 0.6, 1.0),
                 "Venus": (0.9, 0.8, 0.5, 1.0),
                 "Mars": (0.9, 0.5, 0.3, 1.0),
+                "Jupiter": (0.8, 0.7, 0.5, 1.0),
+                "Saturn": (0.9, 0.8, 0.6, 1.0),
+                "Uranus": (0.6, 0.85, 0.9, 1.0),
+                "Neptune": (0.3, 0.4, 0.9, 1.0),
             }
             for pname, color, sz, soi_r, radius_m, tex_name in _planet_defs:
                 mk = make_uv_sphere(1.0, 12, 16)
@@ -450,6 +468,18 @@ class OrbitApp(ShowBase):
                     soi.set_color(sc[0], sc[1], sc[2], self.SOI_BASE_ALPHA)
                     soi.hide()
                     self._planet_soi_nps[pname] = soi
+            # Saturn ring (true-scale annular disk, inner ~1.11× R, outer ~2.33× R).
+            self._saturn_ring_np = make_ring(inner_radius=1.11, outer_radius=2.33, num_segments=64)
+            self._saturn_ring_np.reparent_to(self.render)
+            self._saturn_ring_np.set_two_sided(True)
+            self._saturn_ring_np.set_transparency(TransparencyAttrib.M_alpha)
+            self._saturn_ring_np.set_color(0.85, 0.75, 0.6, 0.8)
+            ring_tp = texture_path("saturn_ring")
+            if ring_tp is not None:
+                self._saturn_ring_np.set_texture(
+                    self.loader.load_texture(Filename.from_os_specific(ring_tp)))
+                self._saturn_ring_np.set_color(1, 1, 1, 0.8)
+            self._saturn_ring_np.hide()
             # True-scale Moon body (textured).
             self._moon_body_np = make_uv_sphere(1.0, 32, 64, with_uv=True)
             self._moon_body_np.reparent_to(self.render)
@@ -1547,12 +1577,16 @@ class OrbitApp(ShowBase):
             mk.set_pos(rx, ry, rz)
             lbl.set_pos(rx, ry, rz + 6.0)
             self._lagrange_positions[name] = np.asarray(lps[name]).copy()
-        # Inner planets + Sun: position markers, SOI spheres, and orbit reference lines.
+        # Planets + Sun: position markers, SOI spheres, and orbit reference lines.
         _planet_state_fns = {
             "Sun": sun_state_at,
             "Mercury": mercury_state_at,
             "Venus": venus_state_at,
             "Mars": mars_state_at,
+            "Jupiter": jupiter_state_at,
+            "Saturn": saturn_state_at,
+            "Uranus": uranus_state_at,
+            "Neptune": neptune_state_at,
         }
         t_now = self.clock.sim_time_s
         vessel_r = self.world.vessels[0].state.r if self.world.vessels else np.zeros(3)
@@ -1582,6 +1616,12 @@ class OrbitApp(ShowBase):
                 )
                 soi_np.set_color_scale(1, 1, 1, alpha)
                 soi_np.show()
+            if pname == "Saturn" and hasattr(self, "_saturn_ring_np"):
+                from orbitsim.core.constants import R_SATURN
+                ring_scale = R_SATURN / self.transform.scale_m_per_unit
+                self._saturn_ring_np.set_pos(px, py, pz)
+                self._saturn_ring_np.set_scale(max(ring_scale, 1e-3))
+                self._saturn_ring_np.show()
         # Earth SOI sphere (centered at origin, visible when far from Earth).
         earth_soi_scale = EARTH_SOI_M / self.transform.scale_m_per_unit
         ex, ey, ez = self.transform.to_render(np.zeros(3))
@@ -1606,14 +1646,23 @@ class OrbitApp(ShowBase):
                 "Venus": (0.85, 0.75, 0.45, 0.5),
                 "Earth": (0.3, 0.5, 1.0, 0.5),
                 "Mars": (0.85, 0.4, 0.2, 0.5),
+                "Jupiter": (0.8, 0.7, 0.5, 0.4),
+                "Saturn": (0.9, 0.8, 0.6, 0.4),
+                "Uranus": (0.6, 0.85, 0.9, 0.4),
+                "Neptune": (0.3, 0.4, 0.9, 0.4),
             }
             _orbit_radii = {
                 "Mercury": A_MERCURY,
                 "Venus": A_VENUS,
                 "Earth": A_EARTH,
                 "Mars": A_MARS,
+                "Jupiter": A_JUPITER,
+                "Saturn": A_SATURN,
+                "Uranus": A_URANUS,
+                "Neptune": A_NEPTUNE,
             }
-            for oname in ("Mercury", "Venus", "Earth", "Mars"):
+            for oname in ("Mercury", "Venus", "Earth", "Mars",
+                          "Jupiter", "Saturn", "Uranus", "Neptune"):
                 if oname in self._planet_orbit_nps:
                     self._planet_orbit_nps[oname].remove_node()
                 a = _orbit_radii[oname]

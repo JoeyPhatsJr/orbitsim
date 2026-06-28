@@ -67,3 +67,37 @@ def make_uv_sphere(radius: float = 1.0, num_lat: int = 24, num_lon: int = 48,
     node = GeomNode("sphere")
     node.add_geom(geom)
     return NodePath(node)
+
+
+def make_ring(inner_radius: float = 1.0, outer_radius: float = 2.0,
+              num_segments: int = 64) -> NodePath:
+    """Build a flat annular ring in the XY plane with texture coordinates."""
+    fmt = GeomVertexFormat.get_v3n3t2()
+    vdata = GeomVertexData("ring", fmt, Geom.UHStatic)
+    n_verts = (num_segments + 1) * 2
+    vdata.set_num_rows(n_verts)
+    vertex = GeomVertexWriter(vdata, "vertex")
+    normal = GeomVertexWriter(vdata, "normal")
+    texcoord = GeomVertexWriter(vdata, "texcoord")
+
+    for i in range(num_segments + 1):
+        angle = 2.0 * math.pi * i / num_segments
+        c, s = math.cos(angle), math.sin(angle)
+        vertex.add_data3(inner_radius * c, inner_radius * s, 0.0)
+        normal.add_data3(0.0, 0.0, 1.0)
+        texcoord.add_data2(0.0, i / num_segments)
+        vertex.add_data3(outer_radius * c, outer_radius * s, 0.0)
+        normal.add_data3(0.0, 0.0, 1.0)
+        texcoord.add_data2(1.0, i / num_segments)
+
+    tris = GeomTriangles(Geom.UHStatic)
+    for i in range(num_segments):
+        base = i * 2
+        tris.add_vertices(base, base + 2, base + 1)
+        tris.add_vertices(base + 1, base + 2, base + 3)
+
+    geom = Geom(vdata)
+    geom.add_primitive(tris)
+    node = GeomNode("ring")
+    node.add_geom(geom)
+    return NodePath(node)

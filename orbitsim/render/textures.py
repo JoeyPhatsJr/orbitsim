@@ -14,6 +14,11 @@ TEXTURE_URLS = {
     "mars": _BASE_THREEX + "marsmap1k.jpg",
     "sun": _BASE_THREEX + "sunmap.jpg",
     "stars": _BASE_THREEX + "galaxy_starfield.png",
+    "jupiter": _BASE_THREEX + "jupitermap.jpg",
+    "saturn": _BASE_THREEX + "saturnmap.jpg",
+    "saturn_ring": _BASE_THREEX + "saturnringcolor.jpg",
+    "uranus": _BASE_THREEX + "uranusmap.jpg",
+    "neptune": _BASE_THREEX + "neptunemap.jpg",
 }
 
 _DATA_DIR = os.path.join(
