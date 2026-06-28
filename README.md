@@ -26,20 +26,25 @@ walkthrough.
 - **Transfer & ΔV planning** — Hohmann, bi-elliptic, plane-change, and Lambert transfers, plus a
   ΔV optimizer with porkchop diagrams. Press `I` to plan an intercept to any targeted body (Moon or
   planet); press `P` for a porkchop plot with synodic-period search grids for interplanetary targets.
-- **Inner solar system** — the Sun, Mercury, Venus, and Mars are rendered as true-scale textured
-  bodies with heliocentric orbit reference lines and translucent SOI spheres. All five bodies (plus
-  Earth and Moon) contribute real gravitational acceleration to the N-body model.
+- **Full solar system** — the Sun and all seven planets (Mercury through Neptune) are rendered as
+  true-scale textured bodies with heliocentric orbit reference lines and translucent SOI spheres.
+  Saturn has a textured ring system. All bodies contribute real gravitational acceleration to the
+  N-body model.
 - **Interplanetary flight** — escape Earth, coast under N-body gravity, and capture at another
   planet. The HUD adapts to the dominant body (altitude, periapsis, apoapsis, and TWR switch to
   Mars-relative when you enter Mars's SOI). Trajectory lines extend to 400-day horizons in
   heliocentric space. Distances display in AU when appropriate.
-- **Sandbox** — scheduled maneuver nodes, Pe/Ap presets, auto-warp-to-node, and live
-  predicted-orbit rendering.
+- **Sandbox** — maneuver nodes with spring-loaded jog sliders for delta-V and node time, dV labels
+  on node markers with countdown, Pe/Ap presets, auto-warp-to-node, and live predicted-orbit
+  rendering.
 - **Targeting & ΔV** — click a body to target it (Moon, Lagrange points, or planets), with
   target-relative closest-approach + relative velocity, working TARGET/ANTITARGET SAS, a one-click
   porkchop **intercept** planner, and an **unlimited-ΔV** sandbox toggle.
+- **Gravity assist planning** — live flyby encounter display when approaching a planet's SOI:
+  hyperbolic excess velocity (v-infinity), deflection angle, periapsis distance, and equivalent free
+  delta-V. Pure hyperbolic geometry (`core/flyby.py`) validated with 16 tests.
 - **Restricted N-body sandbox** (`core/nbody.py`) — the ship flies as a massless test particle under
-  the gravity of Earth, Moon, Sun, Mercury, Venus, and Mars (velocity-Verlet with adaptive
+  the gravity of Earth, Moon, Sun, and all seven planets (velocity-Verlet with adaptive
   sub-stepping). The forward-integrated trajectory line is the source of truth, and time-warp is
   capped near bodies to keep the integration accurate. The **Earth–Moon Lagrange points** (L1–L5)
   balance to machine precision and are shown as selectable navigation targets. Translucent
@@ -54,7 +59,7 @@ walkthrough.
   decluttering and depth fade. Smart formatting (days/hours for long countdowns, AU for interplanetary
   distances).
 - **Realistic Earth** — textured, day/night terminator, atmosphere; starfield skybox. Planet textures
-  for Mercury, Venus, Mars, Moon, and Sun.
+  for all planets, Moon, and Sun. Saturn ring texture.
 - **Save/load** — JSON sandbox saves, F5/F9 quicksave/quickload.
 
 ## Architecture
@@ -80,7 +85,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev,render]"        # physics + render deps
 
-.venv\Scripts\python -m pytest tests/ -q      # run the test suite (~259 tests)
+.venv\Scripts\python -m pytest tests/ -q      # run the test suite (~275 tests)
 .venv\Scripts\python -m orbitsim              # launch the sandbox (LEO, flyable)
 .venv\Scripts\python -m orbitsim --solar      # launch the solar-system viewer
 ```

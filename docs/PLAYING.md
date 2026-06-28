@@ -15,9 +15,10 @@ optionally tick **Unlimited ΔV**, and press **Play**.
 
 The two modes:
 
-- **Sandbox** (default) — one flyable vessel in low Earth orbit with the full inner solar system:
-  the Sun, Mercury, Venus, Mars, the Moon, and the Earth–Moon Lagrange points, all exerting real
-  N-body gravity. Maneuver-node editor, targeting, and interplanetary transfers. This is the game.
+- **Sandbox** (default) — one flyable vessel in low Earth orbit with the full solar system:
+  the Sun, Mercury, Venus, Mars, Jupiter, Saturn (with rings), Uranus, Neptune, the Moon, and the
+  Earth–Moon Lagrange points, all exerting real N-body gravity. Maneuver-node editor, targeting,
+  interplanetary transfers, and gravity-assist encounter display. This is the game.
 - **Solar viewer** (`--solar`) — Sun-centered, the planets at their real positions. No vessel; a
   camera/time sandbox for looking at the solar system.
 
@@ -75,14 +76,19 @@ The **SAS hold modes** (keys `1`–`8`, or the clickable buttons by the navball)
 
 On-screen, the **maneuver-node editor** (bottom-right sliders + buttons) plots a burn:
 
-- The three sliders set prograde / normal / radial ΔV; the magenta preview line shows the resulting
-  orbit ("burn now").
-- **Node −/+** step the scheduled node time; **Next Pe / Next Ap** jump the node to the next
-  periapsis/apoapsis; **Clear** removes it; **Execute Burn** applies it.
+- The three sliders set prograde / normal / radial ΔV; the **Node T** slider adjusts the scheduled
+  node time (variable rate: gentle near center, fast at full deflection). The magenta preview line
+  shows the resulting orbit ("burn now"). Total dV is shown above the sliders.
+- **Next Pe / Next Ap** jump the node to the next periapsis/apoapsis; **Clear** removes it;
+  **Execute Burn** applies it. The node marker shows a dV + countdown label in world space.
 
 When a target is selected you get a live **closest-approach** readout (separation, relative speed,
 countdown) and CA markers; for a Lagrange point or planet you get live distance and relative speed
 (in km or AU depending on range).
+
+When inside a planet's SOI, a **flyby encounter** readout appears showing the hyperbolic excess
+velocity (v∞), deflection angle, periapsis distance, and equivalent free delta-V from the gravity
+assist.
 
 ### Time, save, system
 
@@ -119,8 +125,9 @@ countdown) and CA markers; for a Lagrange point or planet you get live distance 
   gravitational dominance boundaries. The Moon's shell turns the scene green when you cross inside;
   planet SOI shells tint when approached. These are visual aids only — gravity is continuous N-body,
   not patched conics.
-- **True-scale planets** — the Sun, Mercury, Venus, Mars, and Moon are rendered as textured spheres
-  at their real sizes and positions, with heliocentric orbit reference lines.
+- **True-scale planets** — the Sun, all seven planets (Mercury through Neptune), and the Moon are
+  rendered as textured spheres at their real sizes and positions, with heliocentric orbit reference
+  lines. Saturn has a textured ring system.
 - The bright **trajectory line** is your forward-integrated N-body path; the present is bright and the
   future recedes. In heliocentric space the line extends to show up to 400 days of the transfer arc.
   The faint grey loop is the Moon's reference orbit. A magenta line previews a planned burn.
