@@ -1220,8 +1220,14 @@ class OrbitApp(ShowBase):
 
     def _sample_preview(self, state, scale):
         """Compute render-space preview points without touching Panda3D scene objects."""
+        if self.world.solar_system:
+            from orbitsim.core.nbody import dominant_body_solar
+            dom, _ = dominant_body_solar(state.r, state.epoch_s)
+            horizon = 400 * 86400 if dom.name == "Sun" else 30 * 86400
+        else:
+            horizon = 30 * 86400
         points = self._sample_trajectory(
-            state, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2
+            state, n_pts=512, max_horizon_s=horizon, n_orbits=2
         )
         return [tuple(point / scale) for point in points]
 
@@ -1281,7 +1287,16 @@ class OrbitApp(ShowBase):
                 if pos_ok and vel_ok:
                     return
         self._traj_state_cache[idx] = (state, scale)
-        world_pts = self._sample_trajectory(state)
+        if self.world.solar_system:
+            from orbitsim.core.nbody import dominant_body_solar
+            dom, _ = dominant_body_solar(state.r, state.epoch_s)
+            if dom.name == "Sun":
+                world_pts = self._sample_trajectory(
+                    state, n_pts=512, max_horizon_s=400 * 86400)
+            else:
+                world_pts = self._sample_trajectory(state)
+        else:
+            world_pts = self._sample_trajectory(state)
         pts = [tuple(p / scale) for p in world_pts]
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()
@@ -1290,8 +1305,12 @@ class OrbitApp(ShowBase):
         self.orbit_nps[idx] = node
         if idx == 0:
             try:
-                elem = state_to_elements(state)
-                if elem.e >= 1.0:
+                if self.world.solar_system:
+                    from orbitsim.core.nbody import osculating_elements_solar
+                    osc = osculating_elements_solar(state, state.epoch_s)
+                else:
+                    osc = state_to_elements(state)
+                if osc.e >= 1.0:
                     raise ValueError("unbound trajectory has no apoapsis")
                 from orbitsim.render.world_markers import apsis_points_on_path
                 pe_point, ap_point = apsis_points_on_path(world_pts)
@@ -1665,13 +1684,14 @@ class OrbitApp(ShowBase):
         if self.world.solar_system:
             from orbitsim.core.nbody import osculating_elements_solar, dominant_body_solar
             elem = osculating_elements_solar(v0.state, self.clock.sim_time_s)
-            dom_body, _ = dominant_body_solar(v0.state.r, self.clock.sim_time_s)
+            dom_body, dom_pos = dominant_body_solar(v0.state.r, self.clock.sim_time_s)
             ref_radius = dom_body.radius_m
         else:
             from orbitsim.core.nbody import osculating_elements
             elem = osculating_elements(v0.state, self.clock.sim_time_s)
             moon_dominant = elem.mu == MU_MOON
             dom_body = MOON_BODY if moon_dominant else self.world.central
+            dom_pos = np.zeros(3) if dom_body == self.world.central else moon_state_at(self.clock.sim_time_s).r
             ref_radius = dom_body.radius_m
         rp = elem.periapsis_radius
         ra = elem.apoapsis_radius
@@ -1679,9 +1699,10 @@ class OrbitApp(ShowBase):
             period = elem.period_s
         except ValueError:
             period = float("nan")
+        dist_from_dom = float(np.linalg.norm(v0.state.r - dom_pos))
         self.hud.update(
             sim_time_s=self.clock.sim_time_s,
-            altitude_m=v0.state.r_mag - self.world.central.radius_m,
+            altitude_m=dist_from_dom - ref_radius,
             speed_mps=v0.state.v_mag,
             periapsis_m=rp - ref_radius,
             apoapsis_m=ra - ref_radius,
@@ -1689,7 +1710,7 @@ class OrbitApp(ShowBase):
             inclination_rad=elem.i,
             dominant_body=dom_body.name,
         )
-        g_local = self.world.central.mu / max(v0.state.r_mag, 1.0) ** 2
+        g_local = dom_body.mu / max(dist_from_dom, 1.0) ** 2
         twr = (v0.max_thrust_n / (v0.mass_kg * g_local)) if v0.mass_kg > 0 else 0.0
         cap = getattr(self, "_fuel_capacity", 0.0)
         fuel_frac = v0.fuel_mass_kg / cap if cap > 0 else 0.0
