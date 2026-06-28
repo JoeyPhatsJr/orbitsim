@@ -28,6 +28,11 @@ from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.core.nbody import MOON_SOI_M
+from orbitsim.core.planets import (
+    sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
+    EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
+    A_MERCURY, A_VENUS, A_EARTH, A_MARS,
+)
 from orbitsim.render.world_markers import distance_fade
 from orbitsim.render.orbit_lines import (
     MANEUVER_COLOR,
@@ -285,10 +290,15 @@ class OrbitApp(ShowBase):
             )
             self.vel_readout = VelocityReadout(self, lambda: self.hud.units)
 
-            # Targetable bodies (Moon today; ships later). Click a marker to select.
-            from orbitsim.render.targets import MoonTarget, LagrangePointTarget
+            # Targetable bodies. Click a marker to select.
+            from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
             self._targets = [MoonTarget()] + [
                 LagrangePointTarget(n, n) for n in ("L1", "L2", "L3", "L4", "L5")
+            ] + [
+                PlanetTarget("Sun", sun_state_at),
+                PlanetTarget("Mercury", mercury_state_at),
+                PlanetTarget("Venus", venus_state_at),
+                PlanetTarget("Mars", mars_state_at),
             ]
             self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
@@ -359,6 +369,60 @@ class OrbitApp(ShowBase):
                     self.render, name, color=(0.5, 1.0, 0.9, 1.0), scale=12.0
                 )
                 self._lagrange_labels.append(lbl)
+            # Inner planets + Sun: markers, SOI spheres, orbit reference lines.
+            self._planet_sandbox_nps = {}    # name -> marker NodePath
+            self._planet_sandbox_labels = {}
+            self._planet_soi_nps = {}        # name -> SOI sphere NodePath
+            self._planet_soi_radii = {}      # name -> SOI radius [m]
+            _planet_defs = [
+                ("Sun", (1.0, 0.85, 0.2, 1.0), 10.0, float("inf")),
+                ("Mercury", (0.6, 0.6, 0.6, 1.0), 4.0, MERCURY_SOI_M),
+                ("Venus", (0.9, 0.8, 0.5, 1.0), 5.0, VENUS_SOI_M),
+                ("Mars", (0.9, 0.4, 0.2, 1.0), 5.0, MARS_SOI_M),
+            ]
+            _soi_colors = {
+                "Mercury": (0.6, 0.6, 0.6, 1.0),
+                "Venus": (0.9, 0.8, 0.5, 1.0),
+                "Mars": (0.9, 0.5, 0.3, 1.0),
+            }
+            for pname, color, sz, soi_r in _planet_defs:
+                mk = make_uv_sphere(1.0, 12, 16)
+                mk.reparent_to(self.render)
+                mk.set_color(*color)
+                mk.set_light_off()
+                mk.set_scale(sz)
+                self._planet_sandbox_nps[pname] = mk
+                lbl = build_world_label(
+                    self.render, pname, color=(0.8, 0.85, 1.0, 1.0), scale=12.0
+                )
+                self._planet_sandbox_labels[pname] = lbl
+                self._planet_soi_radii[pname] = soi_r
+                if pname != "Sun" and np.isfinite(soi_r):
+                    soi = make_uv_sphere(1.0, 24, 32)
+                    soi.reparent_to(self.render)
+                    soi.set_light_off()
+                    soi.set_transparency(TransparencyAttrib.M_alpha)
+                    soi.set_depth_write(False)
+                    soi.set_two_sided(True)
+                    sc = _soi_colors.get(pname, (0.5, 0.5, 0.5, 1.0))
+                    soi.set_color(sc[0], sc[1], sc[2], self.SOI_BASE_ALPHA)
+                    soi.hide()
+                    self._planet_soi_nps[pname] = soi
+            # Earth SOI sphere (visible once the vessel gets far from Earth).
+            earth_soi = make_uv_sphere(1.0, 24, 32)
+            earth_soi.reparent_to(self.render)
+            earth_soi.set_light_off()
+            earth_soi.set_transparency(TransparencyAttrib.M_alpha)
+            earth_soi.set_depth_write(False)
+            earth_soi.set_two_sided(True)
+            earth_soi.set_color(0.3, 0.5, 1.0, self.SOI_BASE_ALPHA)
+            earth_soi.hide()
+            self._earth_soi_np = earth_soi
+            # Planet orbit reference lines (heliocentric circles, positioned at the Sun's
+            # geocentric position each frame). Built lazily on first zoom like the Moon line.
+            self._planet_orbit_nps = {}
+            self._planet_orbit_scale = None
+            self._sun_orbit_frame = self.render.attach_new_node("sun_orbit_frame")
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
         self.starfield.reparent_to(self.render)
@@ -885,12 +949,17 @@ class OrbitApp(ShowBase):
         if self.world.any_thrusting():
             return
         if self.world.vessels:
-            from orbitsim.core.nbody import max_safe_warp
             from orbitsim.sim.clock import SimClock
-            cap = max_safe_warp(
-                self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            if self.world.solar_system:
+                from orbitsim.core.nbody import max_safe_warp_solar
+                cap = max_safe_warp_solar(
+                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            else:
+                from orbitsim.core.nbody import max_safe_warp
+                cap = max_safe_warp(
+                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
             if self.clock.warp >= cap:
-                return  # already at the proximity cap; don't climb past it
+                return
         self.clock.warp_up()
 
     def _rmb(self, down):
@@ -963,6 +1032,7 @@ class OrbitApp(ShowBase):
         dst.sas_mode = src.sas_mode
         dst.orientation = src.orientation
         dst.nodes[:] = src.nodes
+        self.world.solar_system = world.solar_system
         self.clock.sim_time_s = clock.sim_time_s
         self.clock.warp = clock.warp
         self._flash_message("Quickloaded")
@@ -1033,17 +1103,24 @@ class OrbitApp(ShowBase):
         self._porkchop_card = card
 
     def _sample_trajectory(self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1):
-        """Forward-integrate state under earth_moon_accel and return ~n_pts positions [m].
+        """Forward-integrate state under N-body and return ~n_pts positions [m].
 
         Horizon is ``n_orbits`` osculating orbital periods capped at max_horizon_s; for an
         Earth-bound orbit this draws that many closed loops (successive loops drift slightly
-        under the Moon perturbation), for a translunar/hyperbolic arc (no period) it shows the
+        under perturbation), for a translunar/hyperbolic arc (no period) it shows the
         next ``max_horizon_s`` of the perturbed path. Returns an (n_pts, 3) float64 array of
         world-meter positions in the Earth-centered inertial frame.
         """
-        from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
+        if self.world.solar_system:
+            from orbitsim.core.nbody import osculating_elements_solar, propagate_solar_system
+            osc_fn = osculating_elements_solar
+            prop_fn = propagate_solar_system
+        else:
+            from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
+            osc_fn = osculating_elements
+            prop_fn = propagate_earth_moon
         try:
-            osc = osculating_elements(state, state.epoch_s)
+            osc = osc_fn(state, state.epoch_s)
             horizon_s = min(n_orbits * float(osc.period_s), max_horizon_s)
         except (ValueError, AttributeError):
             horizon_s = float(max_horizon_s)
@@ -1052,7 +1129,7 @@ class OrbitApp(ShowBase):
         pts[0] = state.r
         cur = state
         for i in range(1, n_pts):
-            cur = propagate_earth_moon(cur, dt)
+            cur = prop_fn(cur, dt)
             pts[i] = cur.r
         return pts
 
@@ -1155,10 +1232,15 @@ class OrbitApp(ShowBase):
         if self.world.any_thrusting():
             self.clock.warp = 1.0
         elif self.world.vessels:
-            from orbitsim.core.nbody import max_safe_warp
             from orbitsim.sim.clock import SimClock
-            cap = max_safe_warp(
-                self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            if self.world.solar_system:
+                from orbitsim.core.nbody import max_safe_warp_solar
+                cap = max_safe_warp_solar(
+                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
+            else:
+                from orbitsim.core.nbody import max_safe_warp
+                cap = max_safe_warp(
+                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
             if self.clock.warp > cap:
                 self.clock.warp = cap
         # Feed the current target's position to the TARGET/ANTITARGET SAS hold.
@@ -1327,6 +1409,78 @@ class OrbitApp(ShowBase):
             mk.set_pos(rx, ry, rz)
             lbl.set_pos(rx, ry, rz + 6.0)
             self._lagrange_positions[name] = np.asarray(lps[name]).copy()
+        # Inner planets + Sun: position markers, SOI spheres, and orbit reference lines.
+        _planet_state_fns = {
+            "Sun": sun_state_at,
+            "Mercury": mercury_state_at,
+            "Venus": venus_state_at,
+            "Mars": mars_state_at,
+        }
+        t_now = self.clock.sim_time_s
+        vessel_r = self.world.vessels[0].state.r if self.world.vessels else np.zeros(3)
+        for pname, state_fn in _planet_state_fns.items():
+            pstate = state_fn(t_now)
+            px, py, pz = self.transform.to_render(pstate.r)
+            self._planet_sandbox_nps[pname].set_pos(px, py, pz)
+            self._planet_sandbox_labels[pname].set_pos(px, py, pz + 8.0)
+            # SOI spheres (planets only, not Sun).
+            if pname in self._planet_soi_nps:
+                soi_np = self._planet_soi_nps[pname]
+                soi_r = self._planet_soi_radii[pname]
+                soi_scale = soi_r / self.transform.scale_m_per_unit
+                soi_np.set_pos(px, py, pz)
+                soi_np.set_scale(soi_scale)
+                dist_to = float(np.linalg.norm(vessel_r - pstate.r))
+                inside = dist_to < soi_r
+                alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
+                soi_np.set_alpha_scale(
+                    distance_fade(self.rig.distance_m, soi_r * 1.5, soi_r * 15, minimum=0.0)
+                )
+                soi_np.set_color_scale(1, 1, 1, alpha)
+                soi_np.show()
+        # Earth SOI sphere (centered at origin, visible when far from Earth).
+        earth_soi_scale = EARTH_SOI_M / self.transform.scale_m_per_unit
+        ex, ey, ez = self.transform.to_render(np.zeros(3))
+        self._earth_soi_np.set_pos(ex, ey, ez)
+        self._earth_soi_np.set_scale(earth_soi_scale)
+        earth_dist = float(np.linalg.norm(vessel_r))
+        earth_inside = earth_dist < EARTH_SOI_M
+        earth_alpha = self.SOI_INSIDE_ALPHA if earth_inside else self.SOI_BASE_ALPHA
+        self._earth_soi_np.set_alpha_scale(
+            distance_fade(self.rig.distance_m, EARTH_SOI_M * 1.5, EARTH_SOI_M * 15, minimum=0.0)
+        )
+        self._earth_soi_np.set_color_scale(1, 1, 1, earth_alpha)
+        self._earth_soi_np.show()
+        # Planet orbit reference lines (heliocentric circles, offset by -Earth(t)).
+        sun_geo = sun_state_at(t_now).r
+        sx, sy, sz = self.transform.to_render(sun_geo)
+        self._sun_orbit_frame.set_pos(sx, sy, sz)
+        if self._planet_orbit_scale != scale:
+            self._planet_orbit_scale = scale
+            _orbit_colors = {
+                "Mercury": (0.5, 0.5, 0.5, 0.5),
+                "Venus": (0.85, 0.75, 0.45, 0.5),
+                "Earth": (0.3, 0.5, 1.0, 0.5),
+                "Mars": (0.85, 0.4, 0.2, 0.5),
+            }
+            _orbit_radii = {
+                "Mercury": A_MERCURY,
+                "Venus": A_VENUS,
+                "Earth": A_EARTH,
+                "Mars": A_MARS,
+            }
+            for oname in ("Mercury", "Venus", "Earth", "Mars"):
+                if oname in self._planet_orbit_nps:
+                    self._planet_orbit_nps[oname].remove_node()
+                a = _orbit_radii[oname]
+                angles = np.linspace(0, 2 * np.pi, 256, endpoint=False)
+                pts = [(float(a * np.cos(th) / scale),
+                        float(a * np.sin(th) / scale),
+                        0.0) for th in angles]
+                color = _orbit_colors[oname]
+                node = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
+                node.reparent_to(self._sun_orbit_frame)
+                self._planet_orbit_nps[oname] = node
         # Closest approach to the current target (throttled recompute). Both the ship
         # trajectory and the target are referenced to the same base epoch (the node epoch
         # when a burn is planned, else now) so they are compared at matching absolute times;
@@ -1403,21 +1557,26 @@ class OrbitApp(ShowBase):
         self._update_marker_readability(focus)
 
         v0 = self.world.vessels[0]
-        # Osculating elements about the dominant body (Earth, or the Moon inside its SOI).
-        from orbitsim.core.nbody import osculating_elements
+        # Osculating elements about the dominant body.
         from orbitsim.core.constants import MU_MOON
         from orbitsim.core.bodies import MOON as MOON_BODY
-        elem = osculating_elements(v0.state, self.clock.sim_time_s)
+        if self.world.solar_system:
+            from orbitsim.core.nbody import osculating_elements_solar, dominant_body_solar
+            elem = osculating_elements_solar(v0.state, self.clock.sim_time_s)
+            dom_body, _ = dominant_body_solar(v0.state.r, self.clock.sim_time_s)
+            ref_radius = dom_body.radius_m
+        else:
+            from orbitsim.core.nbody import osculating_elements
+            elem = osculating_elements(v0.state, self.clock.sim_time_s)
+            moon_dominant = elem.mu == MU_MOON
+            dom_body = MOON_BODY if moon_dominant else self.world.central
+            ref_radius = dom_body.radius_m
         rp = elem.periapsis_radius
         ra = elem.apoapsis_radius
         try:
             period = elem.period_s
         except ValueError:
             period = float("nan")
-        # When Moon-dominant, Pe/Ap are Moon-relative — measure them against the Moon's
-        # radius (altitude stays Earth-surface-relative; it drives the atmosphere shell).
-        moon_dominant = elem.mu == MU_MOON
-        ref_radius = MOON_BODY.radius_m if moon_dominant else self.world.central.radius_m
         self.hud.update(
             sim_time_s=self.clock.sim_time_s,
             altitude_m=v0.state.r_mag - self.world.central.radius_m,
@@ -1426,6 +1585,7 @@ class OrbitApp(ShowBase):
             apoapsis_m=ra - ref_radius,
             period_s=period,
             inclination_rad=elem.i,
+            dominant_body=dom_body.name,
         )
         g_local = self.world.central.mu / max(v0.state.r_mag, 1.0) ** 2
         twr = (v0.max_thrust_n / (v0.mass_kg * g_local)) if v0.mass_kg > 0 else 0.0

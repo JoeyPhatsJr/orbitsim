@@ -151,3 +151,23 @@ def test_unlimited_dv_round_trips(tmp_path):
     save_scenario(w, SimClock(0.0, 1.0), str(p))
     w2, _ = load_scenario(str(p))
     assert w2.vessels[0].unlimited_dv is True
+
+
+def test_solar_system_flag_round_trips(tmp_path):
+    world, clock = _sample_world()
+    world.solar_system = True
+    path = tmp_path / "solar.json"
+    save_scenario(world, clock, str(path))
+    w2, _ = load_scenario(str(path))
+    assert w2.solar_system is True
+
+
+def test_solar_system_defaults_false_on_old_save(tmp_path):
+    world, clock = _sample_world()
+    path = tmp_path / "old.json"
+    save_scenario(world, clock, str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["solar_system"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    w2, _ = load_scenario(str(path))
+    assert w2.solar_system is False

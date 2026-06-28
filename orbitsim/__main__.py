@@ -32,7 +32,7 @@ def _default_world() -> World:
         exhaust_velocity_mps=3000.0,
         max_turn_rate_radps=0.8,
     )
-    return World(central=EARTH, vessels=[vessel])
+    return World(central=EARTH, vessels=[vessel], solar_system=True)
 
 
 def _solar_world() -> World:

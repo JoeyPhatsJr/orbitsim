@@ -61,6 +61,7 @@ def save_scenario(world: World, clock: SimClock, path) -> None:
         "schema": SCHEMA_VERSION,
         "kind": "sandbox",
         "central": world.central.name,
+        "solar_system": world.solar_system,
         "sim_time_s": clock.sim_time_s,
         "warp": clock.warp,
         "vessels": [_vessel_to_dict(v) for v in world.vessels],
@@ -134,4 +135,5 @@ def load_scenario(path) -> tuple[World, SimClock]:
     except KeyError as exc:
         raise ValueError(f"Save file missing required field: {exc}") from exc
 
-    return World(central=central, vessels=vessels), clock
+    solar_system = data.get("solar_system", False)
+    return World(central=central, vessels=vessels, solar_system=solar_system), clock

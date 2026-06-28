@@ -28,18 +28,23 @@ def _speed(mps: float, units: str) -> str:
 def orbit_panel_lines(
     *, sim_time_s: float, altitude_m: float, speed_mps: float,
     periapsis_m: float, apoapsis_m: float, period_s: float,
-    inclination_rad: float, units: str,
+    inclination_rad: float, units: str, dominant_body: str = "Earth",
 ) -> list[str]:
     """Build the orbit-info panel text lines. Pure (no DirectGUI) so it is unit-testable."""
-    return [
+    lines = [
         f"Sim time: {sim_time_s:,.0f} s past J2000",
         f"Altitude: {_dist(altitude_m, units)}",
         f"Speed: {_speed(speed_mps, units)}",
+    ]
+    if dominant_body != "Earth":
+        lines.append(f"Orbiting: {dominant_body}")
+    lines += [
         f"Periapsis: {_dist(periapsis_m, units)}",
         f"Apoapsis: {_dist(apoapsis_m, units)}",
         f"Inclination: {np.degrees(inclination_rad):,.1f}°",
         f"Period: {period_s / 60.0:,.1f} min",
     ]
+    return lines
 
 
 class Hud:
@@ -119,11 +124,13 @@ class Hud:
         apoapsis_m: float,
         period_s: float,
         inclination_rad: float,
+        dominant_body: str = "Earth",
     ) -> None:
         lines = orbit_panel_lines(
             sim_time_s=sim_time_s, altitude_m=altitude_m, speed_mps=speed_mps,
             periapsis_m=periapsis_m, apoapsis_m=apoapsis_m, period_s=period_s,
             inclination_rad=inclination_rad, units=self.units,
+            dominant_body=dominant_body,
         )
         self._orbit_lines = lines
         self._rebuild_left()

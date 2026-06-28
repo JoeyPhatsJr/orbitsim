@@ -38,3 +38,20 @@ class LagrangePointTarget:
         n_hat = n_hat / np.linalg.norm(n_hat)
         v = np.cross(OMEGA_EM * n_hat, r)   # rigid-rotation velocity about the Moon's normal
         return StateVector(r=np.asarray(r, dtype=np.float64), v=v, mu=MU_EARTH, epoch_s=t_s)
+
+
+class PlanetTarget:
+    """An inner planet (or the Sun) as a navigation target.
+
+    Uses geocentric state from core.planets. Closest-approach prediction is
+    disabled (the bodies are on simplified circular orbits; live distance +
+    relative speed is shown instead, like Lagrange points).
+    """
+    supports_closest_approach = False
+
+    def __init__(self, name: str, state_fn) -> None:
+        self.name = name
+        self._state_fn = state_fn
+
+    def state_at(self, t_s: float) -> StateVector:
+        return self._state_fn(t_s)
