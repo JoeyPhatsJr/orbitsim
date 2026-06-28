@@ -52,6 +52,30 @@ from orbitsim.render.skybox import build_starfield
 _global_clock = ClockObject.get_global_clock()
 
 
+def _fmt_dist(meters: float) -> str:
+    AU = 1.496e11
+    if meters >= 0.01 * AU:
+        return f"{meters / AU:.2f} AU"
+    km = meters / 1000.0
+    if km >= 1e6:
+        return f"{km / 1e6:.2f} M km"
+    return f"{km:,.0f} km"
+
+
+def _fmt_countdown(seconds: float) -> str:
+    t = int(seconds)
+    if t >= 86400:
+        d, rem = divmod(t, 86400)
+        h = rem // 3600
+        return f"{d}d {h:02d}h"
+    if t >= 3600:
+        h, rem = divmod(t, 3600)
+        m = rem // 60
+        return f"{h}h {m:02d}m"
+    m, s = divmod(t, 60)
+    return f"{m:02d}:{s:02d}"
+
+
 def _maneuver_preview_key(node, scheduled_epoch_s):
     """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
     return (
@@ -1478,8 +1502,7 @@ class OrbitApp(ShowBase):
             if ttn <= self.EXECUTE_TOLERANCE_S:
                 label = "DUE — press Execute"
             else:
-                mm, ss = divmod(int(ttn), 60)
-                label = f"in T-{mm:02d}:{ss:02d}"
+                label = f"in T-{_fmt_countdown(ttn)}"
             self._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
         else:
             self._node_line = ""
@@ -1617,7 +1640,7 @@ class OrbitApp(ShowBase):
             dist = float(np.linalg.norm(v0.state.r - L.r))
             relsp = float(np.linalg.norm(v0.state.v - L.v))
             self._target_line = (
-                f"Target: {self._target.name}   dist {dist / 1000:,.0f} km"
+                f"Target: {self._target.name}   dist {_fmt_dist(dist)}"
                 f"   rel {relsp:,.0f} m/s"
             )
             self._sync_maneuver_hud()
@@ -1665,9 +1688,8 @@ class OrbitApp(ShowBase):
                 )
                 label.set_pos(rx, ry, rz + 8.0)
             countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
-            mm, ss = divmod(int(countdown), 60)
             self._target_line = (
-                f"Target: {self._target.name}   CA T-{mm:02d}:{ss:02d}"
+                f"Target: {self._target.name}   CA T-{_fmt_countdown(countdown)}"
                 f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
             )
             self._sync_maneuver_hud()
