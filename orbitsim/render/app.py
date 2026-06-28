@@ -30,8 +30,6 @@ from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere, make_ring
 from orbitsim.core.nbody import MOON_SOI_M
 from orbitsim.core.planets import (
-    sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
-    jupiter_state_at, saturn_state_at, uranus_state_at, neptune_state_at,
     EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
     JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
     A_MERCURY, A_VENUS, A_EARTH, A_MARS,
@@ -320,17 +318,21 @@ class OrbitApp(ShowBase):
 
             # Targetable bodies. Click a marker to select.
             from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
+            from orbitsim.core.nbody import (
+                _csun, _cmercury, _cvenus, _cmars,
+                _cjupiter, _csaturn, _curanus, _cneptune,
+            )
             self._targets = [MoonTarget()] + [
                 LagrangePointTarget(n, n) for n in ("L1", "L2", "L3", "L4", "L5")
             ] + [
-                PlanetTarget("Sun", sun_state_at),
-                PlanetTarget("Mercury", mercury_state_at),
-                PlanetTarget("Venus", venus_state_at),
-                PlanetTarget("Mars", mars_state_at),
-                PlanetTarget("Jupiter", jupiter_state_at),
-                PlanetTarget("Saturn", saturn_state_at),
-                PlanetTarget("Uranus", uranus_state_at),
-                PlanetTarget("Neptune", neptune_state_at),
+                PlanetTarget("Sun", _csun),
+                PlanetTarget("Mercury", _cmercury),
+                PlanetTarget("Venus", _cvenus),
+                PlanetTarget("Mars", _cmars),
+                PlanetTarget("Jupiter", _cjupiter),
+                PlanetTarget("Saturn", _csaturn),
+                PlanetTarget("Uranus", _curanus),
+                PlanetTarget("Neptune", _cneptune),
             ]
             self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
@@ -989,11 +991,15 @@ class OrbitApp(ShowBase):
         r_rel = vessel.state.r - dom_pos
         v_planet_state = None
         t_now = self.clock.sim_time_s
+        from orbitsim.core.nbody import (
+            _cmercury, _cvenus, _cmars,
+            _cjupiter, _csaturn, _curanus, _cneptune,
+        )
         _planet_vel_fns = {
-            "Mercury": mercury_state_at, "Venus": venus_state_at,
-            "Mars": mars_state_at, "Jupiter": jupiter_state_at,
-            "Saturn": saturn_state_at, "Uranus": uranus_state_at,
-            "Neptune": neptune_state_at,
+            "Mercury": _cmercury, "Venus": _cvenus,
+            "Mars": _cmars, "Jupiter": _cjupiter,
+            "Saturn": _csaturn, "Uranus": _curanus,
+            "Neptune": _cneptune,
         }
         fn = _planet_vel_fns.get(dom_body.name)
         if fn is None:
@@ -1505,6 +1511,9 @@ class OrbitApp(ShowBase):
         for v in self.world.vessels:
             v.sas_target_pos = target_pos
         sim_dt = self.clock.advance(real_dt)
+        if self.world.solar_system:
+            from orbitsim.core.nbody import refresh_ephemeris_cache
+            refresh_ephemeris_cache(self.clock.sim_time_s)
         self.world.step(sim_dt)
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
@@ -1686,15 +1695,19 @@ class OrbitApp(ShowBase):
             lbl.set_pos(rx, ry, rz + 6.0)
             self._lagrange_positions[name] = np.asarray(lps[name]).copy()
         # Planets + Sun: position markers, SOI spheres, and orbit reference lines.
+        from orbitsim.core.nbody import (
+            _csun, _cmercury, _cvenus, _cmars,
+            _cjupiter, _csaturn, _curanus, _cneptune,
+        )
         _planet_state_fns = {
-            "Sun": sun_state_at,
-            "Mercury": mercury_state_at,
-            "Venus": venus_state_at,
-            "Mars": mars_state_at,
-            "Jupiter": jupiter_state_at,
-            "Saturn": saturn_state_at,
-            "Uranus": uranus_state_at,
-            "Neptune": neptune_state_at,
+            "Sun": _csun,
+            "Mercury": _cmercury,
+            "Venus": _cvenus,
+            "Mars": _cmars,
+            "Jupiter": _cjupiter,
+            "Saturn": _csaturn,
+            "Uranus": _curanus,
+            "Neptune": _cneptune,
         }
         t_now = self.clock.sim_time_s
         vessel_r = self.world.vessels[0].state.r if self.world.vessels else np.zeros(3)
@@ -1744,7 +1757,8 @@ class OrbitApp(ShowBase):
         self._earth_soi_np.set_color_scale(1, 1, 1, earth_alpha)
         self._earth_soi_np.show()
         # Planet orbit reference lines (heliocentric circles, offset by -Earth(t)).
-        sun_geo = sun_state_at(t_now).r
+        from orbitsim.core.nbody import _csun
+        sun_geo = _csun(t_now).r
         sx, sy, sz = self.transform.to_render(sun_geo)
         self._sun_orbit_frame.set_pos(sx, sy, sz)
         if self._planet_orbit_scale != scale:

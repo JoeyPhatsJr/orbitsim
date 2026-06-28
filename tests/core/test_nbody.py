@@ -287,3 +287,100 @@ def test_earth_fixed_lagrange_distance_invariant_under_rotation():
             dist[n].append(np.linalg.norm(lps[n]))
     for n in names:
         assert max(dist[n]) - min(dist[n]) < 1.0   # rigid rotation: |L| constant
+
+
+# ---------------------------------------------------------------------------
+# Ephemeris cache tests
+# ---------------------------------------------------------------------------
+import pytest
+
+
+class TestEphemerisCache:
+    """Tests for the per-frame ephemeris cache in nbody."""
+
+    def test_cache_starts_empty(self):
+        assert nb._ephemeris_cache == {} or isinstance(nb._ephemeris_cache, dict)
+
+    def test_refresh_populates_all_bodies(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not nb._EPHEMERIS_AVAILABLE:
+            pytest.skip("DE440 kernel not available")
+        assert ok is True
+        for name in nb._EPHEM_BODY_NAMES:
+            assert name in nb._ephemeris_cache
+            st = nb._ephemeris_cache[name]
+            assert st.r.shape == (3,)
+            assert st.v.shape == (3,)
+
+    def test_cached_state_fn_returns_cached_value(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not ok:
+            pytest.skip("DE440 kernel not available")
+        cached_sun = nb._ephemeris_cache["SUN"]
+        result = nb._csun(0.0)
+        np.testing.assert_array_equal(result.r, cached_sun.r)
+        np.testing.assert_array_equal(result.v, cached_sun.v)
+
+    def test_cached_fn_ignores_t_argument_when_cached(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not ok:
+            pytest.skip("DE440 kernel not available")
+        r1 = nb._csun(0.0).r.copy()
+        r2 = nb._csun(1e6).r.copy()
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_fallback_when_cache_empty(self):
+        saved = nb._ephemeris_cache.copy()
+        try:
+            nb._ephemeris_cache = {}
+            from orbitsim.core.planets import sun_state_at
+            result = nb._csun(100.0)
+            expected = sun_state_at(100.0)
+            np.testing.assert_allclose(result.r, expected.r, rtol=1e-12)
+        finally:
+            nb._ephemeris_cache = saved
+
+    def test_ephemeris_positions_differ_from_circular(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not ok:
+            pytest.skip("DE440 kernel not available")
+        from orbitsim.core.planets import mars_state_at
+        circular_mars = mars_state_at(0.0).r
+        real_mars = nb._ephemeris_cache["MARS"].r
+        diff = np.linalg.norm(real_mars - circular_mars)
+        assert diff > 1e6, f"Expected significant difference, got {diff:.0f} m"
+
+    def test_solar_system_accel_uses_cache(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not ok:
+            pytest.skip("DE440 kernel not available")
+        r = np.array([7e6, 0.0, 0.0])
+        a_cached = nb.solar_system_accel(r, 0.0)
+        nb._ephemeris_cache = {}
+        a_circular = nb.solar_system_accel(r, 0.0)
+        diff = np.linalg.norm(a_cached - a_circular)
+        assert diff > 0, "Cached and circular accelerations should differ"
+        assert diff / np.linalg.norm(a_cached) < 0.01, "Difference should be small (same order)"
+
+    def test_propagate_solar_system_with_cache(self):
+        ok = nb.refresh_ephemeris_cache(0.0)
+        if not ok:
+            pytest.skip("DE440 kernel not available")
+        r = 7.0e6
+        st = StateVector(r=np.array([r, 0.0, 0.0]),
+                         v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                         mu=MU_EARTH, epoch_s=0.0)
+        period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
+        out = nb.propagate_solar_system(st, period / 4, max_step_s=10.0)
+        assert np.linalg.norm(out.r) > 0
+        assert abs(np.linalg.norm(out.r) - r) / r < 0.01
+
+    def test_ephemeris_available_reflects_cache_state(self):
+        saved = nb._ephemeris_cache.copy()
+        try:
+            nb._ephemeris_cache = {}
+            assert nb.ephemeris_available() is False
+            nb._ephemeris_cache = {"SUN": StateVector(np.zeros(3), np.zeros(3), 0, 0)}
+            assert nb.ephemeris_available() is True
+        finally:
+            nb._ephemeris_cache = saved

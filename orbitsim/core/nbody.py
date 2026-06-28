@@ -145,15 +145,78 @@ from orbitsim.core.bodies import VENUS as VENUS_BODY, MARS as MARS_BODY, EARTH a
 from orbitsim.core.bodies import JUPITER as JUPITER_BODY, SATURN as SATURN_BODY
 from orbitsim.core.bodies import URANUS as URANUS_BODY, NEPTUNE as NEPTUNE_BODY
 
+# ---------------------------------------------------------------------------
+# Ephemeris cache: real JPL/Skyfield planet positions, cached once per frame.
+# When populated, solar_system_accel uses real positions instead of circular
+# approximations. Falls back gracefully if the DE440 kernel is unavailable.
+# ---------------------------------------------------------------------------
+_ephemeris_cache = {}
+
+try:
+    from orbitsim.core.ephemeris import body_state as _ephem_body_state
+    _EPHEMERIS_AVAILABLE = True
+except Exception:
+    _EPHEMERIS_AVAILABLE = False
+
+_EPHEM_BODY_NAMES = ("SUN", "MERCURY", "VENUS", "MARS",
+                     "JUPITER", "SATURN", "URANUS", "NEPTUNE")
+
+
+def refresh_ephemeris_cache(t_s: float) -> bool:
+    """Snapshot all planet geocentric positions from JPL/DE440 ephemeris.
+
+    Call once per frame before physics stepping. Positions are constant within
+    the frame's substeps (planet motion over one frame is negligible).
+    Returns True if real ephemeris was used, False on fallback.
+    """
+    global _ephemeris_cache
+    if not _EPHEMERIS_AVAILABLE:
+        _ephemeris_cache = {}
+        return False
+    try:
+        cache = {}
+        for name in _EPHEM_BODY_NAMES:
+            cache[name] = _ephem_body_state(name, t_s, center="EARTH")
+        _ephemeris_cache = cache
+        return True
+    except Exception:
+        _ephemeris_cache = {}
+        return False
+
+
+def ephemeris_available() -> bool:
+    """Whether the JPL ephemeris cache is currently populated."""
+    return bool(_ephemeris_cache)
+
+
+def _make_cached_state_fn(name, fallback_fn):
+    """Create a state function that returns cached ephemeris when available."""
+    def fn(t_s):
+        cached = _ephemeris_cache.get(name)
+        if cached is not None:
+            return cached
+        return fallback_fn(t_s)
+    return fn
+
+
+_csun = _make_cached_state_fn("SUN", sun_state_at)
+_cmercury = _make_cached_state_fn("MERCURY", mercury_state_at)
+_cvenus = _make_cached_state_fn("VENUS", venus_state_at)
+_cmars = _make_cached_state_fn("MARS", mars_state_at)
+_cjupiter = _make_cached_state_fn("JUPITER", jupiter_state_at)
+_csaturn = _make_cached_state_fn("SATURN", saturn_state_at)
+_curanus = _make_cached_state_fn("URANUS", uranus_state_at)
+_cneptune = _make_cached_state_fn("NEPTUNE", neptune_state_at)
+
 _SOLAR_PERTURBERS = [
-    (sun_state_at, MU_SUN),
-    (mercury_state_at, MU_MERCURY),
-    (venus_state_at, MU_VENUS),
-    (mars_state_at, MU_MARS),
-    (jupiter_state_at, MU_JUPITER),
-    (saturn_state_at, MU_SATURN),
-    (uranus_state_at, MU_URANUS),
-    (neptune_state_at, MU_NEPTUNE),
+    (_csun, MU_SUN),
+    (_cmercury, MU_MERCURY),
+    (_cvenus, MU_VENUS),
+    (_cmars, MU_MARS),
+    (_cjupiter, MU_JUPITER),
+    (_csaturn, MU_SATURN),
+    (_curanus, MU_URANUS),
+    (_cneptune, MU_NEPTUNE),
 ]
 
 
@@ -164,16 +227,17 @@ def solar_system_accel(r_m, t_s):
     third-body perturbers. Each gets a direct term and an indirect term (the
     indirect term accounts for the non-inertial geocentric frame — Earth is
     accelerated by every body, and the frame tracks Earth).
+
+    When the ephemeris cache is populated (via refresh_ephemeris_cache), uses
+    real JPL/DE440 planet positions; otherwise falls back to circular
+    approximations.
     """
     r = np.asarray(r_m, dtype=np.float64)
-    # Earth central gravity.
     a = -MU_EARTH * r / np.linalg.norm(r) ** 3
-    # Moon perturbation + indirect (same as earth_moon_accel).
     rM = moon_state_at(t_s).r
     a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM) ** 3 + rM / np.linalg.norm(rM) ** 3)
-    # Sun + planet perturbations + indirect terms.
     for state_fn, mu in _SOLAR_PERTURBERS:
-        rB = state_fn(t_s).r  # geocentric position of the perturber
+        rB = state_fn(t_s).r
         dr = r - rB
         a += -mu * (dr / np.linalg.norm(dr) ** 3 + rB / np.linalg.norm(rB) ** 3)
     return a
@@ -183,30 +247,26 @@ def _solar_system_substeps(state, dt_s, max_step_s):
     """Adaptive sub-step count for the solar system propagator.
 
     Caps the sub-step at 1/200 of the local orbital timescale at every body
-    (Earth, Moon, Sun, and each inner planet). Near a body the timescale is
-    short and many sub-steps are needed; in deep space the timescale is long.
+    (Earth, Moon, Sun, and each planet). Near a body the timescale is short
+    and many sub-steps are needed; in deep space the timescale is long.
     """
     r = np.asarray(state.r, dtype=np.float64)
     cap = max_step_s
-    # Earth (origin).
     rE = np.linalg.norm(r)
     if rE > 0:
         cap = min(cap, (2 * np.pi * np.sqrt(rE ** 3 / MU_EARTH)) / 200.0)
-    # Moon.
     rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
     if rM > 0:
         cap = min(cap, (2 * np.pi * np.sqrt(rM ** 3 / MU_MOON)) / 200.0)
-    # Sun + planets: only reduce cap if the vessel is within 10× the body's SOI
-    # (otherwise the timescale is so long it can't be the bottleneck).
     for state_fn, mu, soi in [
-        (sun_state_at, MU_SUN, float("inf")),
-        (mercury_state_at, MU_MERCURY, MERCURY_SOI_M),
-        (venus_state_at, MU_VENUS, VENUS_SOI_M),
-        (mars_state_at, MU_MARS, MARS_SOI_M),
-        (jupiter_state_at, MU_JUPITER, JUPITER_SOI_M),
-        (saturn_state_at, MU_SATURN, SATURN_SOI_M),
-        (uranus_state_at, MU_URANUS, URANUS_SOI_M),
-        (neptune_state_at, MU_NEPTUNE, NEPTUNE_SOI_M),
+        (_csun, MU_SUN, float("inf")),
+        (_cmercury, MU_MERCURY, MERCURY_SOI_M),
+        (_cvenus, MU_VENUS, VENUS_SOI_M),
+        (_cmars, MU_MARS, MARS_SOI_M),
+        (_cjupiter, MU_JUPITER, JUPITER_SOI_M),
+        (_csaturn, MU_SATURN, SATURN_SOI_M),
+        (_curanus, MU_URANUS, URANUS_SOI_M),
+        (_cneptune, MU_NEPTUNE, NEPTUNE_SOI_M),
     ]:
         rB = np.linalg.norm(r - state_fn(state.epoch_s).r)
         if rB > 0 and rB < 10 * soi:
@@ -225,31 +285,33 @@ def dominant_body_solar(r_m, t_s):
     """Return (CelestialBody, geocentric_position) of the body whose SOI contains the
     vessel, preferring the smallest SOI (most specific body). Falls back to Earth."""
     r = np.asarray(r_m, dtype=np.float64)
-    # Check Moon first (smallest SOI).
     rM = moon_state_at(t_s).r
     if np.linalg.norm(r - rM) < MOON_SOI_M:
         from orbitsim.core.bodies import MOON as MOON_BODY
         return MOON_BODY, rM
-    # Check planets (sorted smallest SOI first).
     planet_checks = [
-        (mercury_state_at, MERCURY_SOI_M, MERCURY_BODY),
-        (venus_state_at, VENUS_SOI_M, VENUS_BODY),
-        (mars_state_at, MARS_SOI_M, MARS_BODY),
-        (uranus_state_at, URANUS_SOI_M, URANUS_BODY),
-        (neptune_state_at, NEPTUNE_SOI_M, NEPTUNE_BODY),
-        (saturn_state_at, SATURN_SOI_M, SATURN_BODY),
-        (jupiter_state_at, JUPITER_SOI_M, JUPITER_BODY),
+        (_cmercury, MERCURY_SOI_M, MERCURY_BODY),
+        (_cvenus, VENUS_SOI_M, VENUS_BODY),
+        (_cmars, MARS_SOI_M, MARS_BODY),
+        (_curanus, URANUS_SOI_M, URANUS_BODY),
+        (_cneptune, NEPTUNE_SOI_M, NEPTUNE_BODY),
+        (_csaturn, SATURN_SOI_M, SATURN_BODY),
+        (_cjupiter, JUPITER_SOI_M, JUPITER_BODY),
     ]
     for state_fn, soi, body in planet_checks:
         rB = state_fn(t_s).r
         if np.linalg.norm(r - rB) < soi:
             return body, rB
-    # Check if outside Earth's SOI → Sun-dominant.
     if np.linalg.norm(r) > EARTH_SOI_M:
-        rS = sun_state_at(t_s).r
+        rS = _csun(t_s).r
         return SUN_BODY, rS
-    # Default: Earth.
     return EARTH_BODY, np.zeros(3)
+
+
+_CACHED_BODY_LOOKUP = {
+    "Sun": _csun, "Mercury": _cmercury, "Venus": _cvenus, "Mars": _cmars,
+    "Jupiter": _cjupiter, "Saturn": _csaturn, "Uranus": _curanus, "Neptune": _cneptune,
+}
 
 
 def osculating_elements_solar(state, t_s):
@@ -264,14 +326,11 @@ def osculating_elements_solar(state, t_s):
     elif body.name == "Earth":
         rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
     else:
-        st = None
-        from orbitsim.core.planets import ALL_PLANETS
-        for state_fn, mu, _, name in ALL_PLANETS:
-            if name == body.name:
-                st = state_fn(t_s)
-                rel = StateVector(state.r - st.r, state.v - st.v, body.mu, state.epoch_s)
-                break
-        if st is None:
+        cached_fn = _CACHED_BODY_LOOKUP.get(body.name)
+        if cached_fn is not None:
+            st = cached_fn(t_s)
+            rel = StateVector(state.r - st.r, state.v - st.v, body.mu, state.epoch_s)
+        else:
             rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
     return state_to_elements(rel)
 
