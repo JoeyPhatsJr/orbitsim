@@ -1392,7 +1392,11 @@ class OrbitApp(ShowBase):
             from orbitsim.render.ship_model import view_blend, model_node_scale
             v0 = self.world.vessels[0]
             marker_a, model_a = view_blend(self.rig.distance_m)
-            self.vessel_nps[0].set_alpha_scale(marker_a)
+            if marker_a > 0.0:
+                self.vessel_nps[0].show()
+                self.vessel_nps[0].set_alpha_scale(marker_a)
+            else:
+                self.vessel_nps[0].hide()
             if model_a > 0.0:
                 from panda3d.core import LQuaternion
                 self._ship_model_np.show()
@@ -1405,7 +1409,7 @@ class OrbitApp(ShowBase):
                 thr = getattr(v0, "throttle", 0.0)
                 if thr > 0.0:
                     self._plume_np.show()
-                    self._plume_np.set_sz(0.5 + thr)        # longer at higher throttle
+                    self._plume_np.set_sz(0.5 + thr)
                     self._plume_np.set_alpha_scale(model_a * thr)
                 else:
                     self._plume_np.hide()

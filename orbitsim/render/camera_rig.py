@@ -119,4 +119,11 @@ class CameraRig:
         self.base.camera.set_pos(x, y, z)
         self.base.camera.look_at(0, 0, 0)
         lens = self.base.camLens
-        lens.set_near_far(0.01, 1.0e6)
+        # Near/far must adapt to zoom. At ship view (distance_m=80, scale=0.08),
+        # Earth center is ~8.6e7 render units away; at map zoom (2e7 m, scale=2e4)
+        # it's only ~340 units. Scale far so world-space coverage stays constant
+        # (~10 AU). Near is set as a fraction of far to maintain depth precision
+        # while keeping nearby geometry (ship model at ~1000 units) visible.
+        far = max(1.5e12 / max(self.distance_m, MIN_DISTANCE_M), 1.0e6)
+        near = min(max(far * 1e-7, 0.01), d * 0.1)
+        lens.set_near_far(near, far)
