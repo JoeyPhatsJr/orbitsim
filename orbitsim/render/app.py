@@ -39,6 +39,16 @@ from orbitsim.render.skybox import build_starfield
 _global_clock = ClockObject.get_global_clock()
 
 
+def _maneuver_preview_key(node, scheduled_epoch_s):
+    """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
+    return (
+        node.dv_prograde_mps,
+        node.dv_normal_mps,
+        node.dv_radial_mps,
+        scheduled_epoch_s,
+    )
+
+
 class OrbitApp(ShowBase):
     """Renders one central body + vessels with orbit lines; time-warpable."""
 
@@ -244,7 +254,7 @@ class OrbitApp(ShowBase):
         self._preview_np = None
         self._preview_submit_t = 0.0
         self._preview_future = None
-        self._preview_future_node = None
+        self._preview_future_key = None
         if not self.solar_system:
             from concurrent.futures import ThreadPoolExecutor
             self._preview_executor = ThreadPoolExecutor(
@@ -939,13 +949,14 @@ class OrbitApp(ShowBase):
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
+        preview_key = _maneuver_preview_key(node, self._node_epoch_s)
         future = self._preview_future
         if future is not None and future.done():
             points = future.result()
-            completed_node = self._preview_future_node
+            completed_key = self._preview_future_key
             self._preview_future = None
-            self._preview_future_node = None
-            if node == completed_node and node.magnitude_mps > 0.0:
+            self._preview_future_key = None
+            if preview_key == completed_key and node.magnitude_mps > 0.0:
                 if self._preview_np is not None:
                     self._preview_np.remove_node()
                 self._preview_np = build_orbit_node(points, color=(1.0, 0.2, 1.0, 1.0))
@@ -953,7 +964,7 @@ class OrbitApp(ShowBase):
 
         if node.magnitude_mps <= 0.0:
             if self._preview_future is not None:
-                self._preview_future_node = None
+                self._preview_future_key = None
                 if self._preview_future.cancel():
                     self._preview_future = None
             if self._preview_np is not None:
@@ -971,7 +982,7 @@ class OrbitApp(ShowBase):
             post_burn = apply_maneuver(vessel.state, node)
             scale = self.transform.scale_m_per_unit
             self._preview_submit_t = now_real
-            self._preview_future_node = node
+            self._preview_future_key = preview_key
             self._preview_future = self._preview_executor.submit(
                 self._sample_preview, post_burn, scale
             )
