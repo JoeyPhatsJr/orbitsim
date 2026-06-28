@@ -1,13 +1,17 @@
 # Orbital Mechanics Simulator
 
 A realistic 3D orbital mechanics simulator/game for desktop (Windows) — "Kerbal Space Program,
-but the physics are real." Built in Python with a unit-tested, textbook-accurate two-body physics
-core and a Panda3D renderer. Real Keplerian orbits, Hohmann/bi-elliptic/Lambert transfers,
-ΔV-budget optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides +
-patched conics with SOI handoffs), and a free-build sandbox with live maneuver-node prediction.
+but the physics are real." Built in Python with a unit-tested, textbook-accurate physics core and a
+Panda3D renderer. Real Keplerian orbits, Hohmann/bi-elliptic/Lambert transfers, ΔV-budget
+optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides + patched conics
+with SOI handoffs), and a flyable sandbox that runs a **restricted N-body** model — real Moon gravity
+and parkable Earth–Moon Lagrange points — with live maneuver-node prediction and a 3rd-person ship view.
 
 Vessels are point masses with a ΔV/fuel budget — **no** rocket-part building, **no**
 aerodynamics/atmosphere (deliberately out of scope, to keep the focus on orbital mechanics).
+
+**New here?** See [How to play](docs/PLAYING.md) for controls, the HUD/navball, and a first-flight
+walkthrough.
 
 ## Features
 
@@ -26,11 +30,19 @@ aerodynamics/atmosphere (deliberately out of scope, to keep the focus on orbital
 - **Targeting & ΔV** — click a body to target it, target-relative closest-approach + relative
   velocity, working TARGET/ANTITARGET SAS, a one-click porkchop **intercept** planner, a bigger
   ΔV cap, and an **unlimited-ΔV** sandbox toggle.
-- **Restricted N-body engine** (`core/nbody.py`, in progress) — the ship as a massless test
-  particle under Earth + Moon gravity (velocity-Verlet, Jacobi constant, **Lagrange points** that
-  balance to machine precision). Moving the sandbox toward real lunar gravity and parkable L-points
-  — an alternative to KSP's patched conics. *Physics core is built and tested; render integration
-  is next.* See `docs/superpowers/specs/2026-06-26-nbody-flyable-design.md`.
+- **Restricted N-body sandbox** (`core/nbody.py`) — the ship flies as a massless test particle under
+  Earth + Moon gravity (velocity-Verlet, Jacobi constant). Coasting and powered flight are both
+  N-body; the forward-integrated trajectory line is the source of truth, and time-warp is capped
+  per-frame to keep the integration accurate. The **Earth–Moon Lagrange points** (L1–L5) balance to
+  machine precision and are shown as selectable navigation targets. A translucent **sphere-of-influence
+  shell** around the Moon tints the scene green when you cross into lunar gravity. An alternative to
+  KSP's patched conics.
+- **3rd-person ship view** — zoom (or press `M`) all the way in to an oriented, lit ship model with an
+  exhaust plume; zoom out to the map. Smoothed orbit camera throughout.
+- **Readable HUD** — grouped, self-sizing TIME/ORBIT/MANEUVER and VESSEL panels, a 3D attitude navball
+  with prograde/retrograde/normal/radial/target markers, a SAS chip with clickable mode buttons, and a
+  toggleable orbital/target velocity readout. In-world Pe/Ap, target, and closest-approach markers with
+  decluttering and depth fade.
 - **Realistic Earth** — textured, day/night terminator, atmosphere; starfield skybox.
 - **Save/load** — JSON sandbox saves, F5/F9 quicksave/quickload.
 
@@ -57,20 +69,27 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev,render]"        # physics + render deps
 
-.venv\Scripts\python -m pytest tests/ -q      # run the test suite (~136 tests)
+.venv\Scripts\python -m pytest tests/ -q      # run the test suite (~259 tests)
 .venv\Scripts\python -m orbitsim              # launch the sandbox (LEO, flyable)
 .venv\Scripts\python -m orbitsim --solar      # launch the solar-system viewer
 ```
 
+Once installed, the `orbitsim` console script is also available (`orbitsim`, `orbitsim --solar`).
+
 First launch downloads and caches large assets into `data/` (gitignored): the DE440 ephemeris
 kernel (~32 MB) and texture maps. All download code degrades gracefully offline.
 
+Press **F1** in-app for the keybind overlay, or read [docs/PLAYING.md](docs/PLAYING.md) for the full
+controls, a guide to the HUD/navball, and a first-flight walkthrough.
+
 ## Documentation
 
-The original build is specified phase-by-phase in [`docs/`](docs/):
+Start with [`docs/PLAYING.md`](docs/PLAYING.md) to actually fly. The original build is specified
+phase-by-phase in [`docs/`](docs/):
 
 | Doc | Purpose |
 |---|---|
+| [`docs/PLAYING.md`](docs/PLAYING.md) | **How to play** — controls, HUD/navball, first-flight walkthrough |
 | [`docs/00-OVERVIEW.md`](docs/00-OVERVIEW.md) | Architecture, conventions, definition of done — **read first** |
 | [`docs/01-physics-core.md`](docs/01-physics-core.md) | Two-body physics core (formulas + test values) |
 | [`docs/02-rendering-scale.md`](docs/02-rendering-scale.md) | Panda3D render + the floating-origin scale solution |
