@@ -50,8 +50,8 @@ def test_ellipse_sample_shape_and_radius():
     pts = sample_orbit_points(elem, n=128)
     assert pts.shape == (128, 3)
     radii = np.linalg.norm(pts, axis=1)
-    rp = elem.a * (1 - elem.e)  # periapsis
-    ra = elem.a * (1 + elem.e)  # apoapsis
+    rp = elem.periapsis_radius
+    ra = elem.apoapsis_radius
     assert radii.min() >= rp - 1.0
     assert radii.max() <= ra + 1.0
 

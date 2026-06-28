@@ -51,6 +51,33 @@ class TestKeplerianElements:
             elements.semi_latus_rectum, expected, rtol=1e-12
         )
 
+    def test_periapsis_radius(self):
+        """Periapsis radius r_p = a(1 − e)."""
+        a = 8.0e6
+        e = 0.1
+        elements = KeplerianElements(
+            a=a, e=e, i=0.0, raan=0.0, argp=0.0, nu=0.0, mu=MU_EARTH
+        )
+        np.testing.assert_allclose(elements.periapsis_radius, a * (1.0 - e), rtol=1e-12)
+
+    def test_apoapsis_radius(self):
+        """Apoapsis radius r_a = a(1 + e)."""
+        a = 8.0e6
+        e = 0.1
+        elements = KeplerianElements(
+            a=a, e=e, i=0.0, raan=0.0, argp=0.0, nu=0.0, mu=MU_EARTH
+        )
+        np.testing.assert_allclose(elements.apoapsis_radius, a * (1.0 + e), rtol=1e-12)
+
+    def test_periapsis_equals_apoapsis_circular(self):
+        """For a circular orbit (e=0), periapsis = apoapsis = a."""
+        a = 7.0e6
+        elements = KeplerianElements(
+            a=a, e=0.0, i=0.0, raan=0.0, argp=0.0, nu=0.0, mu=MU_EARTH
+        )
+        np.testing.assert_allclose(elements.periapsis_radius, a, rtol=1e-12)
+        np.testing.assert_allclose(elements.apoapsis_radius, a, rtol=1e-12)
+
     def test_frozen(self):
         """KeplerianElements is frozen (immutable)."""
         elements = KeplerianElements(

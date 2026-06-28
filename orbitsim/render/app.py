@@ -1408,8 +1408,8 @@ class OrbitApp(ShowBase):
         from orbitsim.core.constants import MU_MOON
         from orbitsim.core.bodies import MOON as MOON_BODY
         elem = osculating_elements(v0.state, self.clock.sim_time_s)
-        rp = elem.a * (1 - elem.e)
-        ra = elem.a * (1 + elem.e)
+        rp = elem.periapsis_radius
+        ra = elem.apoapsis_radius
         try:
             period = elem.period_s
         except ValueError:

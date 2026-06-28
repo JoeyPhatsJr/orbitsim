@@ -61,6 +61,16 @@ class KeplerianElements:
         return 2.0 * np.pi * np.sqrt(self.a**3 / self.mu)
 
     @property
+    def periapsis_radius(self) -> float:
+        """Periapsis radius r_p = a(1 − e) [m]."""
+        return self.a * (1.0 - self.e)
+
+    @property
+    def apoapsis_radius(self) -> float:
+        """Apoapsis radius r_a = a(1 + e) [m]. Only meaningful for bound orbits (e < 1)."""
+        return self.a * (1.0 + self.e)
+
+    @property
     def semi_latus_rectum(self) -> float:
         """Semi-latus rectum p = a(1 − e²) [m].
 

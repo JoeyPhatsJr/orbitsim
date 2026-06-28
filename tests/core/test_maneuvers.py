@@ -27,14 +27,14 @@ def test_node_magnitude():
 def test_prograde_burn_raises_apoapsis_only():
     state = _periapsis_state()
     elem0 = state_to_elements(state)
-    ra0 = elem0.a * (1 + elem0.e)
-    rp0 = elem0.a * (1 - elem0.e)
+    ra0 = elem0.apoapsis_radius
+    rp0 = elem0.periapsis_radius
 
     node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=100.0, dv_normal_mps=0.0, dv_radial_mps=0.0)
     new_state = apply_maneuver(state, node)
     elem1 = state_to_elements(new_state)
-    ra1 = elem1.a * (1 + elem1.e)
-    rp1 = elem1.a * (1 - elem1.e)
+    ra1 = elem1.apoapsis_radius
+    rp1 = elem1.periapsis_radius
 
     assert ra1 > ra0                      # apoapsis raised
     assert abs(rp1 - rp0) < 1.0           # periapsis unchanged (< 1 m)
