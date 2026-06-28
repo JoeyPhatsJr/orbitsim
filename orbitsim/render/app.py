@@ -10,6 +10,7 @@ from panda3d.core import (
     ClockObject,
     AmbientLight,
     DirectionalLight,
+    Filename,
     Vec4,
     TextNode,
     CardMaker,
@@ -369,23 +370,27 @@ class OrbitApp(ShowBase):
                     self.render, name, color=(0.5, 1.0, 0.9, 1.0), scale=12.0
                 )
                 self._lagrange_labels.append(lbl)
-            # Inner planets + Sun: markers, SOI spheres, orbit reference lines.
-            self._planet_sandbox_nps = {}    # name -> marker NodePath
+            # Inner planets + Sun: markers, true-scale bodies, SOI spheres, orbit lines.
+            from orbitsim.core.constants import R_SUN, R_MERCURY, R_VENUS, R_MARS, R_MOON
+            from orbitsim.render.textures import texture_path
+            self._planet_sandbox_nps = {}    # name -> marker NodePath (constant on-screen size)
             self._planet_sandbox_labels = {}
+            self._planet_body_nps = {}       # name -> true-scale textured body NodePath
+            self._planet_body_radii = {}     # name -> physical radius [m]
             self._planet_soi_nps = {}        # name -> SOI sphere NodePath
             self._planet_soi_radii = {}      # name -> SOI radius [m]
             _planet_defs = [
-                ("Sun", (1.0, 0.85, 0.2, 1.0), 10.0, float("inf")),
-                ("Mercury", (0.6, 0.6, 0.6, 1.0), 4.0, MERCURY_SOI_M),
-                ("Venus", (0.9, 0.8, 0.5, 1.0), 5.0, VENUS_SOI_M),
-                ("Mars", (0.9, 0.4, 0.2, 1.0), 5.0, MARS_SOI_M),
+                ("Sun", (1.0, 0.85, 0.2, 1.0), 10.0, float("inf"), R_SUN, "sun"),
+                ("Mercury", (0.6, 0.6, 0.6, 1.0), 4.0, MERCURY_SOI_M, R_MERCURY, "mercury"),
+                ("Venus", (0.9, 0.8, 0.5, 1.0), 5.0, VENUS_SOI_M, R_VENUS, "venus_surface"),
+                ("Mars", (0.9, 0.4, 0.2, 1.0), 5.0, MARS_SOI_M, R_MARS, "mars"),
             ]
             _soi_colors = {
                 "Mercury": (0.6, 0.6, 0.6, 1.0),
                 "Venus": (0.9, 0.8, 0.5, 1.0),
                 "Mars": (0.9, 0.5, 0.3, 1.0),
             }
-            for pname, color, sz, soi_r in _planet_defs:
+            for pname, color, sz, soi_r, radius_m, tex_name in _planet_defs:
                 mk = make_uv_sphere(1.0, 12, 16)
                 mk.reparent_to(self.render)
                 mk.set_color(*color)
@@ -397,6 +402,19 @@ class OrbitApp(ShowBase):
                 )
                 self._planet_sandbox_labels[pname] = lbl
                 self._planet_soi_radii[pname] = soi_r
+                self._planet_body_radii[pname] = radius_m
+                body = make_uv_sphere(1.0, 32, 64, with_uv=True)
+                body.reparent_to(self.render)
+                body.set_color(*color)
+                tp = texture_path(tex_name)
+                if tp is not None:
+                    body.set_texture(
+                        self.loader.load_texture(Filename.from_os_specific(tp)))
+                    body.set_color(1, 1, 1, 1)
+                if pname == "Sun":
+                    body.set_light_off()
+                body.hide()
+                self._planet_body_nps[pname] = body
                 if pname != "Sun" and np.isfinite(soi_r):
                     soi = make_uv_sphere(1.0, 24, 32)
                     soi.reparent_to(self.render)
@@ -408,6 +426,17 @@ class OrbitApp(ShowBase):
                     soi.set_color(sc[0], sc[1], sc[2], self.SOI_BASE_ALPHA)
                     soi.hide()
                     self._planet_soi_nps[pname] = soi
+            # True-scale Moon body (textured).
+            self._moon_body_np = make_uv_sphere(1.0, 32, 64, with_uv=True)
+            self._moon_body_np.reparent_to(self.render)
+            moon_tp = texture_path("moon")
+            if moon_tp is not None:
+                self._moon_body_np.set_texture(
+                    self.loader.load_texture(Filename.from_os_specific(moon_tp)))
+                self._moon_body_np.set_color(1, 1, 1, 1)
+            else:
+                self._moon_body_np.set_color(0.7, 0.7, 0.72, 1.0)
+            self._moon_body_np.hide()
             # Earth SOI sphere (visible once the vessel gets far from Earth).
             earth_soi = make_uv_sphere(1.0, 24, 32)
             earth_soi.reparent_to(self.render)
@@ -1436,6 +1465,13 @@ class OrbitApp(ShowBase):
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
+        # True-scale Moon body.
+        from orbitsim.core.constants import R_MOON
+        moon_render_pos = self.transform.to_render(moon_now.r)
+        moon_body_scale = R_MOON / self.transform.scale_m_per_unit
+        self._moon_body_np.set_pos(*moon_render_pos)
+        self._moon_body_np.set_scale(max(moon_body_scale, 1e-3))
+        self._moon_body_np.show()
         # Moon SOI wireframe: true-scale, brighter when the vessel is inside, camera-distance fade.
         soi_scale = MOON_SOI_M / self.transform.scale_m_per_unit
         self._soi_np.set_pos(*self.transform.to_render(moon_now.r))
@@ -1479,7 +1515,13 @@ class OrbitApp(ShowBase):
             px, py, pz = self.transform.to_render(pstate.r)
             self._planet_sandbox_nps[pname].set_pos(px, py, pz)
             self._planet_sandbox_labels[pname].set_pos(px, py, pz + 8.0)
-            # SOI spheres (planets only, not Sun).
+            if pname in self._planet_body_nps:
+                body_np = self._planet_body_nps[pname]
+                body_r = self._planet_body_radii[pname]
+                body_scale = body_r / self.transform.scale_m_per_unit
+                body_np.set_pos(px, py, pz)
+                body_np.set_scale(max(body_scale, 1e-3))
+                body_np.show()
             if pname in self._planet_soi_nps:
                 soi_np = self._planet_soi_nps[pname]
                 soi_r = self._planet_soi_radii[pname]

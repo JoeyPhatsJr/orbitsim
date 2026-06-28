@@ -3,11 +3,17 @@ is the caller's job when this returns None)."""
 import os
 import urllib.request
 
-_BASE = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/"
+_BASE_THREE = "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/"
+_BASE_THREEX = "https://raw.githubusercontent.com/jeromeetienne/threex.planets/master/images/"
 TEXTURE_URLS = {
-    "earth_day": _BASE + "earth_atmos_2048.jpg",
-    "earth_night": _BASE + "earth_lights_2048.png",
-    "stars": "https://raw.githubusercontent.com/jeromeetienne/threex.planets/master/images/galaxy_starfield.png",
+    "earth_day": _BASE_THREE + "earth_atmos_2048.jpg",
+    "earth_night": _BASE_THREE + "earth_lights_2048.png",
+    "moon": _BASE_THREE + "moon_1024.jpg",
+    "mercury": _BASE_THREEX + "mercurymap.jpg",
+    "venus_surface": _BASE_THREEX + "venusmap.jpg",
+    "mars": _BASE_THREEX + "marsmap1k.jpg",
+    "sun": _BASE_THREEX + "sunmap.jpg",
+    "stars": _BASE_THREEX + "galaxy_starfield.png",
 }
 
 _DATA_DIR = os.path.join(
