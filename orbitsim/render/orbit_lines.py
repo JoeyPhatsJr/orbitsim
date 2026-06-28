@@ -4,6 +4,26 @@ import numpy as np
 from orbitsim.core.elements import KeplerianElements, elements_to_state
 
 
+TRAJECTORY_COLOR = (0.20, 0.78, 1.0, 1.0)
+MANEUVER_COLOR = (1.0, 0.25, 0.90, 1.0)
+REFERENCE_ORBIT_COLOR = (0.48, 0.52, 0.62, 0.82)
+
+
+def path_fade_alphas(points, minimum: float = 0.28) -> np.ndarray:
+    """Alpha ramp by cumulative path distance: present is bright, future recedes."""
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        raise ValueError("points must have shape (N, 3) with N > 0")
+    minimum = max(0.0, min(1.0, minimum))
+    if len(pts) == 1:
+        return np.ones(1, dtype=np.float64)
+    distance = np.concatenate(([0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))))
+    if distance[-1] <= 0.0:
+        return np.ones(len(pts), dtype=np.float64)
+    t = distance / distance[-1]
+    return 1.0 + (minimum - 1.0) * t * t
+
+
 def _angle_diff(x: float, y: float) -> float:
     """Smallest absolute difference between two angles [rad], accounting for 2π wrap."""
     d = abs(x - y) % (2.0 * np.pi)
@@ -72,9 +92,14 @@ from panda3d.core import LineSegs, NodePath
 
 def build_orbit_node(
     points_render: list[tuple[float, float, float]],
-    color: tuple[float, float, float, float] = (0.3, 0.7, 1.0, 1.0),
+    color: tuple[float, float, float, float] = TRAJECTORY_COLOR,
+    thickness: float = 2.25,
+    fade_minimum: float = 0.28,
 ) -> NodePath:
-    """Build a Panda3D LineSegs polyline from render-space points.
+    """Build an outlined, depth-tested trajectory polyline.
+
+    A dark, wider under-stroke keeps the line legible over Earth, stars, and the
+    bright limb without making it look like a foreground HUD overlay.
 
     Parameters
     ----------
@@ -87,12 +112,30 @@ def build_orbit_node(
     NodePath
         A NodePath holding the line strip.
     """
-    segs = LineSegs()
-    segs.set_color(*color)
-    segs.set_thickness(1.5)
-    for idx, (x, y, z) in enumerate(points_render):
-        if idx == 0:
-            segs.move_to(x, y, z)
-        else:
-            segs.draw_to(x, y, z)
-    return NodePath(segs.create())
+    from panda3d.core import AntialiasAttrib, TransparencyAttrib
+
+    root = NodePath("trajectory_line")
+    fade = path_fade_alphas(points_render, fade_minimum)
+
+    def stroke(name, stroke_color, stroke_thickness, sort):
+        segs = LineSegs(name)
+        segs.set_thickness(stroke_thickness)
+        for idx, (x, y, z) in enumerate(points_render):
+            segs.set_color(
+                stroke_color[0], stroke_color[1], stroke_color[2],
+                stroke_color[3] * float(fade[idx]),
+            )
+            if idx == 0:
+                segs.move_to(x, y, z)
+            else:
+                segs.draw_to(x, y, z)
+        node = root.attach_new_node(segs.create())
+        node.set_bin("fixed", sort)
+        node.set_depth_test(True)
+        node.set_depth_write(False)
+        node.set_transparency(TransparencyAttrib.M_alpha)
+        node.set_antialias(AntialiasAttrib.M_line)
+
+    stroke("trajectory_halo", (0.0, 0.01, 0.03, 0.72), thickness + 3.0, 10)
+    stroke("trajectory_color", color, thickness, 11)
+    return root
