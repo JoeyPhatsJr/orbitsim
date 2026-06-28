@@ -26,7 +26,9 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
-from orbitsim.render.geometry import make_uv_sphere
+from orbitsim.render.geometry import make_uv_sphere, make_wireframe_sphere
+from orbitsim.core.nbody import MOON_SOI_M
+from orbitsim.render.world_markers import distance_fade
 from orbitsim.render.orbit_lines import (
     MANEUVER_COLOR,
     REFERENCE_ORBIT_COLOR,
@@ -333,6 +335,10 @@ class OrbitApp(ShowBase):
             self._moon_np.set_scale(7.0)
             self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
             self._moon_orbit_scale = None
+            # Moon sphere-of-influence: faint true-scale wireframe boundary.
+            self._soi_np = make_wireframe_sphere(color=self.SOI_COLOR)
+            self._soi_np.reparent_to(self.render)
+            self._soi_np.hide()  # shown + placed each frame in _update
             # Lagrange-point markers (constant on-screen size) + billboard labels.
             self._lagrange_nps = []
             self._lagrange_labels = []
@@ -827,6 +833,12 @@ class OrbitApp(ShowBase):
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
     SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
+    SOI_COLOR = (0.55, 0.75, 1.0, 1.0)         # cool blue-white wireframe (outside)
+    SOI_INSIDE_COLOR = (0.55, 1.0, 0.70, 1.0)  # greenish "captured by the Moon"
+    SOI_BASE_ALPHA = 0.45
+    SOI_INSIDE_ALPHA = 0.75
+    SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
+    SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
 
     def _toggle_ship_view(self) -> None:
         """Snap the camera between remembered map and ship-view distances ('m')."""
@@ -1281,6 +1293,17 @@ class OrbitApp(ShowBase):
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
+        # Moon SOI wireframe: true-scale, brighter when the vessel is inside, camera-distance fade.
+        soi_scale = MOON_SOI_M / self.transform.scale_m_per_unit
+        self._soi_np.set_pos(*self.transform.to_render(moon_now.r))
+        self._soi_np.set_scale(soi_scale)
+        inside = float(np.linalg.norm(self.world.vessels[0].state.r - moon_now.r)) < MOON_SOI_M
+        color = self.SOI_INSIDE_COLOR if inside else self.SOI_COLOR
+        base_alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
+        self._soi_np.set_color(color[0], color[1], color[2], base_alpha)
+        fade = distance_fade(self.rig.distance_m, self.SOI_FADE_NEAR_M, self.SOI_FADE_FAR_M, minimum=0.0)
+        self._soi_np.set_alpha_scale(fade)
+        self._soi_np.show()
         if self._target is not None:
             target_now = self._target.state_at(self.clock.sim_time_s).r
             self._target_label_position = np.asarray(target_now).copy()
