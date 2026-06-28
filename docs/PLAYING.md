@@ -15,8 +15,9 @@ optionally tick **Unlimited ΔV**, and press **Play**.
 
 The two modes:
 
-- **Sandbox** (default) — Earth-centered, one flyable vessel, the Moon, the Earth–Moon Lagrange
-  points, and a maneuver-node editor. This is the game.
+- **Sandbox** (default) — one flyable vessel in low Earth orbit with the full inner solar system:
+  the Sun, Mercury, Venus, Mars, the Moon, and the Earth–Moon Lagrange points, all exerting real
+  N-body gravity. Maneuver-node editor, targeting, and interplanetary transfers. This is the game.
 - **Solar viewer** (`--solar`) — Sun-centered, the planets at their real positions. No vessel; a
   camera/time sandbox for looking at the solar system.
 
@@ -67,8 +68,9 @@ The **SAS hold modes** (keys `1`–`8`, or the clickable buttons by the navball)
 
 | Input | Action |
 |---|---|
-| Left-click a body marker | Select / deselect it as your target (Moon or a Lagrange point) |
-| `P` | Toggle a **porkchop** ΔV plot for an intercept transfer |
+| Left-click a body marker | Select / deselect it as your target (Moon, Lagrange point, or planet) |
+| `I` | Plan an **intercept** burn to the current target (Lambert solver) |
+| `P` | Toggle a **porkchop** ΔV plot for the current target (or a demo) |
 | `U` | Toggle the **unlimited-ΔV** cheat |
 
 On-screen, the **maneuver-node editor** (bottom-right sliders + buttons) plots a burn:
@@ -79,7 +81,8 @@ On-screen, the **maneuver-node editor** (bottom-right sliders + buttons) plots a
   periapsis/apoapsis; **Clear** removes it; **Execute Burn** applies it.
 
 When a target is selected you get a live **closest-approach** readout (separation, relative speed,
-countdown) and CA markers; for a Lagrange point you get live distance and relative speed.
+countdown) and CA markers; for a Lagrange point or planet you get live distance and relative speed
+(in km or AU depending on range).
 
 ### Time, save, system
 
@@ -94,8 +97,9 @@ countdown) and CA markers; for a Lagrange point you get live distance and relati
 
 - **Top-left — TIME / ORBIT / MANEUVER** (grouped panel): sim time; altitude, speed, periapsis,
   apoapsis, inclination, period; and, when a node or target is active, the ΔV, node countdown, and
-  target / closest-approach lines. Periapsis/apoapsis switch to Moon-relative when you are inside the
-  Moon's sphere of influence.
+  target / closest-approach lines. All orbital readouts are relative to the **dominant body** — they
+  switch to Moon-relative inside the Moon's SOI, Mars-relative near Mars, and Sun-relative in
+  heliocentric space. An "Orbiting: ..." label appears when you leave Earth's SOI.
 - **Top-right — VESSEL**: throttle, fuel, mass, thrust, thrust-to-weight ratio, and ΔV remaining.
 - **Top-center**: the time-warp control and current warp factor.
 - **Bottom-center — the navball**: a 3D attitude ball (sky/ground, heading) with your nose fixed at
@@ -107,15 +111,19 @@ countdown) and CA markers; for a Lagrange point you get live distance and relati
 
 ### In the world
 
-- **Pe / Ap markers** sit on your trajectory at periapsis and apoapsis.
+- **Pe / Ap markers** sit on your trajectory at periapsis and apoapsis (relative to the dominant body).
 - **Target** and **closest-approach** markers + labels appear when you select a target; overlapping
   labels declutter by priority and fade with distance.
 - **Lagrange points** L1–L5 are teal markers that rotate with the Moon.
-- The **Moon's sphere of influence** is a faint translucent shell (blue from outside); when your ship
-  crosses inside it, the scene tints green — you are now in lunar-dominated gravity.
+- **Sphere-of-influence shells** — faint translucent spheres around the Moon and each planet mark
+  gravitational dominance boundaries. The Moon's shell turns the scene green when you cross inside;
+  planet SOI shells tint when approached. These are visual aids only — gravity is continuous N-body,
+  not patched conics.
+- **True-scale planets** — the Sun, Mercury, Venus, Mars, and Moon are rendered as textured spheres
+  at their real sizes and positions, with heliocentric orbit reference lines.
 - The bright **trajectory line** is your forward-integrated N-body path; the present is bright and the
-  future recedes. The faint grey loop is the Moon's reference orbit. A magenta line previews a planned
-  burn.
+  future recedes. In heliocentric space the line extends to show up to 400 days of the transfer arc.
+  The faint grey loop is the Moon's reference orbit. A magenta line previews a planned burn.
 
 ## First flight: raise your orbit
 
@@ -138,11 +146,33 @@ countdown) and CA markers; for a Lagrange point you get live distance and relati
    periapsis/apoapsis readouts switch to Moon-relative. From here you can capture, or aim for a
    **Lagrange point** (click L1–L5) and null your relative velocity to park there.
 
+## Go interplanetary
+
+1. Click a planet marker (e.g. **Mars**) to target it. The HUD shows a live distance readout in AU.
+2. Press **`I`** to plan an **intercept** — the Lambert solver computes a transfer burn with an
+   optimal departure time and time-of-flight grid spanning a full synodic period.
+3. A maneuver node appears at the optimal departure time. Press **Execute Burn** when the countdown
+   reaches zero (or warp to the node — it auto-warps down). The burn escapes Earth and injects you
+   onto a transfer orbit.
+4. Once in heliocentric space, the HUD switches to "Orbiting: Sun" and shows your heliocentric
+   orbital elements. The trajectory line extends to show your full transfer arc. Warp up (`.`)
+   through the months-long coast — at 1,000,000× a Mars transfer takes about 22 seconds.
+5. As you approach Mars, the planet's SOI sphere appears and tints when you cross in. The HUD
+   switches to "Orbiting: Mars" with Mars-relative altitude and periapsis.
+6. Burn **retrograde** (`2` for SAS retrograde hold, then throttle up) to capture into Mars orbit.
+
+**Tip:** The default vessel has ~5600 m/s of ΔV, enough for a one-way Mars mission. Toggle
+**Unlimited ΔV** (`U`) for round trips or more ambitious maneuvers.
+
 ## Tips
 
 - **Burns are most efficient at the apsis opposite the one you want to change** — burn at periapsis to
   raise apoapsis, and vice versa.
 - **Time-warp** (`.`) to skip the long coasts, but it auto-drops to 1× during burns and is capped near
   bodies to keep the N-body integration accurate.
+- **Interplanetary transfers** are most efficient near the Hohmann window — the `I` intercept planner
+  searches a full synodic period to find it automatically.
 - Stuck or out of fuel while experimenting? Toggle **Unlimited ΔV** (`U`) or open settings (`Esc`).
 - **Quicksave** (`F5`) before a risky maneuver; **Quickload** (`F9`) to retry.
+- Press **`P`** with a planet targeted to see a **porkchop plot** — the color map shows ΔV cost across
+  departure time vs. flight time, with the optimal window marked.

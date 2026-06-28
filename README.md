@@ -3,9 +3,11 @@
 A realistic 3D orbital mechanics simulator/game for desktop (Windows) — "Kerbal Space Program,
 but the physics are real." Built in Python with a unit-tested, textbook-accurate physics core and a
 Panda3D renderer. Real Keplerian orbits, Hohmann/bi-elliptic/Lambert transfers, ΔV-budget
-optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides + patched conics
-with SOI handoffs), and a flyable sandbox that runs a **restricted N-body** model — real Moon gravity
-and parkable Earth–Moon Lagrange points — with live maneuver-node prediction and a 3rd-person ship view.
+optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides), and a flyable
+sandbox that runs a **restricted N-body** model — real gravity from the Sun, Moon, Mercury, Venus,
+and Mars — with live maneuver-node prediction, interplanetary transfer planning, and a 3rd-person
+ship view. Fly from Earth orbit to Mars under real N-body physics, park at Lagrange points, and
+plan your burns with porkchop plots.
 
 Vessels are point masses with a ΔV/fuel budget — **no** rocket-part building, **no**
 aerodynamics/atmosphere (deliberately out of scope, to keep the focus on orbital mechanics).
@@ -18,32 +20,41 @@ walkthrough.
 - **Tested physics core** — Keplerian elements ↔ state vectors, Kepler solvers (elliptic /
   parabolic / hyperbolic), analytic two-body propagation, all in float64 SI units and validated
   against Curtis, *Orbital Mechanics for Engineering Students*.
-- **Continuous-thrust flight** — RK4 integration with the real rocket equation, attitude control,
-  navball + HUD. Coasting vessels propagate analytically (time-warp on rails); thrusting vessels
-  integrate numerically.
+- **Continuous-thrust flight** — velocity-Verlet integration with the real rocket equation, attitude
+  control, navball + HUD. Both coasting and thrusting use the N-body propagator; time-warp is capped
+  per-frame to keep the integration accurate.
 - **Transfer & ΔV planning** — Hohmann, bi-elliptic, plane-change, and Lambert transfers, plus a
-  ΔV optimizer with porkchop diagrams.
-- **Real solar system** — planet/moon positions from the DE440 ephemeris via Skyfield; patched
-  conics with sphere-of-influence transitions.
+  ΔV optimizer with porkchop diagrams. Press `I` to plan an intercept to any targeted body (Moon or
+  planet); press `P` for a porkchop plot with synodic-period search grids for interplanetary targets.
+- **Inner solar system** — the Sun, Mercury, Venus, and Mars are rendered as true-scale textured
+  bodies with heliocentric orbit reference lines and translucent SOI spheres. All five bodies (plus
+  Earth and Moon) contribute real gravitational acceleration to the N-body model.
+- **Interplanetary flight** — escape Earth, coast under N-body gravity, and capture at another
+  planet. The HUD adapts to the dominant body (altitude, periapsis, apoapsis, and TWR switch to
+  Mars-relative when you enter Mars's SOI). Trajectory lines extend to 400-day horizons in
+  heliocentric space. Distances display in AU when appropriate.
 - **Sandbox** — scheduled maneuver nodes, Pe/Ap presets, auto-warp-to-node, and live
   predicted-orbit rendering.
-- **Targeting & ΔV** — click a body to target it, target-relative closest-approach + relative
-  velocity, working TARGET/ANTITARGET SAS, a one-click porkchop **intercept** planner, a bigger
-  ΔV cap, and an **unlimited-ΔV** sandbox toggle.
+- **Targeting & ΔV** — click a body to target it (Moon, Lagrange points, or planets), with
+  target-relative closest-approach + relative velocity, working TARGET/ANTITARGET SAS, a one-click
+  porkchop **intercept** planner, and an **unlimited-ΔV** sandbox toggle.
 - **Restricted N-body sandbox** (`core/nbody.py`) — the ship flies as a massless test particle under
-  Earth + Moon gravity (velocity-Verlet, Jacobi constant). Coasting and powered flight are both
-  N-body; the forward-integrated trajectory line is the source of truth, and time-warp is capped
-  per-frame to keep the integration accurate. The **Earth–Moon Lagrange points** (L1–L5) balance to
-  machine precision and are shown as selectable navigation targets. A translucent **sphere-of-influence
-  shell** around the Moon tints the scene green when you cross into lunar gravity. An alternative to
-  KSP's patched conics.
+  the gravity of Earth, Moon, Sun, Mercury, Venus, and Mars (velocity-Verlet with adaptive
+  sub-stepping). The forward-integrated trajectory line is the source of truth, and time-warp is
+  capped near bodies to keep the integration accurate. The **Earth–Moon Lagrange points** (L1–L5)
+  balance to machine precision and are shown as selectable navigation targets. Translucent
+  **sphere-of-influence shells** around the Moon and each planet mark gravitational boundaries. An
+  alternative to KSP's patched conics — no SOI transitions, just continuous N-body gravity.
 - **3rd-person ship view** — zoom (or press `M`) all the way in to an oriented, lit ship model with an
-  exhaust plume; zoom out to the map. Smoothed orbit camera throughout.
+  exhaust plume; zoom out to the map. Adaptive camera clip planes keep distant bodies visible at all
+  zoom levels. Smoothed orbit camera throughout.
 - **Readable HUD** — grouped, self-sizing TIME/ORBIT/MANEUVER and VESSEL panels, a 3D attitude navball
   with prograde/retrograde/normal/radial/target markers, a SAS chip with clickable mode buttons, and a
   toggleable orbital/target velocity readout. In-world Pe/Ap, target, and closest-approach markers with
-  decluttering and depth fade.
-- **Realistic Earth** — textured, day/night terminator, atmosphere; starfield skybox.
+  decluttering and depth fade. Smart formatting (days/hours for long countdowns, AU for interplanetary
+  distances).
+- **Realistic Earth** — textured, day/night terminator, atmosphere; starfield skybox. Planet textures
+  for Mercury, Venus, Mars, Moon, and Sun.
 - **Save/load** — JSON sandbox saves, F5/F9 quicksave/quickload.
 
 ## Architecture
