@@ -582,7 +582,7 @@ class OrbitApp(ShowBase):
         mouse springs the thumb back to center and the value stops changing.
         """
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
-        self._dv_line = self._node_line = self._target_line = ""
+        self._dv_line = self._node_line = self._target_line = self._encounter_line = ""
         self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self._node_marker_np = None
         self._node_dv_label = None
@@ -971,7 +971,47 @@ class OrbitApp(ShowBase):
         self._sync_maneuver_hud()
 
     def _sync_maneuver_hud(self) -> None:
-        self.hud.set_maneuver(self._dv_line, self._node_line, self._target_line)
+        enc = getattr(self, "_encounter_line", "")
+        self.hud.set_maneuver(self._dv_line, self._node_line, self._target_line, enc)
+
+    def _update_encounter_info(self, vessel, dom_body, dom_pos) -> None:
+        """Compute and display flyby encounter parameters when approaching a planet."""
+        if not self.world.solar_system:
+            self._encounter_line = ""
+            return
+        if dom_body.name in ("Earth", "Moon"):
+            self._encounter_line = ""
+            return
+        if dom_body.name == "Sun":
+            self._encounter_line = ""
+            return
+        from orbitsim.core.flyby import encounter_parameters
+        r_rel = vessel.state.r - dom_pos
+        v_planet_state = None
+        t_now = self.clock.sim_time_s
+        _planet_vel_fns = {
+            "Mercury": mercury_state_at, "Venus": venus_state_at,
+            "Mars": mars_state_at, "Jupiter": jupiter_state_at,
+            "Saturn": saturn_state_at, "Uranus": uranus_state_at,
+            "Neptune": neptune_state_at,
+        }
+        fn = _planet_vel_fns.get(dom_body.name)
+        if fn is None:
+            self._encounter_line = ""
+            return
+        pstate = fn(t_now)
+        params = encounter_parameters(
+            vessel.state.r, vessel.state.v, dom_pos, pstate.v, dom_body.mu)
+        v_inf_kms = params["v_inf_mag"] / 1000.0
+        defl_deg = np.degrees(params["deflection_rad"])
+        dv_eq = params["dv_equivalent"]
+        pe_km = params["periapsis_m"] / 1000.0
+        self._encounter_line = (
+            f"Flyby {dom_body.name}: v∞ {v_inf_kms:,.1f} km/s  "
+            f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
+            f"free dV {dv_eq:,.0f} m/s"
+        )
+        self._sync_maneuver_hud()
 
     UNLIMITED_RESERVE_KG = 1000.0   # min propellant kept while unlimited (so thrust works at empty)
 
@@ -1872,6 +1912,7 @@ class OrbitApp(ShowBase):
             target_velocity = self._target.state_at(self.clock.sim_time_s).v
             target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
         self.vel_readout.update(v0.state.v_mag, target_rel_speed)
+        self._update_encounter_info(v0, dom_body, dom_pos)
         self._update_warp_readout()
         return task.cont
 

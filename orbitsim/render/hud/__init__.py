@@ -55,6 +55,7 @@ class Hud:
         self._right = HudPanel(base.a2dTopRight, x=-0.62, top=-0.10)
         self._orbit_lines = []
         self._maneuver_lines = ("", "", "")
+        self._encounter_line = ""
         self.units = "km"  # distance/speed units for readouts ("km" or "mi")
         # Transient center-screen "toast" message (e.g. "Quicksaved").
         self._base = base
@@ -104,14 +105,19 @@ class Hud:
             maneuver_rows.append((node_line, cyan))
         if target_line:
             maneuver_rows.append((target_line, orange))
+        enc_line = getattr(self, "_encounter_line", "")
+        if enc_line:
+            maneuver_rows.append((enc_line, (0.4, 1.0, 0.6, 1.0)))
         if maneuver_rows:
             sections.append(
                 {"header": "MANEUVER", "header_color": magenta, "rows": maneuver_rows}
             )
         self._left.set_sections(sections)
 
-    def set_maneuver(self, dv_line: str, node_line: str, target_line: str) -> None:
+    def set_maneuver(self, dv_line: str, node_line: str, target_line: str,
+                     encounter_line: str = "") -> None:
         self._maneuver_lines = (dv_line, node_line, target_line)
+        self._encounter_line = encounter_line
         self._rebuild_left()
 
     def update(
