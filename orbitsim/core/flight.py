@@ -168,3 +168,47 @@ def integrate_powered_nbody(
             t = t + h
 
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s), float(fuel)
+
+
+def integrate_powered_solar(
+    state: StateVector,
+    dry_mass_kg: float,
+    fuel_kg: float,
+    thrust_dir_unit: np.ndarray,
+    throttle: float,
+    max_thrust_n: float,
+    ve_mps: float,
+    dt_s: float,
+) -> tuple:
+    """Integrate under solar_system_accel + thrust (same operator-splitting as nbody variant)."""
+    from orbitsim.core.nbody import solar_system_accel, _solar_system_substeps
+
+    thrust_dir_unit = np.asarray(thrust_dir_unit, dtype=np.float64)
+    r = np.asarray(state.r, dtype=np.float64).copy()
+    v = np.asarray(state.v, dtype=np.float64).copy()
+    fuel = float(fuel_kg)
+    t = state.epoch_s
+
+    n = _solar_system_substeps(state, dt_s, max_step_s=3600.0) if state.mu != 0.0 else 50
+    h = dt_s / n
+    mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
+
+    for _ in range(n):
+        if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
+            t_burn = min(h, fuel / mdot)
+            m_start = dry_mass_kg + fuel
+            m_end = m_start - mdot * t_burn
+            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
+            fuel = max(0.0, fuel - mdot * t_burn)
+        if state.mu != 0.0:
+            a0 = solar_system_accel(r, t)
+            v_half = v + 0.5 * a0 * h
+            r = r + v_half * h
+            t = t + h
+            a1 = solar_system_accel(r, t)
+            v = v_half + 0.5 * a1 * h
+        else:
+            r = r + v * h
+            t = t + h
+
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s), float(fuel)

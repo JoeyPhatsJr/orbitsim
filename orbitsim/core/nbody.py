@@ -127,6 +127,147 @@ def osculating_elements(state, t_s):
     return state_to_elements(rel)
 
 
+# ---------------------------------------------------------------------------
+# Solar-system extension: Sun + inner planets as geocentric perturbers.
+# ---------------------------------------------------------------------------
+from orbitsim.core.constants import MU_SUN, MU_MERCURY, MU_VENUS, MU_MARS
+from orbitsim.core.planets import (
+    sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
+    EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
+)
+from orbitsim.core.bodies import SUN as SUN_BODY, MERCURY as MERCURY_BODY
+from orbitsim.core.bodies import VENUS as VENUS_BODY, MARS as MARS_BODY, EARTH as EARTH_BODY
+
+_SOLAR_PERTURBERS = [
+    (sun_state_at, MU_SUN),
+    (mercury_state_at, MU_MERCURY),
+    (venus_state_at, MU_VENUS),
+    (mars_state_at, MU_MARS),
+]
+
+
+def solar_system_accel(r_m, t_s):
+    """Geocentric N-body acceleration [m/s^2]: central Earth + Moon + Sun + inner planets.
+
+    Extends earth_moon_accel with the Sun and Mercury/Venus/Mars as third-body
+    perturbers. Each gets a direct term and an indirect term (the indirect term
+    accounts for the non-inertial geocentric frame — Earth is accelerated by
+    every body, and the frame tracks Earth).
+    """
+    r = np.asarray(r_m, dtype=np.float64)
+    # Earth central gravity.
+    a = -MU_EARTH * r / np.linalg.norm(r) ** 3
+    # Moon perturbation + indirect (same as earth_moon_accel).
+    rM = moon_state_at(t_s).r
+    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM) ** 3 + rM / np.linalg.norm(rM) ** 3)
+    # Sun + planet perturbations + indirect terms.
+    for state_fn, mu in _SOLAR_PERTURBERS:
+        rB = state_fn(t_s).r  # geocentric position of the perturber
+        dr = r - rB
+        a += -mu * (dr / np.linalg.norm(dr) ** 3 + rB / np.linalg.norm(rB) ** 3)
+    return a
+
+
+def _solar_system_substeps(state, dt_s, max_step_s):
+    """Adaptive sub-step count for the solar system propagator.
+
+    Caps the sub-step at 1/200 of the local orbital timescale at every body
+    (Earth, Moon, Sun, and each inner planet). Near a body the timescale is
+    short and many sub-steps are needed; in deep space the timescale is long.
+    """
+    r = np.asarray(state.r, dtype=np.float64)
+    cap = max_step_s
+    # Earth (origin).
+    rE = np.linalg.norm(r)
+    if rE > 0:
+        cap = min(cap, (2 * np.pi * np.sqrt(rE ** 3 / MU_EARTH)) / 200.0)
+    # Moon.
+    rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
+    if rM > 0:
+        cap = min(cap, (2 * np.pi * np.sqrt(rM ** 3 / MU_MOON)) / 200.0)
+    # Sun + planets: only reduce cap if the vessel is within 10× the body's SOI
+    # (otherwise the timescale is so long it can't be the bottleneck).
+    for state_fn, mu, soi in [
+        (sun_state_at, MU_SUN, float("inf")),
+        (mercury_state_at, MU_MERCURY, MERCURY_SOI_M),
+        (venus_state_at, MU_VENUS, VENUS_SOI_M),
+        (mars_state_at, MU_MARS, MARS_SOI_M),
+    ]:
+        rB = np.linalg.norm(r - state_fn(state.epoch_s).r)
+        if rB > 0 and rB < 10 * soi:
+            cap = min(cap, (2 * np.pi * np.sqrt(rB ** 3 / mu)) / 200.0)
+    return max(1, int(np.ceil(abs(dt_s) / cap)))
+
+
+def propagate_solar_system(state, dt_s, max_step_s=3600.0):
+    """Propagate a vessel under full inner solar system gravity (geocentric)."""
+    n = _solar_system_substeps(state, dt_s, max_step_s)
+    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, solar_system_accel, n)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+
+
+def dominant_body_solar(r_m, t_s):
+    """Return (CelestialBody, geocentric_position) of the body whose SOI contains the
+    vessel, preferring the smallest SOI (most specific body). Falls back to Earth."""
+    r = np.asarray(r_m, dtype=np.float64)
+    # Check Moon first (smallest SOI).
+    rM = moon_state_at(t_s).r
+    if np.linalg.norm(r - rM) < MOON_SOI_M:
+        from orbitsim.core.bodies import MOON as MOON_BODY
+        return MOON_BODY, rM
+    # Check planets (sorted smallest SOI first).
+    planet_checks = [
+        (mercury_state_at, MERCURY_SOI_M, MERCURY_BODY),
+        (venus_state_at, VENUS_SOI_M, VENUS_BODY),
+        (mars_state_at, MARS_SOI_M, MARS_BODY),
+    ]
+    for state_fn, soi, body in planet_checks:
+        rB = state_fn(t_s).r
+        if np.linalg.norm(r - rB) < soi:
+            return body, rB
+    # Check if outside Earth's SOI → Sun-dominant.
+    if np.linalg.norm(r) > EARTH_SOI_M:
+        rS = sun_state_at(t_s).r
+        return SUN_BODY, rS
+    # Default: Earth.
+    return EARTH_BODY, np.zeros(3)
+
+
+def osculating_elements_solar(state, t_s):
+    """Osculating Keplerian elements relative to the dominant body in the solar system.
+
+    Checks the full body hierarchy: Moon → planets → Earth/Sun.
+    """
+    body, r_body = dominant_body_solar(state.r, t_s)
+    if body.name == "Moon":
+        rM = moon_state_at(t_s)
+        rel = StateVector(state.r - rM.r, state.v - rM.v, MU_MOON, state.epoch_s)
+    elif body.name == "Earth":
+        rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
+    else:
+        st = None
+        for state_fn, mu, _, name in [
+            (sun_state_at, MU_SUN, float("inf"), "Sun"),
+            (mercury_state_at, MU_MERCURY, MERCURY_SOI_M, "Mercury"),
+            (venus_state_at, MU_VENUS, VENUS_SOI_M, "Venus"),
+            (mars_state_at, MU_MARS, MARS_SOI_M, "Mars"),
+        ]:
+            if name == body.name:
+                st = state_fn(t_s)
+                rel = StateVector(state.r - st.r, state.v - st.v, body.mu, state.epoch_s)
+                break
+        if st is None:
+            rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
+    return state_to_elements(rel)
+
+
+def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
+    """Largest warp whose per-frame integration stays within budget_substeps (solar system)."""
+    allowed = [w for w in warp_steps
+               if _solar_system_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+    return max(allowed) if allowed else min(warp_steps)
+
+
 def _rot_z(theta):
     c, s = np.cos(theta), np.sin(theta)
     return np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])  # inertial->rotating

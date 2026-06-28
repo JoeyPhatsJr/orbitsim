@@ -82,23 +82,37 @@ class World:
     central : CelestialBody
         The body all vessel states are referenced to.
     vessels : list[Vessel]
+    solar_system : bool
+        When True, propagation uses the full inner solar system N-body model
+        (Sun + Mercury + Venus + Moon + Mars as perturbers in the geocentric frame).
     """
 
-    def __init__(self, central: CelestialBody, vessels: list[Vessel]) -> None:
+    def __init__(self, central: CelestialBody, vessels: list[Vessel],
+                 solar_system: bool = False) -> None:
         self.central = central
         self.vessels = vessels
+        self.solar_system = solar_system
 
     def step(self, sim_dt_s: float) -> None:
         """Advance every vessel by sim_dt_s: slew attitude, then translate.
 
-        Coasting vessels propagate under earth_moon_accel (N-body, velocity-Verlet);
-        thrusting vessels integrate under earth_moon_accel + rocket equation.
+        When solar_system is True, propagation includes the Sun and inner planets
+        as gravitational perturbers alongside the Moon.
         """
-        from orbitsim.core.nbody import propagate_earth_moon
-        from orbitsim.core.flight import integrate_powered_nbody
         from orbitsim.core.attitude import (
             slew_toward, sas_target_dir, nose_direction,
         )
+
+        if self.solar_system:
+            from orbitsim.core.nbody import propagate_solar_system
+            from orbitsim.core.flight import integrate_powered_solar
+            propagate_fn = propagate_solar_system
+            powered_fn = integrate_powered_solar
+        else:
+            from orbitsim.core.nbody import propagate_earth_moon
+            from orbitsim.core.flight import integrate_powered_nbody
+            propagate_fn = propagate_earth_moon
+            powered_fn = integrate_powered_nbody
 
         for vessel in self.vessels:
             # 1) Attitude: slew toward the SAS hold direction (if any) each tick.
@@ -112,7 +126,7 @@ class World:
                         vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
             # 2) Translation.
             if vessel.throttle > 0.0 and (vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv):
-                new_state, new_fuel = integrate_powered_nbody(
+                new_state, new_fuel = powered_fn(
                     vessel.state,
                     dry_mass_kg=vessel.dry_mass_kg,
                     fuel_kg=vessel.fuel_mass_kg,
@@ -126,7 +140,7 @@ class World:
                 if not vessel.unlimited_dv:
                     vessel.fuel_mass_kg = new_fuel
             else:
-                vessel.state = propagate_earth_moon(vessel.state, sim_dt_s)
+                vessel.state = propagate_fn(vessel.state, sim_dt_s)
 
     def any_thrusting(self) -> bool:
         """True if any vessel is currently producing thrust (throttle>0 and
