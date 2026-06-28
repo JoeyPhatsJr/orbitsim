@@ -8,9 +8,9 @@ A desktop (Windows) 3D orbital mechanics simulator/game in Python — "KSP but t
 real." Three pillars: transfer & ΔV planning (Hohmann/bi-elliptic/Lambert + porkchop optimizer),
 the real solar system (JPL/Skyfield ephemerides + patched conics with SOI handoffs), and a
 sandbox (maneuver nodes with live orbit prediction). Vessels are point masses with a ΔV budget;
-**no** aerodynamics/atmosphere (out of scope). As of 2026-06-26 the sandbox is moving to a
-**restricted N-body** model (real Moon gravity + Lagrange points — see "Direction shift" below),
-and buildable/launchable ships (mass + 3D models, stations, landers) are a longer-term goal — so
+**no** aerodynamics/atmosphere (out of scope). The sandbox now runs a **restricted N-body** model
+(real Moon gravity + Lagrange points — all three cycles landed; see "Direction shift" below), and
+buildable/launchable ships (mass + 3D models, stations, landers) are a longer-term goal — so
 rocket-part building is no longer permanently off the table, though not yet built.
 
 ## Commands
@@ -19,7 +19,7 @@ Always use the venv interpreter. Bare `python` resolves to the global install, w
 dependencies and will fail with `ModuleNotFoundError: astropy` / `panda3d`.
 
 ```bash
-.venv/Scripts/python -m pytest tests/ -q                 # full suite (~211 tests)
+.venv/Scripts/python -m pytest tests/ -q                 # full suite (~259 tests)
 .venv/Scripts/python -m pytest tests/core -q             # physics core only (no graphics needed)
 .venv/Scripts/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/Scripts/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
@@ -63,21 +63,35 @@ one flyable vessel, maneuver editor) and the **solar viewer** (`--solar` — Sun
 from the ephemeris, no vessel). The title screen defers all scene construction to `_start_sim()`,
 called on Play; the update loop branches on `self.solar_system`.
 
-**Hybrid coast/burn flight** (`sim/world.py::World.step`): a vessel coasting (throttle 0) is
-propagated **analytically** (`core.propagate.propagate_kepler`, on rails — time-warp works); a
-vessel thrusting integrates **numerically** (`core.flight.integrate_powered`, RK4 + real rocket
-equation) and the render layer **forces time-warp to 1×** while any vessel thrusts (you can't RK4
-through 10⁶×). Attitude slews toward the SAS target every tick regardless. The integrator uses
-**operator splitting** — an exact rocket-equation velocity impulse per substep, then RK4 gravity
-drift — so Δv telescopes to `vₑ·ln(m₀/m_f)` and fuel hits exactly 0 (the naive "RK4 the fuel ODE
-with a switch" leaves residual fuel; that was a real bug fixed at review).
+**Hybrid coast/burn flight, now N-body** (`sim/world.py::World.step`): a vessel coasting (throttle 0)
+propagates under `core.nbody.propagate_earth_moon` (Earth fixed + circular Moon + indirect term,
+velocity-Verlet); a vessel thrusting uses `core.flight.integrate_powered_nbody` (same gravity model
++ real rocket equation). Both replaced the two-body `propagate_kepler` / `integrate_powered` when
+N-body 1b Part 2 landed. The integrator still uses **operator splitting** — an exact rocket-equation
+velocity impulse per substep, then a gravity drift — so Δv telescopes to `vₑ·ln(m₀/m_f)` and fuel
+hits exactly 0 (the naive "integrate the fuel ODE with a switch" leaves residual fuel; that was a
+real bug fixed at review). Attitude slews toward the SAS target every tick regardless. The render
+layer **forces time-warp to 1×** while any vessel thrusts, and otherwise **caps warp each frame via
+`core.nbody.max_safe_warp`** (numerical integration can't run at unbounded warp — the cap bounds
+per-frame sub-steps to a budget near bodies). The two-body `core/` (`propagate_kepler`,
+`integrate_powered`) is **not** deleted — it stays the analysis layer (transfers, intercept seeds)
+and on-rails body motion.
 
-> **In flux (N-body Part 2, not yet wired):** the tested N-body propagator (`core/nbody.py`:
-> `propagate_earth_moon`, velocity-Verlet) exists but `World.step` still uses `propagate_kepler` /
-> `integrate_powered`. Part 2 swaps the sandbox coast/powered to N-body, forward-integrates the
-> trajectory line, and caps warp via `core.nbody.max_safe_warp` (warp can't be unlimited under
-> numerical integration — it's bounded by a per-frame sub-step budget near bodies). Until then the
-> sandbox is still two-body on rails.
+> **N-body sandbox gotchas (all three cycles shipped):**
+> - **Closest-approach stays Keplerian** (`render/app.py`, `core/rendezvous.py`). N-body CA is
+>   *infeasible* as written: `closest_approach` propagates **both** trajectories with one propagator,
+>   and the target is the on-rails Moon — propagating the Moon under `earth_moon_accel` is singular
+>   (it sits at its own gravity source → NaN), and re-integrating the ship from base to each of 720
+>   coarse samples over a multi-day window is O(samples×window), which freezes the loop. Don't naively
+>   pass `propagate_earth_moon` here. The live N-body **trajectory line** is the visual source of truth;
+>   CA is an approximate aid, like the (also Keplerian) intercept/porkchop seeds. True N-body CA needs
+>   a trajectory-**sampling** implementation — a later cycle.
+> - **High-warp coast drift is expected.** `max_safe_warp` bounds per-frame sub-steps (budget 200), but
+>   in LEO that still permits ~1e5× with h≈29 s, so the coast drifts ~km/orbit at extreme warp. Accepted
+>   tradeoff of the N-body pivot (two-body was exact-on-rails at any warp).
+> - **Lagrange points:** `core.nbody.earth_fixed_lagrange_points(t)` computes L1–L5 in the **live**
+>   Earth-fixed frame (real inclined Moon geometry, indirect term) — distinct from the 1a barycentric
+>   `lagrange_points` (kept as a tested reference). Both coexist on purpose.
 
 ### The scale/precision problem (why `render/floating_origin.py` exists)
 
@@ -111,7 +125,7 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 
 | Area | Status |
 |---|---|
-| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete** (whole suite now **211 tests** green) |
+| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete** (whole suite now **259 tests** green) |
 | Continuous-thrust flight (rocket eq, navball, controls) | **complete** (`...plans/2026-06-24-continuous-thrust-flight.md`) |
 | Realistic Earth (textured, day/night, atmosphere) | **complete** (`...plans/2026-06-25-realistic-earth.md`) |
 | Starfield / skybox | **complete** (`render/skybox.py`; `...plans/2026-06-25-starfield.md`) |
@@ -123,13 +137,20 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 | Targeting + ΔV controls (click-to-target, working TARGET SAS, unlimited-ΔV cheat, porkchop intercept node) | **complete** (`render/targets.py`, `render/picking.py`, `core.optimize.intercept_node`; `...plans/2026-06-26-{deltav-controls,target-selection,intercept-node}.md`) |
 | **Restricted N-body engine core (Cycle 1a)** | **complete** (`core/nbody.py`: CR3BP, velocity-Verlet, Jacobi, Lagrange points; `...plans/2026-06-26-nbody-engine-core.md`) |
 | **N-body flyable — core physics (Cycle 1b Part 1)** | **complete** (`core/nbody.py` `earth_moon_accel`/`propagate_earth_moon`/`osculating_elements`/`max_safe_warp`, circular Moon; `...plans/2026-06-26-nbody-flyable-core.md`) |
-| Rest of Phase 6: docs, packaging | planned (later cycles) |
+| **N-body flyable — render integration (Cycle 1b Part 2)** | **complete** (`World.step` N-body, `integrate_powered_nbody`, forward-integrated trajectory line, warp cap, osculating HUD; CA stays Keplerian; `...plans/2026-06-26-nbody-render-integration.md`) |
+| **N-body Lagrange-point visualization (Cycle 1c)** | **complete** (`core.nbody.earth_fixed_lagrange_points`, `render.targets.LagrangePointTarget`, 5 markers/labels + live distance/rel-vel readout; `...plans/2026-06-27-nbody-lagrange-visualization.md`) |
+| **Graphical: ship view (3rd-person model + camera mode-switch)** | **complete** (`render/ship_model.py` procedural lit ship + plume; cross-fade marker↔model on zoom, `m` toggles map/ship framing; `...plans/2026-06-27-ship-view.md`) |
+| **Graphical 2a: HUD overlay readability** | **complete** (`render/hud/panel.py` self-sizing grouped panels, `core.attitude.heading_pitch`, `render/sas_panel.py` SAS chip + clickable mode buttons + orbital/target velocity readout; fixed the colliding top-left readouts; `...plans/2026-06-27-hud-overlay-readability.md`) |
+| **Graphical 2b: in-world readability + visual polish** | **complete** (`render/world_markers.py` pure apsis/fade/declutter math, `render/world_labels.py` carded billboard labels, Pe/Ap markers, camera easing in `render/camera_rig.py`, outlined/fading trajectory lines in `render/orbit_lines.py`; built directly with Codex, no separate spec) |
+| Rest of Phase 6: docs, packaging | planned (next) |
 
-**Direction shift (2026-06-26):** the project is pivoting to a **restricted N-body** model (ship as a
-massless test particle; Earth fixed + circular Moon + indirect/third-body term) so it becomes an
-*alternative* to KSP with real Lagrange points — **reversing** the earlier "stick with patched conics"
-decision. Built in cycles: 1a engine core ✅ → 1b flyable (Part 1 physics ✅, **Part 2 render
-integration = next**) → 1c Lagrange-point visualization. Spec: `docs/superpowers/specs/2026-06-26-nbody-flyable-design.md`.
+**Direction shift (2026-06-26), now fully landed:** the project pivoted to a **restricted N-body** model
+(ship as a massless test particle; Earth fixed + circular Moon + indirect/third-body term) so it became
+an *alternative* to KSP with real Lagrange points — **reversing** the earlier "stick with patched conics"
+decision. All three cycles are **complete**: 1a engine core ✅ → 1b flyable (Part 1 physics ✅, Part 2
+render integration ✅) → 1c Lagrange-point visualization ✅. The sandbox now flies under real Moon gravity
+with selectable Lagrange points. Specs: `docs/superpowers/specs/2026-06-26-nbody-flyable-design.md`,
+`2026-06-26-nbody-render-integration-design.md`, `2026-06-27-nbody-lagrange-visualization-design.md`.
 Longer-term vision (not yet started): buildable/launchable ships with mass + 3D models, stations,
 landers — vessels stay point masses for *propagation* (mass only affects ΔV). Two-body `core/`
 remains the analysis layer (transfers, intercept seeds) and on-rails body motion; it is NOT discarded.
@@ -188,10 +209,55 @@ End commit messages with the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic
   path MUST return `None`/fall back and never crash when offline or the bytes aren't a valid image
   (validate magic numbers — a CAPTCHA HTML page is not a JPEG). Texture source that works:
   three.js GitHub-raw maps; solarsystemscope is CAPTCHA-walled, ESO fails SSL here.
-- **Reviewing subagent work:** implementer subagents will quietly **loosen a test tolerance** to
-  make a red test pass (seen repeatedly: `<1e-6` → `<1.0`). Always re-derive the physics yourself
-  and restore the tight assertion; the bug is usually the implementation (or the plan's number),
-  not the tolerance.
+- **N-body coast tests must step at flight cadence.** `World.step` under N-body is *numerically
+  integrated*, not on-rails — a single giant `world.step(period)` is wildly inaccurate (≈14 km/orbit
+  in LEO), so don't assert tight closure on one big leap. Drive it the way the render loop does: many
+  small `dt` steps (a `_coast(world, total, dt)` helper). At flight cadence LEO coast tracks Kepler to
+  metres; one-period closure lands within the ~130 m *physical* Moon perturbation (converges as dt→0).
+  Exact two-body closure stays covered by `tests/core/test_propagate.py`.
+- **Reviewing subagent work cuts both ways.** Implementer subagents quietly **loosen a test tolerance**
+  to make a red test pass (`<1e-6` → `<1.0`) — re-derive the physics and restore the tight assertion;
+  the bug is usually the implementation (or the plan's number), not the tolerance. They also do
+  **out-of-scope edits** (e.g. adding guards to a shared, already-tested `core/` function to satisfy a
+  degenerate test input) — revert and keep the fix in the task's own file. And review **subagents are
+  sometimes too lenient** — one praised an out-of-scope change as a "strength." Always sanity-check the
+  reviewer's verdict against the diff yourself.
+- **Hyperbolic Kepler must converge on the Newton step, not |f|.** A ship deep in the Moon's well has
+  an extreme hyperbolic orbit *about Earth* (e≈73); Keplerian closest-approach over a multi-day window
+  then hits M≈2500, where `e·sinh(F)≈M` dwarfs 1.0 and the residual |f| floors at the float64 ULP
+  (~1e-12) — never below an absolute tol, so Newton loops all 50 iters and raises (this crashed the
+  render loop while shrinking a lunar orbit). Converge on `abs(dF) <= tol*(1+abs(F))` instead. The
+  elliptic solver is immune (its M is bounded to `[0, 2π)`).
+- **Render trajectory lines are the main per-frame cost — throttle, don't naively cache.** Each
+  `_sample_trajectory` call (`render/app.py`) forward-integrates N-body (256-pt Verlet loop) *and*
+  rebuilds a `LineSegs`; doing it every frame for the live orbit line **and** the post-burn preview
+  was the maneuver-plotting lag. A change-detection cache can't save the preview: it re-applies the
+  burn at the *current* state ("burn now"), which sweeps ~128 m/frame in LEO, so the orbit
+  legitimately changes every frame. Fix is a **real-time throttle** (`PREVIEW_THROTTLE_S`, 5 Hz —
+  same pattern as the 0.5 s closest-approach recompute), not a cache. Keep the live line cheap
+  (1 orbit, 256 pts); the preview draws 2 orbits via `_sample_trajectory(..., n_orbits=2, n_pts=512)`.
+  Don't reintroduce an unthrottled per-frame trajectory rebuild.
+- **Subagent spend-cap fallback.** A monthly spend cap intermittently blocks subagent dispatch (returns
+  ~0 tokens / "monthly spend limit"). When it hits, fall back to controller-inline implementation/review
+  and **flag the missing independent review** in the progress ledger so it can be redone before merge.
+- **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both
+  current+target (initial framing / load); `move_to_distance` / `zoom` / `orbit` set only the *target*,
+  and `CameraRig.update(dt)` (called once at the top of `_update`) eases current→target each frame
+  (log-space zoom, shortest-arc angle — pure helpers `smoothing_alpha`/`smooth_log_distance`/`smooth_angle`,
+  unit-tested). Read `rig.target_distance_m` (not `distance_m`) for "where the user asked to be" — e.g.
+  the `m` ship-view toggle classifies and remembers framings off the target, so easing in flight doesn't
+  flip it. Don't write `rig.azimuth`/`distance_m` directly from input handlers; go through the targets.
+- **In-world marker readability is split pure/impure on purpose.** `render/world_markers.py` is pure
+  numpy (apsis sub-sample interpolation, smoothstep `distance_fade`, priority `declutter_indices`) and
+  unit-tested; `render/world_labels.py` builds carded billboard labels (panda imports inside functions).
+  `app._update_marker_readability` fades distant cues and declutters overlapping labels by navigation
+  priority each frame; Pe/Ap world positions are cached in `_rebuild_trajectory` (idx 0, bound orbits
+  only — hidden when `e≥1`) and re-placed via the floating origin in `_place_apsis_markers`.
+- **Trajectory lines are now outlined + depth-faded** (`render/orbit_lines.py`): `build_orbit_node`
+  draws a dark wide halo under-stroke + the colored stroke, both depth-tested with depth-write off, and
+  `path_fade_alphas` (pure) ramps alpha by cumulative path length (present bright, future recedes). Pass
+  `fade_minimum=1.0` to disable the fade (the reference Moon orbit does this). Shared colors live as
+  module constants (`TRAJECTORY_COLOR`, `MANEUVER_COLOR`, `REFERENCE_ORBIT_COLOR`).
 
 ## Platform notes
 

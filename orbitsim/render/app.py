@@ -27,7 +27,12 @@ from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.orbit_lines import sample_orbit_points, build_orbit_node
+from orbitsim.render.orbit_lines import (
+    MANEUVER_COLOR,
+    REFERENCE_ORBIT_COLOR,
+    build_orbit_node,
+    sample_orbit_points,
+)
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
@@ -37,6 +42,16 @@ from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
 
 _global_clock = ClockObject.get_global_clock()
+
+
+def _maneuver_preview_key(node, scheduled_epoch_s):
+    """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
+    return (
+        node.dv_prograde_mps,
+        node.dv_normal_mps,
+        node.dv_radial_mps,
+        scheduled_epoch_s,
+    )
 
 
 class OrbitApp(ShowBase):
@@ -51,6 +66,13 @@ class OrbitApp(ShowBase):
         self._sim_started = False
         self._title_nodes = []
         self._build_title_screen()
+
+    def destroy(self) -> None:
+        executor = getattr(self, "_preview_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+            self._preview_executor = None
+        super().destroy()
 
     # ------------------------------------------------------------------ title screen
 
@@ -235,7 +257,14 @@ class OrbitApp(ShowBase):
         self._traj_state_cache = [None for _ in world.vessels]  # (StateVector, scale) per vessel
 
         self._preview_np = None
-        self._preview_recompute_t = 0.0  # monotonic time of last preview rebuild (throttle)
+        self._preview_submit_t = 0.0
+        self._preview_future = None
+        self._preview_future_key = None
+        if not self.solar_system:
+            from concurrent.futures import ThreadPoolExecutor
+            self._preview_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="orbit-preview"
+            )
         self._porkchop_card = None
         if self.solar_system:
             self._build_planets()
@@ -248,6 +277,11 @@ class OrbitApp(ShowBase):
             )
             from orbitsim.render.navball import Navball
             self.navball = Navball(self)
+            from orbitsim.render.sas_panel import SasPanel, VelocityReadout
+            self.sas_panel = SasPanel(
+                self, on_set_mode=self._set_sas, on_toggle=self._toggle_sas
+            )
+            self.vel_readout = VelocityReadout(self, lambda: self.hud.units)
 
             # Targetable bodies (Moon today; ships later). Click a marker to select.
             from orbitsim.render.targets import MoonTarget, LagrangePointTarget
@@ -261,6 +295,37 @@ class OrbitApp(ShowBase):
             self._ca_abs_epoch = 0.0
             self._ca_marker_ship = None
             self._ca_marker_moon = None
+            self._ca_label_positions = {"ship": None, "target": None}
+            from orbitsim.render.world_labels import build_labeled_marker, build_world_label
+            self._ca_labels = {
+                "ship": build_world_label(
+                    self.render, "CA: SHIP", color=(1.0, 0.55, 0.25, 1.0), scale=11.0
+                ),
+                "target": build_world_label(
+                    self.render, "CA: TARGET", color=(1.0, 0.82, 0.30, 1.0), scale=11.0
+                ),
+            }
+            for label in self._ca_labels.values():
+                label.hide()
+            self._target_label = build_world_label(
+                self.render, "TARGET", color=(1.0, 0.35, 0.95, 1.0), scale=12.0
+            )
+            self._target_label.hide()
+            self._target_label_position = None
+            self._apsis_positions = {"PE": None, "AP": None}
+            self._apsis_nps = {}
+            self._apsis_labels = {}
+            for name, color in (
+                ("PE", (0.30, 1.0, 0.58, 1.0)),
+                ("AP", (0.38, 0.68, 1.0, 1.0)),
+            ):
+                marker, label = build_labeled_marker(
+                    self.render, name, color=color, marker_scale=5.5, label_scale=11.0
+                )
+                marker.hide()
+                label.hide()
+                self._apsis_nps[name] = marker
+                self._apsis_labels[name] = label
             self._moon_np = make_uv_sphere(1.0, 12, 16)
             self._moon_np.reparent_to(self.render)
             self._moon_np.set_color(0.7, 0.7, 0.72, 1.0)
@@ -271,6 +336,7 @@ class OrbitApp(ShowBase):
             # Lagrange-point markers (constant on-screen size) + billboard labels.
             self._lagrange_nps = []
             self._lagrange_labels = []
+            self._lagrange_positions = {}
             for name in ("L1", "L2", "L3", "L4", "L5"):
                 mk = make_uv_sphere(1.0, 8, 12)
                 mk.reparent_to(self.render)
@@ -278,19 +344,10 @@ class OrbitApp(ShowBase):
                 mk.set_light_off()
                 mk.set_scale(4.0)
                 self._lagrange_nps.append(mk)
-                tn = TextNode(f"label_{name}")
-                tn.set_text(name)
-                tn.set_text_color(0.5, 1.0, 0.9, 1.0)
-                lbl = self.render.attach_new_node(tn)
-                lbl.set_scale(12.0)
-                lbl.set_billboard_point_eye()
-                lbl.set_light_off()
+                lbl = build_world_label(
+                    self.render, name, color=(0.5, 1.0, 0.9, 1.0), scale=12.0
+                )
                 self._lagrange_labels.append(lbl)
-            self._target_text = OnscreenText(
-                text="", pos=(0.08, -0.48), scale=0.045, fg=(1.0, 0.7, 0.4, 1),
-                shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
-            )
-
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
         self.starfield.reparent_to(self.render)
@@ -340,13 +397,10 @@ class OrbitApp(ShowBase):
                     marker.set_color(1, 1, 1, 1)
             self._planet_nps.append(marker)
             # 3D billboard label on render (tracks the marker, faces the camera).
-            tn = TextNode(f"label_{body.name}")
-            tn.set_text(body.name)
-            tn.set_text_color(0.8, 0.85, 1.0, 1.0)
-            label = self.render.attach_new_node(tn)
-            label.set_scale(15.0)
-            label.set_billboard_point_eye()
-            label.set_light_off()
+            from orbitsim.render.world_labels import build_world_label
+            label = build_world_label(
+                self.render, body.name, color=(0.8, 0.85, 1.0, 1.0), scale=15.0
+            )
             self._planet_labels.append(label)
 
     # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
@@ -368,6 +422,7 @@ class OrbitApp(ShowBase):
         mouse springs the thumb back to center and the value stops changing.
         """
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
+        self._dv_line = self._node_line = self._target_line = ""
         self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self._node_marker_np = None
         self._dv_value_text = {}
@@ -406,21 +461,7 @@ class OrbitApp(ShowBase):
             command=self._execute_burn,
             parent=self.a2dBottomRight,
         )
-        self._dv_readout = OnscreenText(
-            text="",
-            pos=(0.08, -0.36),
-            scale=0.045,
-            fg=(1.0, 0.4, 1.0, 1),
-            shadow=(0, 0, 0, 1),
-            align=TextNode.ALeft,
-            mayChange=True,
-            parent=self.a2dTopLeft,
-        )
         # Scheduled-node controls: step time-to-node, jump to next apsis, clear.
-        self._node_ttn_text = OnscreenText(
-            text="", pos=(0.08, -0.42), scale=0.045, fg=(0.4, 1.0, 1.0, 1),
-            shadow=(0, 0, 0, 1), align=TextNode.ALeft, mayChange=True, parent=self.a2dTopLeft,
-        )
         node_btns = [
             ("Node -", lambda: self._step_node_time(-self.NODE_TIME_STEP_S)),
             ("Node +", lambda: self._step_node_time(self.NODE_TIME_STEP_S)),
@@ -596,7 +637,13 @@ class OrbitApp(ShowBase):
                 np_.remove_node()
                 setattr(self, attr, None)
         self._ca = None
-        self._target_text.setText("Target: none")
+        self._target_label_position = None
+        self._target_label.hide()
+        for key, label in self._ca_labels.items():
+            self._ca_label_positions[key] = None
+            label.hide()
+        self._target_line = ""
+        self._sync_maneuver_hud()
 
     def _ca_marker(self, attr, color):
         """Lazily create/reuse a closest-approach marker NodePath."""
@@ -607,8 +654,70 @@ class OrbitApp(ShowBase):
             np_.set_color(*color)
             np_.set_light_off()
             np_.set_scale(5.0)
+            from panda3d.core import TransparencyAttrib
+            np_.set_transparency(TransparencyAttrib.M_alpha)
+            np_.set_depth_write(False)
             setattr(self, attr, np_)
         return np_
+
+    def _place_apsis_markers(self) -> None:
+        """Place cached Pe/Ap cues in the current floating-origin frame."""
+        for name in ("PE", "AP"):
+            world_pos = self._apsis_positions[name]
+            marker = self._apsis_nps[name]
+            label = self._apsis_labels[name]
+            if world_pos is None:
+                marker.hide()
+                label.hide()
+                continue
+            rx, ry, rz = self.transform.to_render(world_pos)
+            marker.set_pos(rx, ry, rz)
+            label.set_pos(rx, ry, rz + 7.0)
+            marker.show()
+
+    def _update_marker_readability(self, focus_m) -> None:
+        """Fade distant cues and declutter their labels by navigation priority."""
+        from panda3d.core import TransparencyAttrib
+        from orbitsim.render.world_markers import declutter_indices, distance_fade
+
+        candidates = []
+
+        def add(label, marker, world_pos, priority, minimum=0.22):
+            if world_pos is not None:
+                candidates.append((label, marker, np.asarray(world_pos), priority, minimum))
+
+        add(self._target_label, None, self._target_label_position, 100, 0.55)
+        add(self._ca_labels["ship"], self._ca_marker_ship,
+            self._ca_label_positions["ship"], 90, 0.40)
+        add(self._ca_labels["target"], self._ca_marker_moon,
+            self._ca_label_positions["target"], 85, 0.40)
+        add(self._apsis_labels["PE"], self._apsis_nps["PE"],
+            self._apsis_positions["PE"], 70)
+        add(self._apsis_labels["AP"], self._apsis_nps["AP"],
+            self._apsis_positions["AP"], 65)
+        for name, marker, label in zip(
+            ("L1", "L2", "L3", "L4", "L5"), self._lagrange_nps, self._lagrange_labels
+        ):
+            add(label, marker, self._lagrange_positions.get(name), 20)
+
+        points_px = [self._marker_px(item[2]) for item in candidates]
+        visible = declutter_indices(
+            points_px, [item[3] for item in candidates], min_separation_px=52.0
+        )
+        near = max(self.rig.distance_m * 2.0, 1.0)
+        far = max(self.rig.distance_m * 18.0, near + 1.0)
+        for index, (label, marker, world_pos, _priority, minimum) in enumerate(candidates):
+            alpha = distance_fade(
+                float(np.linalg.norm(world_pos - focus_m)), near, far, minimum=minimum
+            )
+            label.set_alpha_scale(alpha)
+            if index in visible:
+                label.show()
+            else:
+                label.hide()
+            if marker is not None and not marker.is_empty():
+                marker.set_transparency(TransparencyAttrib.M_alpha)
+                marker.set_alpha_scale(alpha)
 
     def _refresh_readout(self) -> None:
         import math
@@ -616,9 +725,15 @@ class OrbitApp(ShowBase):
         # One budget: the fuel-derived delta-V (rocket equation), shared with flight.
         budget = self.world.vessels[0].delta_v_remaining
         left = "∞" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
-        self._dv_readout.setText(
+        self._dv_line = (
             f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
+            if node.magnitude_mps > 0.0
+            else ""
         )
+        self._sync_maneuver_hud()
+
+    def _sync_maneuver_hud(self) -> None:
+        self.hud.set_maneuver(self._dv_line, self._node_line, self._target_line)
 
     UNLIMITED_RESERVE_KG = 1000.0   # min propellant kept while unlimited (so thrust works at empty)
 
@@ -673,8 +788,8 @@ class OrbitApp(ShowBase):
     MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
 
     def _setup_input(self) -> None:
-        self.accept("wheel_up", lambda: self.rig.zoom(0.8))
-        self.accept("wheel_down", lambda: self.rig.zoom(1.25))
+        self.accept("wheel_up", lambda: self.rig.zoom(0.86))
+        self.accept("wheel_down", lambda: self.rig.zoom(1.0 / 0.86))
         # Right-click + drag orbits the camera (both sandbox and solar modes).
         self._rmb_down = False
         self._last_mouse = None
@@ -718,13 +833,15 @@ class OrbitApp(ShowBase):
         from orbitsim.render.ship_model import SHIP_VIEW_NEAR_M
         # "In ship view" means already in close framing; anything farther (incl. a
         # mid-fade zoom) counts as the map side and is remembered as such.
-        in_ship_view = self.rig.distance_m <= SHIP_VIEW_NEAR_M
+        in_ship_view = self.rig.target_distance_m <= SHIP_VIEW_NEAR_M
         if in_ship_view:
-            self._ship_distance_m = self.rig.distance_m       # remember ship framing
-            self.rig.set_distance(getattr(self, "_map_distance_m", 2.0e7))
+            self._ship_distance_m = self.rig.target_distance_m  # remember ship framing
+            self.rig.move_to_distance(getattr(self, "_map_distance_m", 2.0e7))
         else:
-            self._map_distance_m = self.rig.distance_m        # remember map framing
-            self.rig.set_distance(getattr(self, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M))
+            self._map_distance_m = self.rig.target_distance_m  # remember map framing
+            self.rig.move_to_distance(
+                getattr(self, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M)
+            )
 
     def _build_warp_controls(self) -> None:
         """Top-center on-screen warp control: slower / faster buttons + readout.
@@ -922,6 +1039,53 @@ class OrbitApp(ShowBase):
             pts[i] = cur.r
         return pts
 
+    def _sample_preview(self, state, scale):
+        """Compute render-space preview points without touching Panda3D scene objects."""
+        points = self._sample_trajectory(
+            state, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2
+        )
+        return [tuple(point / scale) for point in points]
+
+    def _update_maneuver_preview(self, node, vessel, now_real) -> None:
+        """Poll/submit preview work while keeping N-body integration off the render thread."""
+        preview_key = _maneuver_preview_key(node, self._node_epoch_s)
+        future = self._preview_future
+        if future is not None and future.done():
+            points = future.result()
+            completed_key = self._preview_future_key
+            self._preview_future = None
+            self._preview_future_key = None
+            if preview_key == completed_key and node.magnitude_mps > 0.0:
+                if self._preview_np is not None:
+                    self._preview_np.remove_node()
+                self._preview_np = build_orbit_node(points, color=MANEUVER_COLOR, thickness=2.75)
+                self._preview_np.reparent_to(self._orbit_frame)
+
+        if node.magnitude_mps <= 0.0:
+            if self._preview_future is not None:
+                self._preview_future_key = None
+                if self._preview_future.cancel():
+                    self._preview_future = None
+            if self._preview_np is not None:
+                self._preview_np.remove_node()
+                self._preview_np = None
+            return
+
+        if (
+            self._preview_future is None
+            and (
+                self._preview_np is None
+                or now_real - self._preview_submit_t > self.PREVIEW_THROTTLE_S
+            )
+        ):
+            post_burn = apply_maneuver(vessel.state, node)
+            scale = self.transform.scale_m_per_unit
+            self._preview_submit_t = now_real
+            self._preview_future_key = preview_key
+            self._preview_future = self._preview_executor.submit(
+                self._sample_preview, post_burn, scale
+            )
+
     def _rebuild_trajectory(self, idx, vessel) -> None:
         """Rebuild the vessel trajectory line if state or zoom changed beyond tolerance.
 
@@ -938,15 +1102,29 @@ class OrbitApp(ShowBase):
                 if pos_ok and vel_ok:
                     return
         self._traj_state_cache[idx] = (state, scale)
-        pts = [tuple(p / scale) for p in self._sample_trajectory(state)]
+        world_pts = self._sample_trajectory(state)
+        pts = [tuple(p / scale) for p in world_pts]
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()
         node = build_orbit_node(pts)
         node.reparent_to(self._orbit_frame)
         self.orbit_nps[idx] = node
+        if idx == 0:
+            try:
+                elem = state_to_elements(state)
+                if elem.e >= 1.0:
+                    raise ValueError("unbound trajectory has no apoapsis")
+                from orbitsim.render.world_markers import apsis_points_on_path
+                pe_point, ap_point = apsis_points_on_path(world_pts)
+                self._apsis_positions["PE"] = pe_point
+                self._apsis_positions["AP"] = ap_point
+            except ValueError:
+                self._apsis_positions["PE"] = None
+                self._apsis_positions["AP"] = None
 
     def _update(self, task):
         real_dt = _global_clock.get_dt()
+        self.rig.update(real_dt)
 
         if self.solar_system:
             self.clock.advance(real_dt)
@@ -997,7 +1175,9 @@ class OrbitApp(ShowBase):
             if self._moon_orbit_np is not None:
                 self._moon_orbit_np.remove_node()
             moon_pts = [tuple(p / scale) for p in sample_orbit_points(MOON_ORBIT, n=256)]
-            self._moon_orbit_np = build_orbit_node(moon_pts, color=(0.5, 0.5, 0.55, 1.0))
+            self._moon_orbit_np = build_orbit_node(
+                moon_pts, color=REFERENCE_ORBIT_COLOR, thickness=1.4, fade_minimum=1.0
+            )
             self._moon_orbit_np.reparent_to(self._orbit_frame)
 
         # Real Sun direction (Earth->Sun) drives the day/night terminator + sun light.
@@ -1021,6 +1201,7 @@ class OrbitApp(ShowBase):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
             self._rebuild_trajectory(idx, vessel)
+        self._place_apsis_markers()
 
         # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
         if self._ship_model_np is not None:
@@ -1060,36 +1241,17 @@ class OrbitApp(ShowBase):
             ttn = None
             node = self._current_node()
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
-        # Post-burn trajectory preview (forward-integrated under N-body, same as the live line).
-        # Throttled like the closest-approach recompute below: the 256-step N-body integration +
-        # LineSegs rebuild is the heavy per-frame cost that made plotting a node laggy. The preview
-        # applies the burn at the *current* state ("burn now"), which the ship sweeps every frame
-        # (~128 m/frame in LEO at 1x), so the post-burn orbit genuinely changes each frame and no
-        # change-detection cache can skip it. Refreshing a few times a second instead of every
-        # frame keeps it visually live while cutting the cost ~90%.
-        if node.magnitude_mps > 0.0:
-            import time as _time
-            now_real = _time.monotonic()
-            if self._preview_np is None or now_real - self._preview_recompute_t > self.PREVIEW_THROTTLE_S:
-                self._preview_recompute_t = now_real
-                post_burn = apply_maneuver(v0.state, node)
-                # Show 2 full post-burn orbits (512 pts keeps ~256/orbit resolution; the wider
-                # cap lets both loops of a large planned ellipse draw without truncation).
-                ppts = [tuple(p / self.transform.scale_m_per_unit)
-                        for p in self._sample_trajectory(
-                            post_burn, n_pts=512, max_horizon_s=30 * 86400, n_orbits=2)]
-                if self._preview_np is not None:
-                    self._preview_np.remove_node()
-                self._preview_np = build_orbit_node(ppts, color=(1.0, 0.2, 1.0, 1.0))
-                self._preview_np.reparent_to(self._orbit_frame)
-        elif self._preview_np is not None:
-            self._preview_np.remove_node()
-            self._preview_np = None
+        # N-body preview sampling is CPU-heavy, so it runs on one worker. Only the cheap
+        # LineSegs swap happens here on the render thread when a result is ready.
+        import time as _time
+        self._update_maneuver_preview(node, v0, _time.monotonic())
         # Node marker at the node's predicted position on the orbit (held at the vessel
         # through the brief execute window once the node is due).
         if self._node_epoch_s is not None and ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
-            from orbitsim.core.nbody import propagate_earth_moon
-            npos = propagate_earth_moon(v0.state, max(0.0, ttn)).r
+            # Match the marker to the same planned (Keplerian-to-node) state used to seed
+            # the post-burn preview. Re-integrating a distant node under N-body every frame
+            # can take hundreds of milliseconds and is redundant.
+            npos = apply_maneuver(v0.state, node).r
             mx, my, mz = self.transform.to_render(npos)
             if self._node_marker_np is None:
                 self._node_marker_np = make_uv_sphere(1.0, 8, 12)
@@ -1111,13 +1273,23 @@ class OrbitApp(ShowBase):
             else:
                 mm, ss = divmod(int(ttn), 60)
                 label = f"in T-{mm:02d}:{ss:02d}"
-            self._node_ttn_text.setText(f"Node {label}   dV {node.magnitude_mps:,.1f} m/s")
+            self._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
         else:
-            self._node_ttn_text.setText("")
+            self._node_line = ""
+        self._sync_maneuver_hud()
 
         # Moon position this frame.
         moon_now = moon_state_at(self.clock.sim_time_s)
         self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
+        if self._target is not None:
+            target_now = self._target.state_at(self.clock.sim_time_s).r
+            self._target_label_position = np.asarray(target_now).copy()
+            tx, ty, tz = self.transform.to_render(target_now)
+            self._target_label.node().set_text(f"TARGET: {self._target.name.upper()}")
+            self._target_label.set_pos(tx, ty, tz + 9.0)
+        else:
+            self._target_label_position = None
+            self._target_label.hide()
         # Lagrange points this frame (rotate with the Moon).
         from orbitsim.core.nbody import earth_fixed_lagrange_points
         lps = earth_fixed_lagrange_points(self.clock.sim_time_s)
@@ -1126,6 +1298,7 @@ class OrbitApp(ShowBase):
             rx, ry, rz = self.transform.to_render(lps[name])
             mk.set_pos(rx, ry, rz)
             lbl.set_pos(rx, ry, rz + 6.0)
+            self._lagrange_positions[name] = np.asarray(lps[name]).copy()
         # Closest approach to the current target (throttled recompute). Both the ship
         # trajectory and the target are referenced to the same base epoch (the node epoch
         # when a burn is planned, else now) so they are compared at matching absolute times;
@@ -1134,12 +1307,17 @@ class OrbitApp(ShowBase):
             # Lagrange-point target: live distance + relative speed, no closest-approach
             # prediction (an L-point is not Keplerian — you fly to it and null relative velocity).
             self._ca = None
+            for key, label in self._ca_labels.items():
+                self._ca_label_positions[key] = None
+                label.hide()
             L = self._target.state_at(self.clock.sim_time_s)
             dist = float(np.linalg.norm(v0.state.r - L.r))
             relsp = float(np.linalg.norm(v0.state.v - L.v))
-            self._target_text.setText(
+            self._target_line = (
                 f"Target: {self._target.name}   dist {dist / 1000:,.0f} km"
-                f"   rel {relsp:,.0f} m/s")
+                f"   rel {relsp:,.0f} m/s"
+            )
+            self._sync_maneuver_hud()
         elif self._target is not None:
             import time as _time
             now_real = _time.monotonic()
@@ -1174,15 +1352,27 @@ class OrbitApp(ShowBase):
                 *self.transform.to_render(ship_at))
             self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
                 *self.transform.to_render(tgt_at))
+            self._ca_label_positions["ship"] = np.asarray(ship_at).copy()
+            self._ca_label_positions["target"] = np.asarray(tgt_at).copy()
+            for key, world_pos in self._ca_label_positions.items():
+                rx, ry, rz = self.transform.to_render(world_pos)
+                label = self._ca_labels[key]
+                label.node().set_text(
+                    "CA: SHIP" if key == "ship" else f"CA: {self._target.name.upper()}"
+                )
+                label.set_pos(rx, ry, rz + 8.0)
             countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
             mm, ss = divmod(int(countdown), 60)
-            self._target_text.setText(
+            self._target_line = (
                 f"Target: {self._target.name}   CA T-{mm:02d}:{ss:02d}"
-                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s")
+                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
+            )
+            self._sync_maneuver_hud()
 
         self._apply_mouse_orbit()
         self._update_starfield()
         self.rig.apply()
+        self._update_marker_readability(focus)
 
         v0 = self.world.vessels[0]
         # Osculating elements about the dominant body (Earth, or the Moon inside its SOI).
@@ -1202,7 +1392,6 @@ class OrbitApp(ShowBase):
         ref_radius = MOON_BODY.radius_m if moon_dominant else self.world.central.radius_m
         self.hud.update(
             sim_time_s=self.clock.sim_time_s,
-            warp=self.clock.warp,
             altitude_m=v0.state.r_mag - self.world.central.radius_m,
             speed_mps=v0.state.v_mag,
             periapsis_m=rp - ref_radius,
@@ -1225,6 +1414,14 @@ class OrbitApp(ShowBase):
             warp_locked=self.world.any_thrusting(),
         )
         self.navball.update(orientation_q=v0.orientation, state=v0.state, target_pos=target_pos)
+        from orbitsim.core.attitude import heading_pitch
+        heading, pitch = heading_pitch(v0.orientation, v0.state)
+        self.sas_panel.update(v0.sas_mode, heading, pitch)
+        target_rel_speed = None
+        if self._target is not None:
+            target_velocity = self._target.state_at(self.clock.sim_time_s).v
+            target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
+        self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_warp_readout()
         return task.cont
 

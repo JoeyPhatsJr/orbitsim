@@ -26,6 +26,30 @@ def zoom_to_scale(distance_m: float) -> float:
 import math
 
 
+def smoothing_alpha(dt_s: float, response_s: float) -> float:
+    """Frame-rate-independent exponential response in ``[0, 1]``."""
+    if dt_s <= 0.0:
+        return 0.0
+    if response_s <= 0.0:
+        return 1.0
+    return 1.0 - math.exp(-dt_s / response_s)
+
+
+def smooth_log_distance(current_m: float, target_m: float, alpha: float) -> float:
+    """Interpolate zoom in log space so near and map scales feel consistent."""
+    a = max(0.0, min(1.0, alpha))
+    lo = math.log(max(MIN_DISTANCE_M, current_m))
+    hi = math.log(max(MIN_DISTANCE_M, target_m))
+    return math.exp(lo + (hi - lo) * a)
+
+
+def smooth_angle(current_rad: float, target_rad: float, alpha: float) -> float:
+    """Interpolate an angle along its shortest wrapped arc."""
+    a = max(0.0, min(1.0, alpha))
+    delta = (target_rad - current_rad + math.pi) % (2.0 * math.pi) - math.pi
+    return current_rad + delta * a
+
+
 class CameraRig:
     """Orbit camera: azimuth/elevation around a focus, log zoom drives scale.
 
@@ -42,22 +66,46 @@ class CameraRig:
         self.distance_m = 2.0e7
         self.azimuth = 0.0
         self.elevation = 0.3
+        self.target_distance_m = self.distance_m
+        self.target_azimuth = self.azimuth
+        self.target_elevation = self.elevation
+        self.zoom_response_s = 0.16
+        self.orbit_response_s = 0.10
         self._apply_scale()
 
     def _apply_scale(self) -> None:
         self.transform.scale_m_per_unit = zoom_to_scale(self.distance_m)
 
     def set_distance(self, distance_m: float) -> None:
+        """Set current and target distance immediately (initial framing/load)."""
         self.distance_m = clamp_distance(distance_m)
+        self.target_distance_m = self.distance_m
         self._apply_scale()
+
+    def move_to_distance(self, distance_m: float) -> None:
+        """Set a smoothed destination distance (interactive framing)."""
+        self.target_distance_m = clamp_distance(distance_m)
 
     def zoom(self, factor: float) -> None:
         """Multiply camera distance (factor < 1 zooms in, > 1 zooms out)."""
-        self.set_distance(self.distance_m * factor)
+        self.move_to_distance(self.target_distance_m * factor)
 
     def orbit(self, d_azimuth: float, d_elevation: float) -> None:
-        self.azimuth += d_azimuth
-        self.elevation = max(-1.5, min(1.5, self.elevation + d_elevation))
+        self.target_azimuth += d_azimuth
+        self.target_elevation = max(
+            -1.5, min(1.5, self.target_elevation + d_elevation)
+        )
+
+    def update(self, dt_s: float) -> None:
+        """Ease current camera state toward input targets."""
+        zoom_a = smoothing_alpha(dt_s, self.zoom_response_s)
+        orbit_a = smoothing_alpha(dt_s, self.orbit_response_s)
+        self.distance_m = smooth_log_distance(
+            self.distance_m, self.target_distance_m, zoom_a
+        )
+        self.azimuth = smooth_angle(self.azimuth, self.target_azimuth, orbit_a)
+        self.elevation += (self.target_elevation - self.elevation) * orbit_a
+        self._apply_scale()
 
     def apply(self) -> None:
         """Place the camera in render space (focus is always render origin)."""

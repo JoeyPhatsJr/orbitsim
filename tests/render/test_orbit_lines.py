@@ -1,6 +1,12 @@
 """Tests for orbit-line sampling (pure math)."""
 import numpy as np
-from orbitsim.render.orbit_lines import sample_orbit_points, orbit_shape_changed
+import pytest
+from orbitsim.render.orbit_lines import (
+    build_orbit_node,
+    orbit_shape_changed,
+    path_fade_alphas,
+    sample_orbit_points,
+)
 from orbitsim.core.elements import KeplerianElements
 from orbitsim.core.constants import MU_EARTH
 
@@ -65,3 +71,18 @@ def test_hyperbola_sample_finite():
     pts = sample_orbit_points(elem, n=100)
     assert pts.shape == (100, 3)
     assert np.isfinite(pts).all()
+
+
+def test_rendered_line_has_halo_and_color_strokes():
+    node = build_orbit_node([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)])
+    assert node.get_num_children() == 2
+    assert node.get_child(0).name == "trajectory_halo"
+    assert node.get_child(1).name == "trajectory_color"
+
+
+def test_path_fade_tracks_distance_not_sample_count():
+    points = [(0.0, 0.0, 0.0), (9.0, 0.0, 0.0), (10.0, 0.0, 0.0)]
+    alpha = path_fade_alphas(points, minimum=0.25)
+    assert alpha[0] == 1.0
+    assert alpha[-1] == pytest.approx(0.25)
+    assert alpha[1] < 0.5  # already 90% of the path despite being the middle sample
