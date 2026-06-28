@@ -1,6 +1,6 @@
 """Tests for procedural sphere geometry."""
 from panda3d.core import GeomVertexReader
-from orbitsim.render.geometry import make_uv_sphere
+from orbitsim.render.geometry import make_uv_sphere, make_wireframe_sphere
 
 
 def _vdata(np_):
@@ -23,3 +23,14 @@ def test_uv_sphere_corner_texcoords():
     r = GeomVertexReader(vd, "texcoord")
     u, v = r.get_data2()
     assert abs(u - 0.0) < 1e-6 and abs(v - 1.0) < 1e-6
+
+
+def test_make_wireframe_sphere_is_unit_radius_nonempty():
+    np_ = make_wireframe_sphere()
+    assert not np_.is_empty()
+    lo, hi = np_.get_tight_bounds()
+    # Unit sphere: extents reach ~+/-1 on each axis.
+    for hicomp in (hi.x, hi.y, hi.z):
+        assert 0.9 <= hicomp <= 1.0001
+    for locomp in (lo.x, lo.y, lo.z):
+        assert -1.0001 <= locomp <= -0.9
