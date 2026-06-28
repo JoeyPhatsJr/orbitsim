@@ -128,31 +128,42 @@ def osculating_elements(state, t_s):
 
 
 # ---------------------------------------------------------------------------
-# Solar-system extension: Sun + inner planets as geocentric perturbers.
+# Solar-system extension: Sun + all planets as geocentric perturbers.
 # ---------------------------------------------------------------------------
-from orbitsim.core.constants import MU_SUN, MU_MERCURY, MU_VENUS, MU_MARS
+from orbitsim.core.constants import (
+    MU_SUN, MU_MERCURY, MU_VENUS, MU_MARS,
+    MU_JUPITER, MU_SATURN, MU_URANUS, MU_NEPTUNE,
+)
 from orbitsim.core.planets import (
     sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
+    jupiter_state_at, saturn_state_at, uranus_state_at, neptune_state_at,
     EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
+    JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
 )
 from orbitsim.core.bodies import SUN as SUN_BODY, MERCURY as MERCURY_BODY
 from orbitsim.core.bodies import VENUS as VENUS_BODY, MARS as MARS_BODY, EARTH as EARTH_BODY
+from orbitsim.core.bodies import JUPITER as JUPITER_BODY, SATURN as SATURN_BODY
+from orbitsim.core.bodies import URANUS as URANUS_BODY, NEPTUNE as NEPTUNE_BODY
 
 _SOLAR_PERTURBERS = [
     (sun_state_at, MU_SUN),
     (mercury_state_at, MU_MERCURY),
     (venus_state_at, MU_VENUS),
     (mars_state_at, MU_MARS),
+    (jupiter_state_at, MU_JUPITER),
+    (saturn_state_at, MU_SATURN),
+    (uranus_state_at, MU_URANUS),
+    (neptune_state_at, MU_NEPTUNE),
 ]
 
 
 def solar_system_accel(r_m, t_s):
-    """Geocentric N-body acceleration [m/s^2]: central Earth + Moon + Sun + inner planets.
+    """Geocentric N-body acceleration [m/s^2]: central Earth + Moon + Sun + all planets.
 
-    Extends earth_moon_accel with the Sun and Mercury/Venus/Mars as third-body
-    perturbers. Each gets a direct term and an indirect term (the indirect term
-    accounts for the non-inertial geocentric frame — Earth is accelerated by
-    every body, and the frame tracks Earth).
+    Extends earth_moon_accel with the Sun and all seven other planets as
+    third-body perturbers. Each gets a direct term and an indirect term (the
+    indirect term accounts for the non-inertial geocentric frame — Earth is
+    accelerated by every body, and the frame tracks Earth).
     """
     r = np.asarray(r_m, dtype=np.float64)
     # Earth central gravity.
@@ -192,6 +203,10 @@ def _solar_system_substeps(state, dt_s, max_step_s):
         (mercury_state_at, MU_MERCURY, MERCURY_SOI_M),
         (venus_state_at, MU_VENUS, VENUS_SOI_M),
         (mars_state_at, MU_MARS, MARS_SOI_M),
+        (jupiter_state_at, MU_JUPITER, JUPITER_SOI_M),
+        (saturn_state_at, MU_SATURN, SATURN_SOI_M),
+        (uranus_state_at, MU_URANUS, URANUS_SOI_M),
+        (neptune_state_at, MU_NEPTUNE, NEPTUNE_SOI_M),
     ]:
         rB = np.linalg.norm(r - state_fn(state.epoch_s).r)
         if rB > 0 and rB < 10 * soi:
@@ -200,7 +215,7 @@ def _solar_system_substeps(state, dt_s, max_step_s):
 
 
 def propagate_solar_system(state, dt_s, max_step_s=3600.0):
-    """Propagate a vessel under full inner solar system gravity (geocentric)."""
+    """Propagate a vessel under full solar system gravity (geocentric)."""
     n = _solar_system_substeps(state, dt_s, max_step_s)
     r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, solar_system_accel, n)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
@@ -220,6 +235,10 @@ def dominant_body_solar(r_m, t_s):
         (mercury_state_at, MERCURY_SOI_M, MERCURY_BODY),
         (venus_state_at, VENUS_SOI_M, VENUS_BODY),
         (mars_state_at, MARS_SOI_M, MARS_BODY),
+        (uranus_state_at, URANUS_SOI_M, URANUS_BODY),
+        (neptune_state_at, NEPTUNE_SOI_M, NEPTUNE_BODY),
+        (saturn_state_at, SATURN_SOI_M, SATURN_BODY),
+        (jupiter_state_at, JUPITER_SOI_M, JUPITER_BODY),
     ]
     for state_fn, soi, body in planet_checks:
         rB = state_fn(t_s).r
@@ -246,12 +265,8 @@ def osculating_elements_solar(state, t_s):
         rel = StateVector(state.r, state.v, MU_EARTH, state.epoch_s)
     else:
         st = None
-        for state_fn, mu, _, name in [
-            (sun_state_at, MU_SUN, float("inf"), "Sun"),
-            (mercury_state_at, MU_MERCURY, MERCURY_SOI_M, "Mercury"),
-            (venus_state_at, MU_VENUS, VENUS_SOI_M, "Venus"),
-            (mars_state_at, MU_MARS, MARS_SOI_M, "Mars"),
-        ]:
+        from orbitsim.core.planets import ALL_PLANETS
+        for state_fn, mu, _, name in ALL_PLANETS:
             if name == body.name:
                 st = state_fn(t_s)
                 rel = StateVector(state.r - st.r, state.v - st.v, body.mu, state.epoch_s)

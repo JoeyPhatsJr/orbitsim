@@ -1,10 +1,13 @@
-"""Tests for core.planets — circular orbit approximations for inner solar system."""
+"""Tests for core.planets — circular orbit approximations for the solar system."""
 import numpy as np
 import pytest
 from orbitsim.core.planets import (
     sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
+    jupiter_state_at, saturn_state_at, uranus_state_at, neptune_state_at,
     earth_position_helio, A_MERCURY, A_VENUS, A_EARTH, A_MARS,
+    A_JUPITER, A_SATURN, A_URANUS, A_NEPTUNE,
     MERCURY_SOI_M, VENUS_SOI_M, EARTH_SOI_M, MARS_SOI_M,
+    JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
     _N_MERCURY, _N_VENUS, _N_EARTH, _N_MARS,
 )
 from orbitsim.core.constants import MU_SUN
@@ -44,6 +47,26 @@ class TestPlanetPositions:
         period = 2 * np.pi / _N_EARTH
         np.testing.assert_allclose(period / 86400.0, 365.25, rtol=0.01)
 
+    def test_jupiter_orbital_radius(self):
+        st = jupiter_state_at(0.0)
+        r_helio = st.r + earth_position_helio(0.0)
+        np.testing.assert_allclose(np.linalg.norm(r_helio), A_JUPITER, rtol=1e-10)
+
+    def test_saturn_orbital_radius(self):
+        st = saturn_state_at(0.0)
+        r_helio = st.r + earth_position_helio(0.0)
+        np.testing.assert_allclose(np.linalg.norm(r_helio), A_SATURN, rtol=1e-10)
+
+    def test_uranus_orbital_radius(self):
+        st = uranus_state_at(0.0)
+        r_helio = st.r + earth_position_helio(0.0)
+        np.testing.assert_allclose(np.linalg.norm(r_helio), A_URANUS, rtol=1e-10)
+
+    def test_neptune_orbital_radius(self):
+        st = neptune_state_at(0.0)
+        r_helio = st.r + earth_position_helio(0.0)
+        np.testing.assert_allclose(np.linalg.norm(r_helio), A_NEPTUNE, rtol=1e-10)
+
     def test_sun_geocentric_moves(self):
         """The Sun's geocentric position changes with time (Earth orbits it)."""
         s0 = sun_state_at(0.0)
@@ -66,6 +89,13 @@ class TestSOIRadii:
 
     def test_venus_soi_order(self):
         assert MERCURY_SOI_M < VENUS_SOI_M
+
+    def test_outer_soi_larger_than_inner(self):
+        assert JUPITER_SOI_M > MARS_SOI_M
+        assert SATURN_SOI_M > MARS_SOI_M
+
+    def test_jupiter_soi_reasonable(self):
+        np.testing.assert_allclose(JUPITER_SOI_M, 4.82e10, rtol=0.05)
 
 
 class TestSolarSystemAccel:
@@ -131,3 +161,10 @@ class TestDominantBody:
         r = np.array([2e11, 0.0, 0.0])  # way beyond Earth SOI
         body, _ = dominant_body_solar(r, 0.0)
         assert body.name == "Sun"
+
+    def test_near_jupiter_is_jupiter(self):
+        from orbitsim.core.nbody import dominant_body_solar
+        rJ = jupiter_state_at(0.0).r
+        r = rJ + np.array([1e9, 0.0, 0.0])  # 1M km from Jupiter (inside SOI ~48M km)
+        body, _ = dominant_body_solar(r, 0.0)
+        assert body.name == "Jupiter"
