@@ -26,7 +26,7 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
-from orbitsim.render.geometry import make_uv_sphere, make_wireframe_sphere
+from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.core.nbody import MOON_SOI_M
 from orbitsim.render.world_markers import distance_fade
 from orbitsim.render.orbit_lines import (
@@ -335,9 +335,14 @@ class OrbitApp(ShowBase):
             self._moon_np.set_scale(7.0)
             self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
             self._moon_orbit_scale = None
-            # Moon sphere-of-influence: faint true-scale wireframe boundary.
-            self._soi_np = make_wireframe_sphere(color=self.SOI_COLOR)
+            # Moon sphere-of-influence: faint true-scale translucent tinted shell.
+            from panda3d.core import TransparencyAttrib
+            self._soi_np = make_uv_sphere(1.0, 24, 32)
             self._soi_np.reparent_to(self.render)
+            self._soi_np.set_light_off()                       # flat, unlit tint
+            self._soi_np.set_transparency(TransparencyAttrib.M_alpha)
+            self._soi_np.set_depth_write(False)                # don't occlude the scene behind it
+            self._soi_np.set_two_sided(True)                   # visible from inside too
             self._soi_np.hide()  # shown + placed each frame in _update
             # Lagrange-point markers (constant on-screen size) + billboard labels.
             self._lagrange_nps = []
@@ -833,10 +838,10 @@ class OrbitApp(ShowBase):
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
     SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
-    SOI_COLOR = (0.55, 0.75, 1.0, 1.0)         # cool blue-white wireframe (outside)
-    SOI_INSIDE_COLOR = (0.55, 1.0, 0.70, 1.0)  # greenish "captured by the Moon"
-    SOI_BASE_ALPHA = 0.45
-    SOI_INSIDE_ALPHA = 0.75
+    SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
+    SOI_INSIDE_COLOR = (0.45, 1.0, 0.65, 1.0)  # greenish "captured by the Moon"
+    SOI_BASE_ALPHA = 0.10                       # faint translucent shell
+    SOI_INSIDE_ALPHA = 0.18
     SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
     SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
 
