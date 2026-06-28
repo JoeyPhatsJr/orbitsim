@@ -674,26 +674,51 @@ class OrbitApp(ShowBase):
     def _plan_intercept(self):
         """Auto-plan a flyby of the current target via a departure-dV porkchop."""
         import numpy as np
-        from orbitsim.core.optimize import intercept_node
         from orbitsim.core.elements import state_to_elements
+        from orbitsim.render.targets import PlanetTarget
         if self._target is None:
             self._flash_message("No target selected")
             return
         v0 = self.world.vessels[0]
-        try:
-            period = state_to_elements(v0.state).period_s
-        except ValueError:
-            self._flash_message("Unbound orbit — can't plan intercept")
-            return
         now = self.clock.sim_time_s
-        dep = np.linspace(0.0, period, 24)
-        tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
-        try:
-            node = intercept_node(v0.state, self._target.state_at(now),
-                                  self.world.central.mu, dep, tof)
-        except ValueError:
-            self._flash_message("No intercept found")
-            return
+        self._flash_message(f"Planning {self._target.name} intercept...")
+        if isinstance(self._target, PlanetTarget):
+            from orbitsim.core.optimize import intercept_node_callable
+            from orbitsim.core.planets import A_EARTH, _N_EARTH
+            target_a = {"Mercury": 5.7909e10, "Venus": 1.0821e11,
+                         "Mars": 2.2794e11}.get(self._target.name)
+            if target_a is not None:
+                w_ship = _N_EARTH
+                w_target = np.sqrt(self.world.central.mu / 1.0) if target_a == 0 else 0.0
+                from orbitsim.core.constants import MU_SUN
+                w_target = np.sqrt(MU_SUN / target_a**3)
+                synodic = 2.0 * np.pi / abs(w_ship - w_target)
+            else:
+                synodic = 365.25 * 86400.0
+            dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
+            hohmann_tof = np.pi * np.sqrt(((A_EARTH + (target_a or A_EARTH)) / 2.0)**3 / MU_SUN)
+            tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 48)
+            try:
+                node = intercept_node_callable(
+                    v0.state, self._target.state_at, self.world.central.mu, dep, tof)
+            except ValueError:
+                self._flash_message("No intercept found")
+                return
+        else:
+            from orbitsim.core.optimize import intercept_node
+            try:
+                period = state_to_elements(v0.state).period_s
+            except ValueError:
+                self._flash_message("Unbound orbit — can't plan intercept")
+                return
+            dep = np.linspace(0.0, period, 24)
+            tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
+            try:
+                node = intercept_node(v0.state, self._target.state_at(now),
+                                      self.world.central.mu, dep, tof)
+            except ValueError:
+                self._flash_message("No intercept found")
+                return
         self._node_epoch_s = node.epoch_s
         self._dv["pro"] = node.dv_prograde_mps
         self._dv["nrm"] = node.dv_normal_mps
@@ -896,6 +921,7 @@ class OrbitApp(ShowBase):
                         "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET"]
             for i, mode in enumerate(sas_keys, start=1):
                 self.accept(str(i), self._set_sas, [mode])
+            self.accept("i", self._plan_intercept)
             self.accept("f5", self._quicksave)
             self.accept("f9", self._quickload)
 
@@ -1067,10 +1093,9 @@ class OrbitApp(ShowBase):
             v.orientation = quat_normalize(quat_multiply(dq, v.orientation))
 
     def _toggle_porkchop(self) -> None:
-        """Build a porkchop plot (vessel 0 -> a higher circular orbit) and overlay it.
-
-        Pressing 'p' again removes it. The departure axis spans a full synodic period
-        so the low-delta-V basin (the "banana") is captured.
+        """Build a porkchop plot and overlay it. Uses the current target if one
+        is selected (planet or Moon); otherwise falls back to a generic higher-orbit
+        demo. Pressing 'p' again removes it.
         """
         existing = getattr(self, "_porkchop_card", None)
         if existing is not None:
@@ -1079,25 +1104,56 @@ class OrbitApp(ShowBase):
             return
 
         mu = self.world.central.mu
-        dep = self.world.vessels[0].state
-        r1 = dep.r_mag
-        r2 = r1 * 2.0
-        v2 = np.sqrt(mu / r2)
-        arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, v2, 0.0]), mu=mu)
+        ship = self.world.vessels[0].state
 
-        w1 = np.sqrt(mu / r1**3)
-        w2 = np.sqrt(mu / r2**3)
-        t_syn = 2.0 * np.pi / abs(w1 - w2)
-        t_hohmann = np.pi * np.sqrt(((r1 + r2) / 2.0) ** 3 / mu)
-
-        dep_times = np.linspace(0.0, t_syn, 24)
-        tof_grid = np.linspace(0.4 * t_hohmann, 1.6 * t_hohmann, 36)
-        dv, _ = porkchop(dep, arr, dep_times, tof_grid, mu)
+        from orbitsim.render.targets import PlanetTarget
+        if self._target is not None and isinstance(self._target, PlanetTarget):
+            from orbitsim.core.optimize import porkchop_callable
+            from orbitsim.core.constants import MU_SUN
+            from orbitsim.core.planets import A_EARTH
+            target_a = {"Mercury": 5.7909e10, "Venus": 1.0821e11,
+                         "Mars": 2.2794e11}.get(self._target.name)
+            if target_a is not None:
+                from orbitsim.core.planets import _N_EARTH
+                w_target = np.sqrt(MU_SUN / target_a**3)
+                synodic = 2.0 * np.pi / abs(_N_EARTH - w_target)
+                hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
+            else:
+                synodic = 365.25 * 86400.0
+                hohmann_tof = 180.0 * 86400.0
+            dep_times = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
+            tof_grid = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 36)
+            self._flash_message(f"Computing {self._target.name} porkchop...")
+            dv, _ = porkchop_callable(ship, self._target.state_at, mu, dep_times, tof_grid)
+        elif self._target is not None:
+            now = self.clock.sim_time_s
+            from orbitsim.core.elements import state_to_elements
+            try:
+                period = state_to_elements(ship).period_s
+            except ValueError:
+                self._flash_message("Unbound orbit — can't compute porkchop")
+                return
+            dep_times = np.linspace(0.0, period, 24)
+            tof_grid = np.linspace(3.0e3, 14.0 * 86400.0, 36)
+            target_state = self._target.state_at(now)
+            dv, _ = porkchop(ship, target_state, dep_times, tof_grid, mu)
+        else:
+            r1 = ship.r_mag
+            r2 = r1 * 2.0
+            v2 = np.sqrt(mu / r2)
+            arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, v2, 0.0]), mu=mu)
+            w1 = np.sqrt(mu / r1**3)
+            w2 = np.sqrt(mu / r2**3)
+            t_syn = 2.0 * np.pi / abs(w1 - w2)
+            t_hohmann = np.pi * np.sqrt(((r1 + r2) / 2.0) ** 3 / mu)
+            dep_times = np.linspace(0.0, t_syn, 24)
+            tof_grid = np.linspace(0.4 * t_hohmann, 1.6 * t_hohmann, 36)
+            dv, _ = porkchop(ship, arr, dep_times, tof_grid, mu)
 
         png = render_porkchop_png(dv, dep_times, tof_grid, "porkchop.png")
         tex = self.loader.load_texture(png)
         cm = CardMaker("porkchop")
-        cm.set_frame(-0.95, -0.15, 0.1, 0.85)  # top-right region of aspect2d
+        cm.set_frame(-0.95, -0.15, 0.1, 0.85)
         card = self.aspect2d.attach_new_node(cm.generate())
         card.set_texture(tex)
         self._porkchop_card = card

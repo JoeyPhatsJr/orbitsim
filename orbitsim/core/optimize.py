@@ -145,6 +145,47 @@ def interplanetary_porkchop(
     return dv, (flat // n, flat % n)
 
 
+def porkchop_callable(
+    ship_state: StateVector,
+    target_state_fn,
+    mu: float,
+    dep_times_s: np.ndarray,
+    tof_grid_s: np.ndarray,
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """Porkchop grid where the target position is given by a callable.
+
+    Unlike ``porkchop``, the target is NOT Keplerian-propagated. Instead,
+    ``target_state_fn(t_absolute)`` is called for each arrival epoch,
+    returning a StateVector in the same frame as *ship_state*.
+
+    The ship IS Keplerian-propagated (two-body seed, good enough for the
+    coarse grid + Nelder-Mead refine that follows).
+
+    Returns (dv_total, argmin) like ``porkchop``.
+    """
+    m = len(dep_times_s)
+    n = len(tof_grid_s)
+    dv = np.full((m, n), np.inf, dtype=np.float64)
+    t0 = ship_state.epoch_s
+
+    for i, t_dep in enumerate(dep_times_s):
+        dep = propagate_kepler(ship_state, float(t_dep))
+        for j, tof in enumerate(tof_grid_s):
+            if tof <= 0:
+                continue
+            arr = target_state_fn(t0 + float(t_dep) + float(tof))
+            try:
+                v1, v2 = lambert(dep.r, arr.r, float(tof), mu)
+            except Exception:
+                continue
+            dv_dep = np.linalg.norm(v1 - dep.v)
+            dv_arr = np.linalg.norm(arr.v - v2)
+            dv[i, j] = dv_dep + dv_arr
+
+    flat = int(np.argmin(dv))
+    return dv, (flat // n, flat % n)
+
+
 def _dep_cost(ship_state, target_state_now, mu, t_dep, tof):
     """Departure-only delta-V to fly from ship@t_dep to target@(t_dep+tof)."""
     if tof <= 0.0:
@@ -188,6 +229,60 @@ def intercept_node(ship_state, target_state_now, mu, dep_times_s, tof_grid_s,
             t_dep, tof = float(res.x[0]), float(res.x[1])
 
     _, dep, v1 = _dep_cost(ship_state, target_state_now, mu, t_dep, tof)
+    dv_vec = v1 - dep.v
+    v_hat = dep.v / np.linalg.norm(dep.v)
+    h = np.cross(dep.r, dep.v); h_hat = h / np.linalg.norm(h)
+    r_hat = np.cross(h_hat, v_hat)
+    return ManeuverNode(
+        epoch_s=ship_state.epoch_s + t_dep,
+        dv_prograde_mps=float(np.dot(dv_vec, v_hat)),
+        dv_normal_mps=float(np.dot(dv_vec, h_hat)),
+        dv_radial_mps=float(np.dot(dv_vec, r_hat)),
+    )
+
+
+def _dep_cost_callable(ship_state, target_state_fn, mu, t_dep, tof):
+    """Departure-only delta-V using a callable target."""
+    if tof <= 0.0:
+        return np.inf, None, None
+    dep = propagate_kepler(ship_state, float(t_dep))
+    arr = target_state_fn(ship_state.epoch_s + float(t_dep) + float(tof))
+    try:
+        v1, _ = lambert(dep.r, arr.r, float(tof), mu)
+    except Exception:
+        return np.inf, None, None
+    return float(np.linalg.norm(v1 - dep.v)), dep, v1
+
+
+def intercept_node_callable(ship_state, target_state_fn, mu, dep_times_s,
+                            tof_grid_s, refine: bool = True) -> ManeuverNode:
+    """Like ``intercept_node`` but the target is a callable ``state_fn(t_abs)``.
+
+    For interplanetary transfers where the target (a planet) cannot be
+    Keplerian-propagated around Earth.  The ship is still Keplerian-seeded.
+
+    Raises ValueError if no cell yields a Lambert solution.
+    """
+    best = (np.inf, None, None)
+    for t_dep in dep_times_s:
+        for tof in tof_grid_s:
+            cost, _, _ = _dep_cost_callable(ship_state, target_state_fn, mu, t_dep, tof)
+            if cost < best[0]:
+                best = (cost, float(t_dep), float(tof))
+    if not np.isfinite(best[0]):
+        raise ValueError("no feasible intercept over the given grid")
+
+    t_dep, tof = best[1], best[2]
+    if refine:
+        def cost(x):
+            c, _, _ = _dep_cost_callable(ship_state, target_state_fn, mu, x[0], x[1])
+            return c if np.isfinite(c) else 1e12
+        res = minimize(cost, np.array([t_dep, tof]), method="Nelder-Mead",
+                       options={"xatol": 1.0, "fatol": 1.0, "maxiter": 200})
+        if np.isfinite(cost(res.x)) and res.x[1] > 0.0:
+            t_dep, tof = float(res.x[0]), float(res.x[1])
+
+    _, dep, v1 = _dep_cost_callable(ship_state, target_state_fn, mu, t_dep, tof)
     dv_vec = v1 - dep.v
     v_hat = dep.v / np.linalg.norm(dep.v)
     h = np.cross(dep.r, dep.v); h_hat = h / np.linalg.norm(h)

@@ -16,6 +16,8 @@ SANDBOX_BINDINGS = [
     ("T", "SAS on/off"),
     ("M", "Toggle ship view / map"),
     ("1-8", "SAS mode (pro/retro/normal/...)"),
+    ("I", "Plan intercept to target"),
+    ("P", "Porkchop plot (target or demo)"),
     (", / .", "Warp down / up"),
     ("F5 / F9", "Quicksave / Quickload"),
     ("Esc", "Settings"),

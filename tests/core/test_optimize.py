@@ -145,3 +145,75 @@ def test_intercept_node_raises_when_infeasible():
     import pytest
     with pytest.raises(ValueError):
         intercept_node(ship, target, mu, np.array([0.0]), np.array([-1.0, 0.0]))
+
+
+# ---------------------------------------------------------------------------
+# Callable-based optimizer tests (interplanetary transfers)
+# ---------------------------------------------------------------------------
+
+from orbitsim.core.optimize import porkchop_callable, intercept_node_callable
+
+
+def _keplerian_target_fn(target_state):
+    """Wrap a Keplerian target as a callable for comparison testing."""
+    def fn(t_abs):
+        dt = t_abs - target_state.epoch_s
+        return propagate_kepler(target_state, dt)
+    return fn
+
+
+def test_porkchop_callable_matches_keplerian():
+    """porkchop_callable with a Keplerian callable should give the same result
+    as the original porkchop function."""
+    from orbitsim.core.optimize import porkchop
+    ship, target, mu = _ship_and_target()
+    dep_times = np.linspace(0.0, 3.0e3, 8)
+    tof_grid = np.linspace(1.0e3, 4.0e4, 12)
+    dv_orig, (i0, j0) = porkchop(ship, target, dep_times, tof_grid, mu)
+    target_fn = _keplerian_target_fn(target)
+    dv_call, (i1, j1) = porkchop_callable(ship, target_fn, mu, dep_times, tof_grid)
+    np.testing.assert_allclose(dv_call, dv_orig, rtol=1e-10)
+    assert (i0, j0) == (i1, j1)
+
+
+def test_intercept_node_callable_matches_keplerian():
+    """intercept_node_callable with a Keplerian callable produces the same node
+    as the original intercept_node."""
+    ship, target, mu = _ship_and_target()
+    dep = np.linspace(0.0, 3.0e3, 12)
+    tof = np.linspace(1.0e3, 4.0e4, 30)
+    node_orig = intercept_node(ship, target, mu, dep, tof, refine=False)
+    target_fn = _keplerian_target_fn(target)
+    node_call = intercept_node_callable(ship, target_fn, mu, dep, tof, refine=False)
+    assert abs(node_orig.epoch_s - node_call.epoch_s) < 1e-9
+    assert abs(node_orig.dv_prograde_mps - node_call.dv_prograde_mps) < 1e-9
+    assert abs(node_orig.dv_normal_mps - node_call.dv_normal_mps) < 1e-9
+    assert abs(node_orig.dv_radial_mps - node_call.dv_radial_mps) < 1e-9
+
+
+def test_intercept_node_callable_with_planet_target():
+    """intercept_node_callable works with a planet state_at function (Mars)."""
+    from orbitsim.core.planets import mars_state_at, A_EARTH, A_MARS
+    from orbitsim.core.constants import MU_SUN
+    mu = EARTH.mu
+    r0 = 7.0e6
+    ship = StateVector(r=np.array([r0, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(mu / r0), 0.0]), mu=mu, epoch_s=0.0)
+    hohmann_tof = np.pi * np.sqrt(((A_EARTH + A_MARS) / 2.0)**3 / MU_SUN)
+    w_earth = np.sqrt(MU_SUN / A_EARTH**3)
+    w_mars = np.sqrt(MU_SUN / A_MARS**3)
+    synodic = 2.0 * np.pi / abs(w_earth - w_mars)
+    dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 20)
+    tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 20)
+    node = intercept_node_callable(ship, mars_state_at, mu, dep, tof, refine=False)
+    assert node.magnitude_mps > 0.0
+    assert node.magnitude_mps < 5.0e4
+
+
+def test_intercept_node_callable_raises_when_infeasible():
+    ship, _, mu = _ship_and_target()
+    import pytest
+    def dummy_target(t):
+        return StateVector(r=np.array([1e12, 0, 0]), v=np.zeros(3), mu=mu, epoch_s=t)
+    with pytest.raises(ValueError):
+        intercept_node_callable(ship, dummy_target, mu, np.array([0.0]), np.array([-1.0, 0.0]))
