@@ -567,7 +567,9 @@ class OrbitApp(ShowBase):
     JOG_DEADZONE = 0.02  # |value| below this contributes no change
 
     # Scheduled maneuver node.
-    NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press
+    NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press (base step for buttons)
+    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
+    NODE_JOG_CURVE = 4.0
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
     PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
@@ -583,6 +585,7 @@ class OrbitApp(ShowBase):
         self._dv_line = self._node_line = self._target_line = ""
         self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self._node_marker_np = None
+        self._node_dv_label = None
         self._dv_value_text = {}
         self._jog = {}
         rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
@@ -612,17 +615,37 @@ class OrbitApp(ShowBase):
                 mayChange=True,
                 parent=self.a2dBottomRight,
             )
+        # Total dV magnitude display.
+        self._dv_total_text = OnscreenText(
+            text="", pos=(-0.65, 0.52), scale=0.05,
+            fg=(1.0, 0.5, 1.0, 1.0), align=TextNode.ACenter,
+            mayChange=True, parent=self.a2dBottomRight,
+        )
+        # Node time jog slider (variable time stepping).
+        OnscreenText(
+            text="Node T", pos=(-1.22, 0.04 - 0.015), scale=0.045,
+            fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
+            parent=self.a2dBottomRight,
+        )
+        self._node_time_jog = DirectSlider(
+            pos=(-0.62, 0.0, 0.04), scale=0.34,
+            range=(-1.0, 1.0), value=0.0, pageSize=0.25,
+            parent=self.a2dBottomRight,
+        )
+        self._node_time_text = OnscreenText(
+            text="T+0s", pos=(-0.14, 0.04 - 0.015), scale=0.045,
+            fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
+            mayChange=True, parent=self.a2dBottomRight,
+        )
         self._exec_btn = DirectButton(
             text="Execute Burn",
             scale=0.05,
-            pos=(-0.5, 0.0, 0.04),
+            pos=(-0.5, 0.0, -0.08),
             command=self._execute_burn,
             parent=self.a2dBottomRight,
         )
-        # Scheduled-node controls: step time-to-node, jump to next apsis, clear.
+        # Scheduled-node controls: jump to next apsis, clear.
         node_btns = [
-            ("Node -", lambda: self._step_node_time(-self.NODE_TIME_STEP_S)),
-            ("Node +", lambda: self._step_node_time(self.NODE_TIME_STEP_S)),
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
@@ -630,7 +653,7 @@ class OrbitApp(ShowBase):
             ("Intercept", self._plan_intercept),
         ]
         for i, (label, cmd) in enumerate(node_btns):
-            DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.06),
+            DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
                          command=cmd, parent=self.a2dBottomRight)
         # Releasing the mouse springs every jog slider back to its center (zero rate).
         self.accept("mouse1-up", self._release_jogs)
@@ -659,6 +682,24 @@ class OrbitApp(ShowBase):
                 changed = True
         if changed:
             self._refresh_readout()
+        if hasattr(self, "_node_time_jog"):
+            tv = self._node_time_jog["value"]
+            mag = abs(tv)
+            if mag > self.JOG_DEADZONE:
+                shaped = (np.exp(self.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.NODE_JOG_CURVE) - 1.0)
+                rate = float(np.copysign(self.NODE_JOG_MAX_RATE * shaped, tv))
+                now = self.clock.sim_time_s
+                base = self._node_epoch_s if self._node_epoch_s is not None else now
+                self._node_epoch_s = max(now, base + rate * real_dt_s)
+                ttn = self._node_epoch_s - now
+                if ttn < 60:
+                    self._node_time_text.setText(f"T+{ttn:.0f}s")
+                elif ttn < 3600:
+                    self._node_time_text.setText(f"T+{ttn/60:.1f}m")
+                elif ttn < 86400:
+                    self._node_time_text.setText(f"T+{ttn/3600:.1f}h")
+                else:
+                    self._node_time_text.setText(f"T+{ttn/86400:.1f}d")
 
     def _release_jogs(self) -> None:
         """Spring all jog thumbs back to center so the value stops changing on release.
@@ -667,6 +708,8 @@ class OrbitApp(ShowBase):
         self._try_pick_target()
         for slider in self._jog.values():
             slider["value"] = 0.0
+        if hasattr(self, "_node_time_jog"):
+            self._node_time_jog["value"] = 0.0
 
     def _on_mouse1_down(self):
         mw = self.mouseWatcherNode
@@ -753,6 +796,11 @@ class OrbitApp(ShowBase):
         if self._node_marker_np is not None:
             self._node_marker_np.remove_node()
             self._node_marker_np = None
+        if self._node_dv_label is not None:
+            self._node_dv_label.remove_node()
+            self._node_dv_label = None
+        if hasattr(self, "_node_time_text"):
+            self._node_time_text.setText("T+0s")
 
     def _plan_intercept(self):
         """Auto-plan a flyby of the current target via a departure-dV porkchop."""
@@ -768,8 +816,11 @@ class OrbitApp(ShowBase):
         if isinstance(self._target, PlanetTarget):
             from orbitsim.core.optimize import intercept_node_callable
             from orbitsim.core.planets import A_EARTH, _N_EARTH
-            target_a = {"Mercury": 5.7909e10, "Venus": 1.0821e11,
-                         "Mars": 2.2794e11}.get(self._target.name)
+            target_a = {
+                "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
+                "Jupiter": A_JUPITER, "Saturn": A_SATURN,
+                "Uranus": A_URANUS, "Neptune": A_NEPTUNE,
+            }.get(self._target.name)
             if target_a is not None:
                 w_ship = _N_EARTH
                 w_target = np.sqrt(self.world.central.mu / 1.0) if target_a == 0 else 0.0
@@ -905,7 +956,6 @@ class OrbitApp(ShowBase):
     def _refresh_readout(self) -> None:
         import math
         node = self._current_node()
-        # One budget: the fuel-derived delta-V (rocket equation), shared with flight.
         budget = self.world.vessels[0].delta_v_remaining
         left = "∞" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
         self._dv_line = (
@@ -913,6 +963,11 @@ class OrbitApp(ShowBase):
             if node.magnitude_mps > 0.0
             else ""
         )
+        if hasattr(self, "_dv_total_text"):
+            if node.magnitude_mps > 0.0:
+                self._dv_total_text.setText(f"Total dV: {node.magnitude_mps:,.1f} m/s")
+            else:
+                self._dv_total_text.setText("")
         self._sync_maneuver_hud()
 
     def _sync_maneuver_hud(self) -> None:
@@ -1194,8 +1249,11 @@ class OrbitApp(ShowBase):
             from orbitsim.core.optimize import porkchop_callable
             from orbitsim.core.constants import MU_SUN
             from orbitsim.core.planets import A_EARTH
-            target_a = {"Mercury": 5.7909e10, "Venus": 1.0821e11,
-                         "Mars": 2.2794e11}.get(self._target.name)
+            target_a = {
+                "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
+                "Jupiter": A_JUPITER, "Saturn": A_SATURN,
+                "Uranus": A_URANUS, "Neptune": A_NEPTUNE,
+            }.get(self._target.name)
             if target_a is not None:
                 from orbitsim.core.planets import _N_EARTH
                 w_target = np.sqrt(MU_SUN / target_a**3)
@@ -1509,9 +1567,6 @@ class OrbitApp(ShowBase):
         # Node marker at the node's predicted position on the orbit (held at the vessel
         # through the brief execute window once the node is due).
         if self._node_epoch_s is not None and ttn is not None and ttn >= -self.EXECUTE_TOLERANCE_S:
-            # Match the marker to the same planned (Keplerian-to-node) state used to seed
-            # the post-burn preview. Re-integrating a distant node under N-body every frame
-            # can take hundreds of milliseconds and is redundant.
             npos = apply_maneuver(v0.state, node).r
             mx, my, mz = self.transform.to_render(npos)
             if self._node_marker_np is None:
@@ -1521,9 +1576,22 @@ class OrbitApp(ShowBase):
                 self._node_marker_np.set_light_off()
                 self._node_marker_np.set_scale(6.0)
             self._node_marker_np.set_pos(mx, my, mz)
+            if self._node_dv_label is None:
+                from orbitsim.render.world_labels import build_world_label
+                self._node_dv_label = build_world_label(
+                    self.render, "", color=(0.3, 1.0, 1.0, 1.0), scale=11.0)
+            dv_text = f"dV {node.magnitude_mps:,.0f} m/s"
+            if ttn > 0:
+                dv_text += f"  T-{_fmt_countdown(ttn)}"
+            self._node_dv_label.node().set_text(dv_text)
+            self._node_dv_label.set_pos(mx, my, mz + 8.0)
+            self._node_dv_label.show()
         elif self._node_marker_np is not None:
             self._node_marker_np.remove_node()
             self._node_marker_np = None
+            if self._node_dv_label is not None:
+                self._node_dv_label.remove_node()
+                self._node_dv_label = None
         # Auto-warp-down as the node nears (never warps up).
         if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.clock.warp and self.clock.warp > 1.0:
             self.clock.warp_down()
