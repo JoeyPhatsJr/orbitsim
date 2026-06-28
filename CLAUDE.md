@@ -19,7 +19,7 @@ Always use the venv interpreter. Bare `python` resolves to the global install, w
 dependencies and will fail with `ModuleNotFoundError: astropy` / `panda3d`.
 
 ```bash
-.venv/Scripts/python -m pytest tests/ -q                 # full suite (~259 tests)
+.venv/Scripts/python -m pytest tests/ -q                 # full suite (~260 tests)
 .venv/Scripts/python -m pytest tests/core -q             # physics core only (no graphics needed)
 .venv/Scripts/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/Scripts/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
@@ -125,7 +125,7 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 
 | Area | Status |
 |---|---|
-| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete** (whole suite now **259 tests** green) |
+| 1–5 Physics core, render, maneuvers, transfers, solar system | **complete** (whole suite now **260 tests** green) |
 | Continuous-thrust flight (rocket eq, navball, controls) | **complete** (`...plans/2026-06-24-continuous-thrust-flight.md`) |
 | Realistic Earth (textured, day/night, atmosphere) | **complete** (`...plans/2026-06-25-realistic-earth.md`) |
 | Starfield / skybox | **complete** (`render/skybox.py`; `...plans/2026-06-25-starfield.md`) |
@@ -142,6 +142,7 @@ effort** — each sub-project gets its own brainstorm → spec (`docs/superpower
 | **Graphical: ship view (3rd-person model + camera mode-switch)** | **complete** (`render/ship_model.py` procedural lit ship + plume; cross-fade marker↔model on zoom, `m` toggles map/ship framing; `...plans/2026-06-27-ship-view.md`) |
 | **Graphical 2a: HUD overlay readability** | **complete** (`render/hud/panel.py` self-sizing grouped panels, `core.attitude.heading_pitch`, `render/sas_panel.py` SAS chip + clickable mode buttons + orbital/target velocity readout; fixed the colliding top-left readouts; `...plans/2026-06-27-hud-overlay-readability.md`) |
 | **Graphical 2b: in-world readability + visual polish** | **complete** (`render/world_markers.py` pure apsis/fade/declutter math, `render/world_labels.py` carded billboard labels, Pe/Ap markers, camera easing in `render/camera_rig.py`, outlined/fading trajectory lines in `render/orbit_lines.py`; built directly with Codex, no separate spec) |
+| **Graphical: Moon SOI sphere** | **complete** (`render/geometry.py` `make_wireframe_sphere`; true-scale faint wireframe at `core.nbody.MOON_SOI_M` centered on the Moon, brightens green when the vessel is inside, distance-fades; sandbox-only; `...plans/2026-06-27-soi-sphere.md`) |
 | Rest of Phase 6: docs, packaging | planned (next) |
 
 **Direction shift (2026-06-26), now fully landed:** the project pivoted to a **restricted N-body** model
