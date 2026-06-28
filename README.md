@@ -100,12 +100,17 @@ controls, a guide to the HUD/navball, and a first-flight walkthrough.
 
 ## Documentation
 
-Start with [`docs/PLAYING.md`](docs/PLAYING.md) to actually fly. The original build is specified
-phase-by-phase in [`docs/`](docs/):
+Start with [`docs/PLAYING.md`](docs/PLAYING.md) to actually fly. New to orbital mechanics?
+Read [`docs/BEGINNERS-GUIDE.md`](docs/BEGINNERS-GUIDE.md). Can't run the game?
+[`docs/VIRTUAL-TOUR.md`](docs/VIRTUAL-TOUR.md) walks you through the experience scene by scene.
+
+The original build is specified phase-by-phase in [`docs/`](docs/):
 
 | Doc | Purpose |
 |---|---|
 | [`docs/PLAYING.md`](docs/PLAYING.md) | **How to play** — controls, HUD/navball, first-flight walkthrough |
+| [`docs/BEGINNERS-GUIDE.md`](docs/BEGINNERS-GUIDE.md) | **The physics explained** — orbits, burns, transfers, N-body gravity for beginners |
+| [`docs/VIRTUAL-TOUR.md`](docs/VIRTUAL-TOUR.md) | **Virtual tour** — what the game looks and feels like, scene by scene |
 | [`docs/00-OVERVIEW.md`](docs/00-OVERVIEW.md) | Architecture, conventions, definition of done — **read first** |
 | [`docs/01-physics-core.md`](docs/01-physics-core.md) | Two-body physics core (formulas + test values) |
 | [`docs/02-rendering-scale.md`](docs/02-rendering-scale.md) | Panda3D render + the floating-origin scale solution |
