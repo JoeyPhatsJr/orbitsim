@@ -43,6 +43,7 @@ from orbitsim.render.orbit_lines import (
     sample_orbit_points,
 )
 from orbitsim.render.camera_rig import CameraRig
+from orbitsim.render.map_view import MapView
 from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
@@ -105,6 +106,9 @@ class OrbitApp(ShowBase):
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
             self._preview_executor = None
+        if getattr(self, "_map_view", None) is not None:
+            self._map_view.destroy()
+            self._map_view = None
         super().destroy()
 
     # ------------------------------------------------------------------ title screen
@@ -511,6 +515,11 @@ class OrbitApp(ShowBase):
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
         self.starfield.reparent_to(self.render)
+
+        # 2D ecliptic map view (sandbox only; toggled with Tab).
+        self._map_view = None
+        if not self.solar_system:
+            self._map_view = MapView(self)
 
         self._setup_input()
         self.task_mgr.add(self._update, "update")
@@ -1072,13 +1081,13 @@ class OrbitApp(ShowBase):
     MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
 
     def _setup_input(self) -> None:
-        self.accept("wheel_up", lambda: self.rig.zoom(0.86))
-        self.accept("wheel_down", lambda: self.rig.zoom(1.0 / 0.86))
+        self.accept("wheel_up", self._on_wheel_up)
+        self.accept("wheel_down", self._on_wheel_down)
         # Right-click + drag orbits the camera (both sandbox and solar modes).
         self._rmb_down = False
         self._last_mouse = None
-        self.accept("mouse3", self._rmb, [True])
-        self.accept("mouse3-up", self._rmb, [False])
+        self.accept("mouse3", self._on_rmb, [True])
+        self.accept("mouse3-up", self._on_rmb, [False])
         self.accept("arrow_left", lambda: self.rig.orbit(-0.1, 0.0))
         self.accept("arrow_right", lambda: self.rig.orbit(0.1, 0.0))
         self.accept("arrow_up", lambda: self.rig.orbit(0.0, 0.1))
@@ -1088,6 +1097,9 @@ class OrbitApp(ShowBase):
         self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
         self.accept("f1", self.keybind_overlay.toggle)  # keybind help overlay
         self.accept("escape", self.settings_panel.toggle)  # settings panel
+
+        if not self.solar_system:
+            self.accept("tab", self._toggle_map_view)
 
         if not self.solar_system and self.world.vessels:
             self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
@@ -1118,6 +1130,11 @@ class OrbitApp(ShowBase):
     SOI_INSIDE_ALPHA = 0.18
     SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
     SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
+
+    def _toggle_map_view(self) -> None:
+        """Toggle the 2D ecliptic map overlay (Tab)."""
+        if self._map_view is not None:
+            self._map_view.toggle()
 
     def _toggle_ship_view(self) -> None:
         """Snap the camera between remembered map and ship-view distances ('m')."""
@@ -1171,6 +1188,29 @@ class OrbitApp(ShowBase):
             if self.clock.warp >= cap:
                 return
         self.clock.warp_up()
+
+    def _map_active(self) -> bool:
+        return self._map_view is not None and self._map_view.visible
+
+    def _on_wheel_up(self):
+        if self._map_active():
+            self._map_view.zoom_in()
+        else:
+            self.rig.zoom(0.86)
+
+    def _on_wheel_down(self):
+        if self._map_active():
+            self._map_view.zoom_out()
+        else:
+            self.rig.zoom(1.0 / 0.86)
+
+    def _on_rmb(self, down):
+        if self._map_active():
+            if down:
+                self._map_view.begin_pan()
+            else:
+                self._map_view.end_pan()
+        self._rmb(down)
 
     def _rmb(self, down):
         self._rmb_down = down
@@ -1928,6 +1968,21 @@ class OrbitApp(ShowBase):
         self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_encounter_info(v0, dom_body, dom_pos)
         self._update_warp_readout()
+
+        # 2D map view update (when visible).
+        if self._map_view is not None and self._map_view.visible:
+            map_node = self._current_node() if hasattr(self, "_dv") else None
+            self._map_view.update(
+                self.world, self.clock,
+                targets=getattr(self, "_targets", None),
+                node_epoch_s=getattr(self, "_node_epoch_s", None),
+                node=map_node,
+            )
+            # Route pan input when map is active.
+            mw = self.mouseWatcherNode
+            if mw and mw.has_mouse():
+                self._map_view.apply_pan(mw.get_mouse_x(), mw.get_mouse_y())
+
         return task.cont
 
     def _update_solar_system(self) -> None:
