@@ -15,7 +15,6 @@ SANDBOX_BINDINGS = [
     ("X", "Cut throttle"),
     ("T", "SAS on/off"),
     ("M", "Toggle ship view / map"),
-    ("Tab", "Toggle 2D map view"),
     ("1-8", "SAS mode (pro/retro/normal/...)"),
     ("U", "Toggle unlimited dV"),
     ("I", "Plan intercept to target"),
