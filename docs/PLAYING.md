@@ -5,7 +5,12 @@ first-flight walkthrough. Press **F1** in-app at any time for a quick keybind ov
 
 ## Launch
 
-```powershell
+```bash
+# Linux / macOS
+.venv/bin/python -m orbitsim          # the sandbox — a flyable ship in low Earth orbit
+.venv/bin/python -m orbitsim --solar  # the solar-system viewer — planets from the real ephemeris
+
+# Windows
 .venv\Scripts\python -m orbitsim          # the sandbox — a flyable ship in low Earth orbit
 .venv\Scripts\python -m orbitsim --solar  # the solar-system viewer — planets from the real ephemeris
 ```

@@ -1,13 +1,13 @@
 # Orbital Mechanics Simulator
 
-A realistic 3D orbital mechanics simulator/game for desktop (Windows) — "Kerbal Space Program,
-but the physics are real." Built in Python with a unit-tested, textbook-accurate physics core and a
-Panda3D renderer. Real Keplerian orbits, Hohmann/bi-elliptic/Lambert transfers, ΔV-budget
-optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides), and a flyable
-sandbox that runs a **restricted N-body** model — real gravity from the Sun, Moon, Mercury, Venus,
-and Mars — with live maneuver-node prediction, interplanetary transfer planning, and a 3rd-person
-ship view. Fly from Earth orbit to Mars under real N-body physics, park at Lagrange points, and
-plan your burns with porkchop plots.
+A realistic 3D orbital mechanics simulator/game for desktop (Windows, Linux, macOS) — "Kerbal
+Space Program, but the physics are real." Built in Python with a unit-tested, textbook-accurate
+physics core and a Panda3D renderer. Real Keplerian orbits, Hohmann/bi-elliptic/Lambert transfers,
+ΔV-budget optimization with porkchop plots, the real solar system (JPL/Skyfield ephemerides), and a
+flyable sandbox that runs a **restricted N-body** model — real gravity from the Sun, Moon, and all
+seven planets (Mercury through Neptune) — with live maneuver-node prediction, interplanetary
+transfer planning, and a 3rd-person ship view. Fly from Earth orbit to Mars under real N-body
+physics, park at Lagrange points, and plan your burns with porkchop plots.
 
 Vessels are point masses with a ΔV/fuel budget — **no** rocket-part building, **no**
 aerodynamics/atmosphere (deliberately out of scope, to keep the focus on orbital mechanics).
@@ -78,19 +78,24 @@ rendering a solar-system-scale scene in float32.
 
 ## Quick start
 
-Requires Python 3.9+ on Windows.
+Requires Python 3.9+.
 
-```powershell
+```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e ".[dev,render]"        # physics + render deps
 
-.venv\Scripts\python -m pytest tests/ -q      # run the test suite (~275 tests)
-.venv\Scripts\python -m orbitsim              # launch the sandbox (LEO, flyable)
-.venv\Scripts\python -m orbitsim --solar      # launch the solar-system viewer
+# Activate the venv:
+source .venv/bin/activate          # Linux / macOS
+.venv\Scripts\Activate.ps1         # Windows PowerShell
+
+pip install -e ".[dev,render]"     # physics + render deps
+
+# Run the test suite (~266 tests):
+python -m pytest tests/ -q
+
+# Launch the game:
+python -m orbitsim                 # the sandbox (LEO, flyable)
+python -m orbitsim --solar         # the solar-system viewer
 ```
-
-Once installed, the `orbitsim` console script is also available (`orbitsim`, `orbitsim --solar`).
 
 First launch downloads and caches large assets into `data/` (gitignored): the DE440 ephemeris
 kernel (~32 MB) and texture maps. All download code degrades gracefully offline.
@@ -101,8 +106,10 @@ controls, a guide to the HUD/navball, and a first-flight walkthrough.
 ## Documentation
 
 Start with [`docs/PLAYING.md`](docs/PLAYING.md) to actually fly. New to orbital mechanics?
-Read [`docs/BEGINNERS-GUIDE.md`](docs/BEGINNERS-GUIDE.md). Can't run the game?
-[`docs/VIRTUAL-TOUR.md`](docs/VIRTUAL-TOUR.md) walks you through the experience scene by scene.
+Read [`docs/BEGINNERS-GUIDE.md`](docs/BEGINNERS-GUIDE.md). Showing this to someone non-technical?
+[`docs/PLAIN-ENGLISH.md`](docs/PLAIN-ENGLISH.md) explains the whole game with every term defined.
+Can't run the game? [`docs/VIRTUAL-TOUR.md`](docs/VIRTUAL-TOUR.md) walks you through the
+experience scene by scene.
 
 The original build is specified phase-by-phase in [`docs/`](docs/):
 
@@ -110,13 +117,14 @@ The original build is specified phase-by-phase in [`docs/`](docs/):
 |---|---|
 | [`docs/PLAYING.md`](docs/PLAYING.md) | **How to play** — controls, HUD/navball, first-flight walkthrough |
 | [`docs/BEGINNERS-GUIDE.md`](docs/BEGINNERS-GUIDE.md) | **The physics explained** — orbits, burns, transfers, N-body gravity for beginners |
+| [`docs/PLAIN-ENGLISH.md`](docs/PLAIN-ENGLISH.md) | **Plain-English overview** — the whole game explained for a non-technical audience, with every term defined |
 | [`docs/VIRTUAL-TOUR.md`](docs/VIRTUAL-TOUR.md) | **Virtual tour** — what the game looks and feels like, scene by scene |
 | [`docs/00-OVERVIEW.md`](docs/00-OVERVIEW.md) | Architecture, conventions, definition of done — **read first** |
 | [`docs/01-physics-core.md`](docs/01-physics-core.md) | Two-body physics core (formulas + test values) |
 | [`docs/02-rendering-scale.md`](docs/02-rendering-scale.md) | Panda3D render + the floating-origin scale solution |
 | [`docs/03-sandbox-maneuvers.md`](docs/03-sandbox-maneuvers.md) | Maneuver nodes, burns, live prediction |
 | [`docs/04-transfers-optimizer.md`](docs/04-transfers-optimizer.md) | Hohmann/bi-elliptic/Lambert + ΔV optimizer + porkchop |
-| [`docs/05-real-solar-system.md`](docs/05-real-solar-system.md) | Skyfield ephemerides, patched conics, SOI |
+| [`docs/05-real-solar-system.md`](docs/05-real-solar-system.md) | Skyfield ephemerides; original patched-conic plan, superseded by full N-body |
 | [`docs/06-polish-packaging.md`](docs/06-polish-packaging.md) | Save/load, HUD polish, packaging |
 
 Subsequent "playable game" work is specified under [`docs/superpowers/`](docs/superpowers/)

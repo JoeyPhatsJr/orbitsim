@@ -14,12 +14,15 @@ the rules every phase must follow, and how to know when a task is actually done.
 
 ## 1. What we are building
 
-A desktop (Windows) 3D orbital mechanics simulator/game in Python. Three pillars:
+A desktop 3D orbital mechanics simulator/game in Python (Windows, Linux, macOS). Three pillars:
 
 1. **Transfer & ΔV planning** — Hohmann, bi-elliptic, plane-change, and Lambert transfers;
    a ΔV-budget optimizer with porkchop plots.
-2. **Real solar system** — real planet/moon positions from JPL ephemerides (Skyfield/DE440),
-   patched-conic interplanetary trajectories with sphere-of-influence (SOI) handoffs.
+2. **Real solar system** — real planet/moon positions from JPL ephemerides (Skyfield/DE440).
+   Interplanetary trajectories fly under full **N-body gravity** (Earth, Moon, Sun, and all
+   seven planets pulling simultaneously) rather than patched conics; sphere-of-influence (SOI)
+   shells are shown as visual guides only, not gravity-switch boundaries. See `CLAUDE.md` for
+   the current N-body model.
 3. **Sandbox** — free experimentation: place a vessel, add maneuver nodes, burn
    prograde/retrograde/normal, watch the predicted orbit update live.
 

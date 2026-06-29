@@ -246,6 +246,8 @@ accuracy — the ballet of gravity and velocity that is orbital mechanics.
 If this has piqued your interest, here are the rabbit holes:
 
 - **The controls and HUD in detail**: [`PLAYING.md`](PLAYING.md)
+- **Showing this to someone non-technical?**: [`PLAIN-ENGLISH.md`](PLAIN-ENGLISH.md) explains the
+  whole game with every term defined inline
 - **"Orbital Mechanics for Engineering Students"** by Howard Curtis — the textbook this game's
   physics is validated against
 - **NASA's Trajectory Browser** (trajbrowser.arc.nasa.gov) — explore real mission trajectories

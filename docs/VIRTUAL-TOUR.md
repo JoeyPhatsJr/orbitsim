@@ -279,7 +279,7 @@ For anyone curious about what's happening under the hood:
   stays in 64-bit; the renderer subtracts the camera's position in 64-bit *before* casting to
   32-bit for the GPU. This keeps everything sharp at every zoom level.
 
-- There are **275+ unit tests** validating the physics against textbook values (Howard Curtis,
+- There are **~266 unit tests** validating the physics against textbook values (Howard Curtis,
   *Orbital Mechanics for Engineering Students*). Energy conservation, angular momentum
   conservation, period closure, vis-viva identity — all checked to at least 7-digit precision.
   If the physics were wrong, the tests would catch it.
@@ -287,8 +287,10 @@ For anyone curious about what's happening under the hood:
 ## If you do get to play
 
 See [PLAYING.md](PLAYING.md) for the full controls, keybindings, HUD guide, and a step-by-step
-first-flight tutorial. Press F1 in-game for a keybind overlay.
+first-flight tutorial. Press F1 in-game for a keybind overlay. New to the game entirely?
+[PLAIN-ENGLISH.md](PLAIN-ENGLISH.md) explains everything — vocabulary included — for someone
+who's never seen it.
 
-The game requires Python 3.9+ on Windows with some dependencies (Panda3D for rendering,
-Skyfield for ephemerides, NumPy/SciPy for math). First launch downloads about 32 MB of
+The game requires Python 3.9+ on Windows, Linux, or macOS, with some dependencies (Panda3D for
+rendering, Skyfield for ephemerides, NumPy/SciPy for math). First launch downloads about 32 MB of
 ephemeris data and some texture maps. After that it runs offline.

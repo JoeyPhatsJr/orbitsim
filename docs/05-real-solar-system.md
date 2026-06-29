@@ -2,6 +2,12 @@
 
 **Gate:** Phase 4 transfers work.
 
+> **Status note:** this phase's original goal (patched conics with SOI handoffs) was superseded
+> by a full N-body model (`core/nbody.py`) — every body pulls on the ship simultaneously, with no
+> central-body switching at SOI crossings. The ephemeris work (Task 5.1/5.2 below) shipped as
+> planned and is still in use. See `CLAUDE.md` for the current model; SOI shells are now rendered
+> purely as visual guides, not as physics boundaries.
+
 Goal: replace the toy single-body world with the real solar system — real planet/moon positions
 from JPL data — and support interplanetary trajectories via patched conics with SOI handoffs.
 
