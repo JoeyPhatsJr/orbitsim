@@ -63,12 +63,15 @@ def integrate_powered(
 ) -> tuple:
     """Integrate r, v, fuel over dt_s under two-body gravity + thrust.
 
-    Operator splitting per substep: the thrust contributes an *exact*
-    rocket-equation velocity impulse over the burn portion of the substep
-    (so the total delta-V telescopes to ve*ln(m0/mf) and fuel reaches exactly
-    zero, independent of how depletion aligns with the grid), then the state
-    drifts under two-body gravity via RK4. Thrust direction is held constant
-    over the interval (the sim layer slews attitude separately).
+    Strang (symmetric) operator splitting per substep: half the substep's
+    rocket-equation velocity impulse, a gravity drift over the full substep
+    (RK4 on the two-body field), then the other half impulse. The impulses
+    are *exact* rocket-equation increments, so the total delta-V telescopes
+    to ve*ln(m0/mf) and fuel reaches exactly zero independent of how
+    depletion aligns with the grid; the symmetric placement makes the split
+    2nd-order accurate (impulse-first is only 1st order). Thrust direction
+    is held constant over the interval (the sim layer slews attitude
+    separately).
 
     Returns
     -------
@@ -86,13 +89,14 @@ def integrate_powered(
     mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
 
     for _ in range(substeps):
-        # Thrust: exact rocket-equation impulse over the burning portion of h.
+        # First half of the substep's exact rocket-equation impulse.
+        dm_half = 0.0
         if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
             t_burn = min(h, fuel / mdot)
+            dm_half = 0.5 * mdot * t_burn
             m_start = dry_mass_kg + fuel
-            m_end = m_start - mdot * t_burn
-            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
-            fuel = max(0.0, fuel - mdot * t_burn)
+            v = v + ve_mps * np.log(m_start / (m_start - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
         # Gravity drift: RK4 on the two-body field for the full substep.
         k1r = v
         k1v = _gravity_accel(r, mu)
@@ -104,6 +108,11 @@ def integrate_powered(
         k4v = _gravity_accel(r + h * k3r, mu)
         r = r + (h / 6.0) * (k1r + 2 * k2r + 2 * k3r + k4r)
         v = v + (h / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
+        # Second half impulse (telescopes with the first: total is exact).
+        if dm_half > 0.0:
+            m_mid = dry_mass_kg + fuel
+            v = v + ve_mps * np.log(m_mid / (m_mid - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
 
     return (
         StateVector(r=r, v=v, mu=mu, epoch_s=state.epoch_s + dt_s),
@@ -123,9 +132,10 @@ def integrate_powered_nbody(
 ) -> tuple:
     """Integrate r, v, fuel over dt_s under earth_moon_accel + thrust.
 
-    Operator splitting per substep: exact rocket-equation velocity impulse,
-    then velocity-Verlet drift under earth_moon_accel. Same fuel-reaches-zero
-    guarantee as integrate_powered; substep count is proximity-aware.
+    Strang splitting per substep: half the exact rocket-equation velocity
+    impulse, a velocity-Verlet drift under earth_moon_accel, then the other
+    half impulse (2nd order; same fuel-reaches-zero and delta-V telescoping
+    guarantees as integrate_powered). Substep count is proximity-aware.
 
     Returns
     -------
@@ -148,13 +158,14 @@ def integrate_powered_nbody(
     mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
 
     for _ in range(n):
-        # Thrust: exact rocket-equation impulse over the burning portion of h.
+        # First half of the substep's exact rocket-equation impulse.
+        dm_half = 0.0
         if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
             t_burn = min(h, fuel / mdot)
+            dm_half = 0.5 * mdot * t_burn
             m_start = dry_mass_kg + fuel
-            m_end = m_start - mdot * t_burn
-            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
-            fuel = max(0.0, fuel - mdot * t_burn)
+            v = v + ve_mps * np.log(m_start / (m_start - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
         # Gravity: velocity-Verlet under earth_moon_accel (zero if mu==0).
         if state.mu != 0.0:
             a0 = earth_moon_accel(r, t)
@@ -166,6 +177,11 @@ def integrate_powered_nbody(
         else:
             r = r + v * h
             t = t + h
+        # Second half impulse (telescopes with the first: total is exact).
+        if dm_half > 0.0:
+            m_mid = dry_mass_kg + fuel
+            v = v + ve_mps * np.log(m_mid / (m_mid - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
 
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s), float(fuel)
 
@@ -180,7 +196,7 @@ def integrate_powered_solar(
     ve_mps: float,
     dt_s: float,
 ) -> tuple:
-    """Integrate under solar_system_accel + thrust (same operator-splitting as nbody variant)."""
+    """Integrate under solar_system_accel + thrust (same Strang splitting as nbody variant)."""
     from orbitsim.core.nbody import solar_system_accel, _solar_system_substeps
 
     thrust_dir_unit = np.asarray(thrust_dir_unit, dtype=np.float64)
@@ -194,12 +210,13 @@ def integrate_powered_solar(
     mdot = mass_flow_rate(throttle, max_thrust_n, ve_mps) if ve_mps > 0 else 0.0
 
     for _ in range(n):
+        dm_half = 0.0
         if throttle > 0.0 and fuel > 0.0 and mdot > 0.0:
             t_burn = min(h, fuel / mdot)
+            dm_half = 0.5 * mdot * t_burn
             m_start = dry_mass_kg + fuel
-            m_end = m_start - mdot * t_burn
-            v = v + ve_mps * np.log(m_start / m_end) * thrust_dir_unit
-            fuel = max(0.0, fuel - mdot * t_burn)
+            v = v + ve_mps * np.log(m_start / (m_start - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
         if state.mu != 0.0:
             a0 = solar_system_accel(r, t)
             v_half = v + 0.5 * a0 * h
@@ -210,5 +227,9 @@ def integrate_powered_solar(
         else:
             r = r + v * h
             t = t + h
+        if dm_half > 0.0:
+            m_mid = dry_mass_kg + fuel
+            v = v + ve_mps * np.log(m_mid / (m_mid - dm_half)) * thrust_dir_unit
+            fuel = max(0.0, fuel - dm_half)
 
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s), float(fuel)
