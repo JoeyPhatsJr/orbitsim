@@ -1,6 +1,9 @@
 """Restricted N-body (CR3BP) core: idealized circular Earth+Moon, a velocity-Verlet
 ship propagator, the Jacobi constant, and the Lagrange points. Barycentric inertial,
 SI, float64. The ship is a massless test particle; the bodies are on rails."""
+from contextlib import contextmanager
+import threading
+
 import numpy as np
 from scipy.optimize import brentq
 
@@ -151,6 +154,7 @@ from orbitsim.core.bodies import URANUS as URANUS_BODY, NEPTUNE as NEPTUNE_BODY
 # approximations. Falls back gracefully if the DE440 kernel is unavailable.
 # ---------------------------------------------------------------------------
 _ephemeris_cache = {}
+_ephemeris_context = threading.local()
 
 try:
     from orbitsim.core.ephemeris import body_state as _ephem_body_state
@@ -189,9 +193,63 @@ def ephemeris_available() -> bool:
     return bool(_ephemeris_cache)
 
 
+@contextmanager
+def stable_prediction_ephemeris():
+    """Give a background prediction its own time-indexed JPL ephemeris cache."""
+    previous = getattr(_ephemeris_context, "prediction_cache", None)
+    _ephemeris_context.prediction_cache = {}
+    try:
+        yield
+    finally:
+        _ephemeris_context.prediction_cache = previous
+
+
+_PREDICTION_EPHEMERIS_STEP_S = 86400.0
+
+
+def _prediction_ephemeris_state(name, fallback_fn, t_s):
+    """Cubic-Hermite interpolation of thread-local daily JPL samples."""
+    cache = _ephemeris_context.prediction_cache
+    step = _PREDICTION_EPHEMERIS_STEP_S
+    bucket = int(np.floor(float(t_s) / step))
+
+    def sample(index):
+        key = (name, index)
+        if key not in cache:
+            epoch = index * step
+            if _EPHEMERIS_AVAILABLE:
+                try:
+                    cache[key] = _ephem_body_state(name, epoch, center="EARTH")
+                except Exception:
+                    cache[key] = fallback_fn(epoch)
+            else:
+                cache[key] = fallback_fn(epoch)
+        return cache[key]
+
+    start = sample(bucket)
+    end = sample(bucket + 1)
+    u = (float(t_s) - bucket * step) / step
+    u2 = u * u
+    u3 = u2 * u
+    h00 = 2.0 * u3 - 3.0 * u2 + 1.0
+    h10 = u3 - 2.0 * u2 + u
+    h01 = -2.0 * u3 + 3.0 * u2
+    h11 = u3 - u2
+    r = h00 * start.r + h10 * step * start.v + h01 * end.r + h11 * step * end.v
+    dh00 = (6.0 * u2 - 6.0 * u) / step
+    dh10 = 3.0 * u2 - 4.0 * u + 1.0
+    dh01 = (-6.0 * u2 + 6.0 * u) / step
+    dh11 = 3.0 * u2 - 2.0 * u
+    v = dh00 * start.r + dh10 * start.v + dh01 * end.r + dh11 * end.v
+    return StateVector(r=r, v=v, mu=start.mu, epoch_s=float(t_s))
+
+
 def _make_cached_state_fn(name, fallback_fn):
     """Create a state function that returns cached ephemeris when available."""
     def fn(t_s):
+        prediction_cache = getattr(_ephemeris_context, "prediction_cache", None)
+        if prediction_cache is not None:
+            return _prediction_ephemeris_state(name, fallback_fn, t_s)
         cached = _ephemeris_cache.get(name)
         if cached is not None:
             return cached
@@ -274,7 +332,7 @@ def _solar_system_substeps(state, dt_s, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_solar_system(state, dt_s, max_step_s=3600.0):
+def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0):
     """Propagate a vessel under full solar system gravity (geocentric)."""
     n = _solar_system_substeps(state, dt_s, max_step_s)
     r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, solar_system_accel, n)
@@ -338,7 +396,7 @@ def osculating_elements_solar(state, t_s):
 def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
     """Largest warp whose per-frame integration stays within budget_substeps (solar system)."""
     allowed = [w for w in warp_steps
-               if _solar_system_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) <= budget_substeps]
     return max(allowed) if allowed else min(warp_steps)
 
 

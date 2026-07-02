@@ -1,4 +1,6 @@
 """Panda3D ShowBase bootstrap and per-frame loop."""
+from contextlib import nullcontext
+
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
 from direct.gui.DirectButton import DirectButton
@@ -29,6 +31,7 @@ from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere, make_ring
 from orbitsim.core.nbody import MOON_SOI_M
+from orbitsim.core.constants import MU_SUN
 from orbitsim.core.planets import (
     EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
     JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
@@ -41,6 +44,7 @@ from orbitsim.render.orbit_lines import (
     REFERENCE_ORBIT_COLOR,
     build_orbit_node,
     sample_orbit_points,
+    sample_relative_orbit_points,
 )
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
@@ -87,24 +91,75 @@ def _maneuver_preview_key(node, scheduled_epoch_s):
     )
 
 
+def _trajectory_horizon_s(state, solar_system: bool) -> float:
+    """Prediction horizon that keeps escape trajectories continuous across Earth SOI."""
+    if not solar_system:
+        return 7.0 * 86400.0
+    from orbitsim.core.constants import MU_EARTH
+    from orbitsim.core.planets import EARTH_SOI_M
+
+    radius = float(np.linalg.norm(state.r))
+    energy = 0.5 * float(np.dot(state.v, state.v)) - MU_EARTH / radius
+    if energy >= 0.0:
+        return 400.0 * 86400.0
+    semi_major = -MU_EARTH / (2.0 * energy)
+    eccentricity_vector = (
+        ((float(np.dot(state.v, state.v)) - MU_EARTH / radius) * state.r
+         - float(np.dot(state.r, state.v)) * state.v)
+        / MU_EARTH
+    )
+    apoapsis = semi_major * (1.0 + float(np.linalg.norm(eccentricity_vector)))
+    if apoapsis >= 0.8 * EARTH_SOI_M:
+        return 400.0 * 86400.0
+    period = 2.0 * np.pi * np.sqrt(semi_major**3 / MU_EARTH)
+    return min(2.0 * period, 30.0 * 86400.0)
+
+
+def _coast_chunks(duration_s: float, max_chunk_s: float = 86400.0) -> list[float]:
+    """Split a teleport coast into bounded positive steps that land exactly on its end."""
+    if duration_s <= 0.0:
+        return []
+    count = max(1, int(np.ceil(duration_s / max_chunk_s)))
+    chunk = duration_s / count
+    return [chunk] * count
+
+
+def _localize_polyline(points):
+    """Return (local points, origin) with float64 subtraction before rendering."""
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
+        raise ValueError("polyline points must have shape (n, 3) with n > 0")
+    origin = pts[0].copy()
+    return pts - origin, origin
+
+
 class OrbitApp(ShowBase):
     """Renders one central body + vessels with orbit lines; time-warpable."""
 
     def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
+        from orbitsim.render.ui.theme import install_default_font
+        install_default_font(self)
         self.world = world
         self.clock = clock
         self.solar_system = solar_system
         self.disable_mouse()
         self._sim_started = False
         self._title_nodes = []
+        self._ui_viewport = None
+        from orbitsim.render.ui import OperationController, PanelManager
+        self.panel_manager = PanelManager()
+        self.operation = OperationController()
+        from orbitsim.render.ui.performance import FrameMeter
+        self.frame_meter = FrameMeter()
         self._build_title_screen()
 
     def destroy(self) -> None:
-        executor = getattr(self, "_preview_executor", None)
-        if executor is not None:
-            executor.shutdown(wait=False, cancel_futures=True)
-            self._preview_executor = None
+        for attr in ("_preview_executor", "_trajectory_executor", "_planning_executor"):
+            executor = getattr(self, attr, None)
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+                setattr(self, attr, None)
         super().destroy()
 
     # ------------------------------------------------------------------ title screen
@@ -115,23 +170,24 @@ class OrbitApp(ShowBase):
         The sim scene and update loop are not built until Play is clicked, so the
         chosen budget is applied to every vessel before flight begins.
         """
+        from orbitsim.render.ui.theme import THEME, button_options
         backdrop = DirectFrame(
-            frameColor=(0.02, 0.03, 0.08, 1.0),
+            frameColor=(0.012, 0.025, 0.040, 1.0),
             frameSize=(-2.0, 2.0, -1.2, 1.2),
             parent=self.aspect2d,
         )
         title = OnscreenText(
-            text="ORBITAL MECHANICS SIM",
+            text="ORBITSIM",
             pos=(0.0, 0.55),
             scale=0.13,
-            fg=(0.85, 0.92, 1.0, 1.0),
+            fg=THEME.text,
             parent=self.aspect2d,
         )
         subtitle = OnscreenText(
-            text="KSP, but the physics are real",
+            text="REAL GRAVITY  /  REAL ORBITS  /  YOUR MISSION",
             pos=(0.0, 0.42),
             scale=0.05,
-            fg=(0.6, 0.7, 0.85, 1.0),
+            fg=THEME.cyan,
             parent=self.aspect2d,
         )
         # Fuel-load control (delta-V is the derived readout via the rocket equation).
@@ -165,11 +221,12 @@ class OrbitApp(ShowBase):
             text_fg=(1, 1, 1, 1), boxPlacement="left", parent=self.aspect2d,
         )
         play = DirectButton(
-            text="  PLAY  ",
+            text=("  OPEN SOLAR VIEWER  " if self.solar_system else "  LAUNCH SANDBOX  "),
             scale=0.1,
             pos=(0.0, 0.0, -0.45),
             command=self._on_play,
             parent=self.aspect2d,
+            **button_options(),
         )
         self._title_nodes = [backdrop, title, subtitle, self._budget_label,
                              self._budget_slider, hint, self._unlimited_check, play]
@@ -217,6 +274,8 @@ class OrbitApp(ShowBase):
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
+        from orbitsim.render.ui.widgets import OperationOverlay
+        self.operation_overlay = OperationOverlay(self, self._cancel_operation)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self.settings_panel = SettingsPanel(
@@ -287,9 +346,16 @@ class OrbitApp(ShowBase):
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
         # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
         self._orbit_frame = self.render.attach_new_node("orbit_frame")
-        self._traj_state_cache = [None for _ in world.vessels]  # (StateVector, scale) per vessel
+        self._traj_world_cache = [None for _ in world.vessels]
+        self._traj_epoch_cache = [None for _ in world.vessels]
+        self._traj_future = [None for _ in world.vessels]
+        self._traj_last_submit_t = [float("-inf") for _ in world.vessels]
+        self._traj_last_complete_t = [float("-inf") for _ in world.vessels]
+        self._traj_render_scale = [None for _ in world.vessels]
+        self._traj_render_origin = [None for _ in world.vessels]
 
         self._preview_np = None
+        self._preview_origin = None
         self._preview_submit_t = 0.0
         self._preview_future = None
         self._preview_future_key = None
@@ -298,6 +364,14 @@ class OrbitApp(ShowBase):
             self._preview_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="orbit-preview"
             )
+            self._trajectory_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="trajectory"
+            )
+            self._planning_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="planner"
+            )
+            self._porkchop_future = None
+            self._porkchop_request = 0
         self._porkchop_card = None
         if self.solar_system:
             self._build_planets()
@@ -315,6 +389,13 @@ class OrbitApp(ShowBase):
                 self, on_set_mode=self._set_sas, on_toggle=self._toggle_sas
             )
             self.vel_readout = VelocityReadout(self, lambda: self.hud.units)
+            from orbitsim.render.ui.widgets import PanelDock
+            self.panel_dock = PanelDock(self, [
+                ("ORBIT", self.hud.toggle_orbit),
+                ("VESSEL", self.hud.toggle_vessel),
+                ("MANEUVER", self._toggle_maneuver_drawer),
+            ])
+            self._maneuver_frame.hide()  # clean-flight default; MNV dock button opens it
 
             # Targetable bodies. Click a marker to select.
             from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
@@ -325,14 +406,14 @@ class OrbitApp(ShowBase):
             self._targets = [MoonTarget()] + [
                 LagrangePointTarget(n, n) for n in ("L1", "L2", "L3", "L4", "L5")
             ] + [
-                PlanetTarget("Sun", _csun),
-                PlanetTarget("Mercury", _cmercury),
-                PlanetTarget("Venus", _cvenus),
-                PlanetTarget("Mars", _cmars),
-                PlanetTarget("Jupiter", _cjupiter),
-                PlanetTarget("Saturn", _csaturn),
-                PlanetTarget("Uranus", _curanus),
-                PlanetTarget("Neptune", _cneptune),
+                PlanetTarget("Sun", _csun, "SUN"),
+                PlanetTarget("Mercury", _cmercury, "MERCURY"),
+                PlanetTarget("Venus", _cvenus, "VENUS"),
+                PlanetTarget("Mars", _cmars, "MARS"),
+                PlanetTarget("Jupiter", _cjupiter, "JUPITER"),
+                PlanetTarget("Saturn", _csaturn, "SATURN"),
+                PlanetTarget("Uranus", _curanus, "URANUS"),
+                PlanetTarget("Neptune", _cneptune, "NEPTUNE"),
             ]
             self._target = None     # current Target or None
             self._ca_recompute_t = 0.0
@@ -507,6 +588,7 @@ class OrbitApp(ShowBase):
             # geocentric position each frame). Built lazily on first zoom like the Moon line.
             self._planet_orbit_nps = {}
             self._planet_orbit_scale = None
+            self._planet_orbit_epoch_bucket = None
             self._sun_orbit_frame = self.render.attach_new_node("sun_orbit_frame")
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.starfield = build_starfield(self)
@@ -575,6 +657,7 @@ class OrbitApp(ShowBase):
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
     PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
+    TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
 
     def _build_maneuver_ui(self) -> None:
         """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
@@ -586,10 +669,17 @@ class OrbitApp(ShowBase):
         self._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
         self._dv_line = self._node_line = self._target_line = self._encounter_line = ""
         self._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
+        self._auto_execute_node = False
         self._node_marker_np = None
         self._node_dv_label = None
         self._dv_value_text = {}
         self._jog = {}
+        from orbitsim.render.ui.theme import THEME, button_options
+        self._maneuver_frame = DirectFrame(
+            frameColor=THEME.panel,
+            frameSize=(-1.34, 0.02, -0.29, 0.60),
+            parent=self.a2dBottomRight,
+        )
         rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
         for axis, label, z in rows:
             OnscreenText(
@@ -598,7 +688,7 @@ class OrbitApp(ShowBase):
                 scale=0.045,
                 fg=(1, 1, 1, 1),
                 align=TextNode.ALeft,
-                parent=self.a2dBottomRight,
+                parent=self._maneuver_frame,
             )
             self._jog[axis] = DirectSlider(
                 pos=(-0.62, 0.0, z),
@@ -606,7 +696,7 @@ class OrbitApp(ShowBase):
                 range=(-1.0, 1.0),
                 value=0.0,
                 pageSize=0.25,
-                parent=self.a2dBottomRight,
+                parent=self._maneuver_frame,
             )
             self._dv_value_text[axis] = OnscreenText(
                 text="+0",
@@ -615,36 +705,46 @@ class OrbitApp(ShowBase):
                 fg=(1.0, 0.9, 0.4, 1),
                 align=TextNode.ALeft,
                 mayChange=True,
-                parent=self.a2dBottomRight,
+                parent=self._maneuver_frame,
             )
         # Total dV magnitude display.
         self._dv_total_text = OnscreenText(
             text="", pos=(-0.65, 0.52), scale=0.05,
             fg=(1.0, 0.5, 1.0, 1.0), align=TextNode.ACenter,
-            mayChange=True, parent=self.a2dBottomRight,
+            mayChange=True, parent=self._maneuver_frame,
         )
         # Node time jog slider (variable time stepping).
         OnscreenText(
             text="Node T", pos=(-1.22, 0.04 - 0.015), scale=0.045,
             fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
-            parent=self.a2dBottomRight,
+            parent=self._maneuver_frame,
         )
         self._node_time_jog = DirectSlider(
             pos=(-0.62, 0.0, 0.04), scale=0.34,
             range=(-1.0, 1.0), value=0.0, pageSize=0.25,
-            parent=self.a2dBottomRight,
+            parent=self._maneuver_frame,
         )
         self._node_time_text = OnscreenText(
             text="T+0s", pos=(-0.14, 0.04 - 0.015), scale=0.045,
             fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
-            mayChange=True, parent=self.a2dBottomRight,
+            mayChange=True, parent=self._maneuver_frame,
+        )
+        self._action_frame = DirectFrame(
+            frameColor=THEME.panel,
+            frameSize=(0.03, 0.78, 0.03, 0.25),
+            parent=self.a2dBottomLeft,
         )
         self._exec_btn = DirectButton(
             text="Execute Burn",
-            scale=0.05,
-            pos=(-0.5, 0.0, -0.08),
+            scale=0.045,
+            pos=(0.40, 0.0, 0.10),
             command=self._execute_burn,
-            parent=self.a2dBottomRight,
+            parent=self._action_frame,
+            **button_options(),
+        )
+        self._action_status = OnscreenText(
+            text="NO MANEUVER PLANNED", pos=(0.40, 0.18), scale=0.036,
+            fg=THEME.text_muted, mayChange=True, parent=self._action_frame,
         )
         # Scheduled-node controls: jump to next apsis, clear.
         node_btns = [
@@ -656,10 +756,28 @@ class OrbitApp(ShowBase):
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
-                         command=cmd, parent=self.a2dBottomRight)
+                         command=cmd, parent=self._maneuver_frame, **button_options())
         # Releasing the mouse springs every jog slider back to its center (zero rate).
         self.accept("mouse1-up", self._release_jogs)
         self._refresh_readout()
+
+    def _toggle_maneuver_drawer(self) -> None:
+        if self._maneuver_frame.is_hidden():
+            self._maneuver_frame.show()
+        else:
+            self._maneuver_frame.hide()
+
+    def _cancel_operation(self) -> None:
+        self.operation.cancel()
+        rollback = getattr(self, "_operation_rollback", None)
+        if rollback is not None:
+            vessel, state, orientation, clock_time = rollback
+            vessel.state = state
+            vessel.orientation = orientation
+            self.clock.sim_time_s = clock_time
+        self._operation_rollback = None
+        self.operation_overlay.update(self.operation.status)
+        self._flash_message("Operation cancelled")
 
     def _jog_rate_mps_per_s(self, value: float) -> float:
         """Map a jog displacement in [-1, 1] to a signed delta-V rate [m/s per s].
@@ -737,8 +855,8 @@ class OrbitApp(ShowBase):
         return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
 
     def _try_pick_target(self):
-        """On a left-click tap (not a drag), select the nearest target marker."""
-        from orbitsim.render.picking import nearest_marker
+        """On a left-click tap, select a body or coast to a future trajectory point."""
+        from orbitsim.render.picking import nearest_future_point, nearest_marker
         down = getattr(self, "_mouse1_down_px", None)
         self._mouse1_down_px = None
         if down is None:
@@ -755,6 +873,27 @@ class OrbitApp(ShowBase):
         if hit is not None:
             self._clear_target()   # tear down any prior target's CA markers before switching
             self._target = self._targets[idxs[hit]]
+            return
+
+        points = self._traj_world_cache[0] if self._traj_world_cache else None
+        epochs = self._traj_epoch_cache[0] if self._traj_epoch_cache else None
+        if points is None or epochs is None or self.world.any_thrusting():
+            return
+        trajectory_px = [self._marker_px(point) for point in points]
+        point_idx = nearest_future_point(click, trajectory_px, epochs, now, tol_px=16.0)
+        if point_idx is None:
+            return
+        duration_s = float(epochs[point_idx] - now)
+        vessel = self.world.vessels[0]
+        self.clock.warp = 1.0
+        self._operation_rollback = (
+            vessel, vessel.state, vessel.orientation.copy(), self.clock.sim_time_s
+        )
+        self.operation.start(
+            f"Coasting {_fmt_countdown(duration_s)} along trajectory",
+            self._trajectory_coast_operation(duration_s),
+        )
+        self.operation_overlay.update(self.operation.status)
 
     def _current_node(self) -> ManeuverNode:
         """Build the node from the current dV values at the scheduled epoch (or now if none)."""
@@ -794,6 +933,7 @@ class OrbitApp(ShowBase):
             pass
 
     def _clear_node(self):
+        self._auto_execute_node = False
         self._node_epoch_s = None
         if self._node_marker_np is not None:
             self._node_marker_np.remove_node()
@@ -816,7 +956,8 @@ class OrbitApp(ShowBase):
         now = self.clock.sim_time_s
         self._flash_message(f"Planning {self._target.name} intercept...")
         if isinstance(self._target, PlanetTarget):
-            from orbitsim.core.optimize import intercept_node_callable
+            from orbitsim.core.ephemeris import body_state
+            from orbitsim.core.optimize import interplanetary_departure_node
             from orbitsim.core.planets import A_EARTH, _N_EARTH
             target_a = {
                 "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
@@ -831,12 +972,17 @@ class OrbitApp(ShowBase):
                 synodic = 2.0 * np.pi / abs(w_ship - w_target)
             else:
                 synodic = 365.25 * 86400.0
-            dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
+            dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 24)
             hohmann_tof = np.pi * np.sqrt(((A_EARTH + (target_a or A_EARTH)) / 2.0)**3 / MU_SUN)
-            tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 48)
+            tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 32)
             try:
-                node = intercept_node_callable(
-                    v0.state, self._target.state_at, self.world.central.mu, dep, tof)
+                node = interplanetary_departure_node(
+                    v0.state,
+                    self._target.planning_state_at,
+                    lambda epoch: body_state("SUN", epoch, center="EARTH"),
+                    dep,
+                    tof,
+                )
             except ValueError:
                 self._flash_message("No intercept found")
                 return
@@ -856,6 +1002,7 @@ class OrbitApp(ShowBase):
                 self._flash_message("No intercept found")
                 return
         self._node_epoch_s = node.epoch_s
+        self._auto_execute_node = False
         self._dv["pro"] = node.dv_prograde_mps
         self._dv["nrm"] = node.dv_normal_mps
         self._dv["rad"] = node.dv_radial_mps
@@ -959,7 +1106,7 @@ class OrbitApp(ShowBase):
         import math
         node = self._current_node()
         budget = self.world.vessels[0].delta_v_remaining
-        left = "∞" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
+        left = "INF" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
         self._dv_line = (
             f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
             if node.magnitude_mps > 0.0
@@ -970,6 +1117,29 @@ class OrbitApp(ShowBase):
                 self._dv_total_text.setText(f"Total dV: {node.magnitude_mps:,.1f} m/s")
             else:
                 self._dv_total_text.setText("")
+        if hasattr(self, "_exec_btn"):
+            ttn = self._time_to_node()
+            if getattr(self, "_auto_execute_node", False):
+                self._exec_btn["text"] = "Cancel Auto Burn"
+            elif ttn is not None and ttn > self.EXECUTE_TOLERANCE_S:
+                self._exec_btn["text"] = "Jump & Execute"
+            else:
+                self._exec_btn["text"] = "Execute Burn"
+            if hasattr(self, "_action_status"):
+                if node.magnitude_mps <= 0.0:
+                    self._action_status.setText("NO MANEUVER PLANNED")
+                    from direct.gui import DirectGuiGlobals as DGG
+                    self._exec_btn["state"] = DGG.DISABLED
+                elif ttn is not None and ttn > 0.0:
+                    from direct.gui import DirectGuiGlobals as DGG
+                    self._exec_btn["state"] = DGG.NORMAL
+                    self._action_status.setText(
+                        f"NODE T-{_fmt_countdown(ttn)}  /  {node.magnitude_mps:,.0f} m/s"
+                    )
+                else:
+                    from direct.gui import DirectGuiGlobals as DGG
+                    self._exec_btn["state"] = DGG.NORMAL
+                    self._action_status.setText(f"BURN READY  /  {node.magnitude_mps:,.0f} m/s")
         self._sync_maneuver_hud()
 
     def _sync_maneuver_hud(self) -> None:
@@ -1013,7 +1183,7 @@ class OrbitApp(ShowBase):
         dv_eq = params["dv_equivalent"]
         pe_km = params["periapsis_m"] / 1000.0
         self._encounter_line = (
-            f"Flyby {dom_body.name}: v∞ {v_inf_kms:,.1f} km/s  "
+            f"Flyby {dom_body.name}: v-inf {v_inf_kms:,.1f} km/s  "
             f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
             f"free dV {dv_eq:,.0f} m/s"
         )
@@ -1048,7 +1218,17 @@ class OrbitApp(ShowBase):
 
         ttn = self._time_to_node()
         if ttn is not None and ttn > self.EXECUTE_TOLERANCE_S:
-            return  # scheduled node not due yet
+            if self.world.any_thrusting():
+                self._flash_message("Cut throttle before jumping to the node")
+                return
+            self.clock.warp = 1.0
+            vessel = self.world.vessels[0]
+            self._operation_rollback = (
+                vessel, vessel.state, vessel.orientation.copy(), self.clock.sim_time_s
+            )
+            self.operation.start("Coasting to maneuver", self._jump_operation(ttn))
+            self.operation_overlay.update(self.operation.status)
+            return
         if ttn is not None and ttn < -self.EXECUTE_TOLERANCE_S:
             self._clear_node()  # node already passed; discard rather than burn backward in time
             return
@@ -1069,6 +1249,36 @@ class OrbitApp(ShowBase):
         self._release_jogs()
         self._refresh_readout()
 
+    def _jump_operation(self, duration_s):
+        """Frame-budgeted coast generator; one ephemeris-aware day per rendered frame."""
+        from orbitsim.core.nbody import refresh_ephemeris_cache
+
+        chunks = _coast_chunks(duration_s)
+        total = len(chunks)
+        for index, dt_s in enumerate(chunks):
+            refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
+            self.world.step(dt_s)
+            self.clock.sim_time_s += dt_s
+            yield (index + 1) / total
+        self._operation_rollback = None
+        self._execute_burn()
+
+    def _trajectory_coast_operation(self, duration_s):
+        """Frame-budgeted coast to a clicked future trajectory sample."""
+        from orbitsim.core.nbody import refresh_ephemeris_cache
+
+        chunks = _coast_chunks(duration_s)
+        total = len(chunks)
+        for index, dt_s in enumerate(chunks):
+            refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
+            self.world.step(dt_s)
+            self.clock.sim_time_s += dt_s
+            yield (index + 1) / total
+        self._operation_rollback = None
+        self._traj_world_cache[0] = None
+        self._traj_epoch_cache[0] = None
+        self._flash_message("Arrived at trajectory point")
+
     MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
 
     def _setup_input(self) -> None:
@@ -1085,9 +1295,10 @@ class OrbitApp(ShowBase):
         self.accept("arrow_down", lambda: self.rig.orbit(0.0, -0.1))
         self.accept("period", self._warp_up_guarded)  # ">" key (blocked while thrusting)
         self.accept("comma", self.clock.warp_down)  # "<" key
+        self.accept("0", self._max_warp_guarded)
         self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
         self.accept("f1", self.keybind_overlay.toggle)  # keybind help overlay
-        self.accept("escape", self.settings_panel.toggle)  # settings panel
+        self.accept("escape", self._handle_escape)
 
         if not self.solar_system and self.world.vessels:
             self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
@@ -1102,7 +1313,7 @@ class OrbitApp(ShowBase):
             self.accept("t", self._toggle_sas)
             self.accept("m", self._toggle_ship_view)   # snap map <-> ship view
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
-                        "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET"]
+                        "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET", "MANEUVER"]
             for i, mode in enumerate(sas_keys, start=1):
                 self.accept(str(i), self._set_sas, [mode])
             self.accept("i", self._plan_intercept)
@@ -1137,15 +1348,26 @@ class OrbitApp(ShowBase):
     def _build_warp_controls(self) -> None:
         """Top-center on-screen warp control: slower / faster buttons + readout.
         (The ',' and '.' keys do the same.) Works in both sandbox and solar modes."""
+        from orbitsim.render.ui.theme import THEME, button_options
+        self._warp_frame = DirectFrame(
+            frameColor=THEME.panel,
+            frameSize=(-0.64, 0.64, -0.16, -0.02),
+            parent=self.a2dTopCenter,
+        )
         self._warp_readout = OnscreenText(
-            text="", pos=(0.0, -0.09), scale=0.055, fg=(1.0, 1.0, 1.0, 1.0),
-            shadow=(0, 0, 0, 1), mayChange=True, parent=self.a2dTopCenter,
+            text="", pos=(0.0, -0.09), scale=0.045, fg=THEME.text,
+            shadow=(0, 0, 0, 1), mayChange=True, parent=self._warp_frame,
         )
         self._warp_btns = [
             DirectButton(text="<<", scale=0.05, pos=(-0.28, 0.0, -0.085),
-                         command=self.clock.warp_down, parent=self.a2dTopCenter),
+                         command=self.clock.warp_down, parent=self._warp_frame,
+                         **button_options()),
             DirectButton(text=">>", scale=0.05, pos=(0.28, 0.0, -0.085),
-                         command=self._warp_up_guarded, parent=self.a2dTopCenter),
+                         command=self._warp_up_guarded, parent=self._warp_frame,
+                         **button_options()),
+            DirectButton(text="MAX", scale=0.042, pos=(0.48, 0.0, -0.085),
+                         command=self._max_warp_guarded, parent=self._warp_frame,
+                         **button_options()),
         ]
         self._update_warp_readout()
 
@@ -1153,7 +1375,10 @@ class OrbitApp(ShowBase):
         if getattr(self, "_warp_readout", None) is not None:
             locked = not self.solar_system and self.world.any_thrusting()
             suffix = "  (LOCKED)" if locked else ""
-            self._warp_readout.setText(f"Warp  x{self.clock.warp:,.0f}{suffix}")
+            days = self.clock.sim_time_s / 86400.0
+            self._warp_readout.setText(
+                f"T+ {days:,.1f} DAYS     WARP  x{self.clock.warp:,.0f}{suffix}"
+            )
 
     def _warp_up_guarded(self):
         if self.world.any_thrusting():
@@ -1172,9 +1397,53 @@ class OrbitApp(ShowBase):
                 return
         self.clock.warp_up()
 
+    def _max_warp_guarded(self):
+        """Jump directly to the highest safe warp (up to 100,000,000x in deep space)."""
+        if self.world.any_thrusting():
+            return
+        from orbitsim.sim.clock import SimClock
+
+        cap = float(SimClock.WARP_STEPS[-1])
+        if self.world.vessels:
+            if self.world.solar_system:
+                from orbitsim.core.nbody import max_safe_warp_solar
+
+                cap = max_safe_warp_solar(
+                    self.world.vessels[0].state,
+                    self.clock.sim_time_s,
+                    SimClock.WARP_STEPS,
+                )
+            else:
+                from orbitsim.core.nbody import max_safe_warp
+
+                cap = max_safe_warp(
+                    self.world.vessels[0].state,
+                    self.clock.sim_time_s,
+                    SimClock.WARP_STEPS,
+                )
+        self.clock.warp = float(cap)
+        self._update_warp_readout()
+
     def _rmb(self, down):
         self._rmb_down = down
         self._last_mouse = None
+
+    def _handle_escape(self):
+        """Close the topmost transient surface before opening settings."""
+        if self.operation.status.running:
+            self._cancel_operation()
+            return
+        if getattr(self.keybind_overlay, "visible", False):
+            self.keybind_overlay.hide()
+            return
+        if getattr(self, "_porkchop_card", None) is not None:
+            self._porkchop_card.remove_node()
+            self._porkchop_card = None
+            if getattr(self, "_porkchop_modal", None) is not None:
+                self._porkchop_modal.destroy()
+                self._porkchop_modal = None
+            return
+        self.settings_panel.toggle()
 
     def _apply_mouse_orbit(self):
         """Orbit the camera while the right mouse button is held and dragged."""
@@ -1203,6 +1472,9 @@ class OrbitApp(ShowBase):
         v.sas_mode = "STABILITY" if v.sas_mode == "OFF" else "OFF"
 
     def _set_sas(self, mode):
+        if mode == "MANEUVER" and self._current_node().magnitude_mps <= 0.0:
+            self._flash_message("Plan a maneuver first")
+            return
         self.world.vessels[0].sas_mode = mode
 
     QUICKSAVE_PATH = "saves/quicksave.json"
@@ -1285,6 +1557,10 @@ class OrbitApp(ShowBase):
         if existing is not None:
             existing.remove_node()
             self._porkchop_card = None
+            modal = getattr(self, "_porkchop_modal", None)
+            if modal is not None:
+                modal.destroy()
+                self._porkchop_modal = None
             return
 
         mu = self.world.central.mu
@@ -1292,7 +1568,7 @@ class OrbitApp(ShowBase):
 
         from orbitsim.render.targets import PlanetTarget
         if self._target is not None and isinstance(self._target, PlanetTarget):
-            from orbitsim.core.optimize import porkchop_callable
+            from orbitsim.core.optimize import interplanetary_porkchop
             from orbitsim.core.constants import MU_SUN
             from orbitsim.core.planets import A_EARTH
             target_a = {
@@ -1311,7 +1587,12 @@ class OrbitApp(ShowBase):
             dep_times = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
             tof_grid = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 36)
             self._flash_message(f"Computing {self._target.name} porkchop...")
-            dv, _ = porkchop_callable(ship, self._target.state_at, mu, dep_times, tof_grid)
+            dv, _ = interplanetary_porkchop(
+                "EARTH",
+                self._target.name.upper(),
+                ship.epoch_s + dep_times,
+                tof_grid,
+            )
         elif self._target is not None:
             now = self.clock.sim_time_s
             from orbitsim.core.elements import state_to_elements
@@ -1338,14 +1619,34 @@ class OrbitApp(ShowBase):
             dv, _ = porkchop(ship, arr, dep_times, tof_grid, mu)
 
         png = render_porkchop_png(dv, dep_times, tof_grid, "porkchop.png")
+        from orbitsim.render.ui.theme import THEME, button_options
+        self._porkchop_modal = DirectFrame(
+            frameColor=THEME.panel_alt,
+            frameSize=(-0.92, 0.92, -0.72, 0.72),
+            parent=self.aspect2d,
+        )
+        OnscreenText(
+            text="TRANSFER WINDOW ANALYSIS", pos=(0, 0.64), scale=0.052,
+            fg=THEME.cyan, parent=self._porkchop_modal,
+        )
         tex = self.loader.load_texture(png)
         cm = CardMaker("porkchop")
-        cm.set_frame(-0.95, -0.15, 0.1, 0.85)
-        card = self.aspect2d.attach_new_node(cm.generate())
+        cm.set_frame(-0.78, 0.78, -0.48, 0.50)
+        card = self._porkchop_modal.attach_new_node(cm.generate())
         card.set_texture(tex)
         self._porkchop_card = card
+        DirectButton(
+            text="CREATE MANEUVER", scale=0.048, pos=(0.38, 0, -0.61),
+            command=self._plan_intercept, parent=self._porkchop_modal, **button_options(),
+        )
+        DirectButton(
+            text="CLOSE", scale=0.048, pos=(-0.38, 0, -0.61),
+            command=self._toggle_porkchop, parent=self._porkchop_modal, **button_options(),
+        )
 
-    def _sample_trajectory(self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1):
+    def _sample_trajectory(
+        self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1, with_times=False
+    ):
         """Forward-integrate state under N-body and return ~n_pts positions [m].
 
         Horizon is ``n_orbits`` osculating orbital periods capped at max_horizon_s; for an
@@ -1355,39 +1656,47 @@ class OrbitApp(ShowBase):
         world-meter positions in the Earth-centered inertial frame.
         """
         if self.world.solar_system:
-            from orbitsim.core.nbody import osculating_elements_solar, propagate_solar_system
+            from orbitsim.core.nbody import (
+                osculating_elements_solar,
+                propagate_solar_system,
+                stable_prediction_ephemeris,
+            )
             osc_fn = osculating_elements_solar
             prop_fn = propagate_solar_system
         else:
             from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
             osc_fn = osculating_elements
             prop_fn = propagate_earth_moon
-        try:
-            osc = osc_fn(state, state.epoch_s)
-            horizon_s = min(n_orbits * float(osc.period_s), max_horizon_s)
-        except (ValueError, AttributeError):
-            horizon_s = float(max_horizon_s)
-        dt = horizon_s / n_pts
-        pts = np.empty((n_pts, 3), dtype=np.float64)
-        pts[0] = state.r
-        cur = state
-        for i in range(1, n_pts):
-            cur = prop_fn(cur, dt)
-            pts[i] = cur.r
+        context = stable_prediction_ephemeris() if self.world.solar_system else nullcontext()
+        with context:
+            try:
+                osc = osc_fn(state, state.epoch_s)
+                horizon_s = min(n_orbits * float(osc.period_s), max_horizon_s)
+            except (ValueError, AttributeError):
+                horizon_s = float(max_horizon_s)
+            dt = horizon_s / n_pts
+            pts = np.empty((n_pts, 3), dtype=np.float64)
+            pts[0] = state.r
+            cur = state
+            for i in range(1, n_pts):
+                if self.world.solar_system:
+                    # Visual prediction uses a coarser deep-space ceiling. Adaptive near-body
+                    # stepping still tightens this automatically for encounters and flybys.
+                    cur = prop_fn(cur, dt, max_step_s=6.0 * 3600.0)
+                else:
+                    cur = prop_fn(cur, dt)
+                pts[i] = cur.r
+        if with_times:
+            epochs = state.epoch_s + np.arange(n_pts, dtype=np.float64) * dt
+            return pts, epochs
         return pts
 
-    def _sample_preview(self, state, scale):
-        """Compute render-space preview points without touching Panda3D scene objects."""
-        if self.world.solar_system:
-            from orbitsim.core.nbody import dominant_body_solar
-            dom, _ = dominant_body_solar(state.r, state.epoch_s)
-            horizon = 400 * 86400 if dom.name == "Sun" else 30 * 86400
-        else:
-            horizon = 30 * 86400
-        points = self._sample_trajectory(
-            state, n_pts=512, max_horizon_s=horizon, n_orbits=2
+    def _sample_preview(self, state):
+        """Compute world-space preview points without touching Panda3D scene objects."""
+        horizon = _trajectory_horizon_s(state, self.world.solar_system)
+        return self._sample_trajectory(
+            state, n_pts=256, max_horizon_s=horizon, n_orbits=2
         )
-        return [tuple(point / scale) for point in points]
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
@@ -1401,8 +1710,14 @@ class OrbitApp(ShowBase):
             if preview_key == completed_key and node.magnitude_mps > 0.0:
                 if self._preview_np is not None:
                     self._preview_np.remove_node()
-                self._preview_np = build_orbit_node(points, color=MANEUVER_COLOR, thickness=2.75)
-                self._preview_np.reparent_to(self._orbit_frame)
+                local_points, self._preview_origin = _localize_polyline(points)
+                scale = self.transform.scale_m_per_unit
+                render_points = [tuple(point / scale) for point in local_points]
+                self._preview_np = build_orbit_node(
+                    render_points, color=MANEUVER_COLOR, thickness=2.75
+                )
+                self._preview_np.reparent_to(self.render)
+                self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
 
         if node.magnitude_mps <= 0.0:
             if self._preview_future is not None:
@@ -1412,6 +1727,7 @@ class OrbitApp(ShowBase):
             if self._preview_np is not None:
                 self._preview_np.remove_node()
                 self._preview_np = None
+                self._preview_origin = None
             return
 
         if (
@@ -1422,45 +1738,23 @@ class OrbitApp(ShowBase):
             )
         ):
             post_burn = apply_maneuver(vessel.state, node)
-            scale = self.transform.scale_m_per_unit
             self._preview_submit_t = now_real
             self._preview_future_key = preview_key
             self._preview_future = self._preview_executor.submit(
-                self._sample_preview, post_burn, scale
+                self._sample_preview, post_burn
             )
 
-    def _rebuild_trajectory(self, idx, vessel) -> None:
-        """Rebuild the vessel trajectory line if state or zoom changed beyond tolerance.
-
-        Under N-body the state drifts continuously (Moon perturbation), so the cache keys on
-        the state vector itself (position/velocity tolerance) rather than Keplerian shape."""
-        state = vessel.state
-        scale = self.transform.scale_m_per_unit
-        cached = self._traj_state_cache[idx]
-        if cached is not None:
-            cached_state, cached_scale = cached
-            if cached_scale == scale:
-                pos_ok = np.linalg.norm(state.r - cached_state.r) < 100.0
-                vel_ok = np.linalg.norm(state.v - cached_state.v) < 0.1
-                if pos_ok and vel_ok:
-                    return
-        self._traj_state_cache[idx] = (state, scale)
-        if self.world.solar_system:
-            from orbitsim.core.nbody import dominant_body_solar
-            dom, _ = dominant_body_solar(state.r, state.epoch_s)
-            if dom.name == "Sun":
-                world_pts = self._sample_trajectory(
-                    state, n_pts=512, max_horizon_s=400 * 86400)
-            else:
-                world_pts = self._sample_trajectory(state)
-        else:
-            world_pts = self._sample_trajectory(state)
-        pts = [tuple(p / scale) for p in world_pts]
+    def _install_trajectory(self, idx, world_pts, scale, state) -> None:
+        """Swap cached prediction points into Panda3D; called only on the render thread."""
+        local_pts, origin = _localize_polyline(world_pts)
+        pts = [tuple(p / scale) for p in local_pts]
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()
         node = build_orbit_node(pts)
-        node.reparent_to(self._orbit_frame)
+        node.reparent_to(self.render)
+        node.set_pos(*self.transform.to_render(origin))
         self.orbit_nps[idx] = node
+        self._traj_render_origin[idx] = origin
         if idx == 0:
             try:
                 if self.world.solar_system:
@@ -1478,9 +1772,73 @@ class OrbitApp(ShowBase):
                 self._apsis_positions["PE"] = None
                 self._apsis_positions["AP"] = None
 
+    def _rebuild_trajectory(self, idx, vessel, now_real) -> None:
+        """Poll/submit N-body prediction work without blocking the render thread."""
+        future = self._traj_future[idx]
+        if future is not None and future.done():
+            try:
+                points, epochs = future.result()
+                self._traj_world_cache[idx] = points
+                self._traj_epoch_cache[idx] = epochs
+            except Exception:
+                self._traj_world_cache[idx] = None
+                self._traj_epoch_cache[idx] = None
+            self._traj_future[idx] = None
+            self._traj_last_complete_t[idx] = now_real
+            self._traj_render_scale[idx] = None
+
+        scale = self.transform.scale_m_per_unit
+        cached = self._traj_world_cache[idx]
+        if cached is not None and self._traj_render_scale[idx] != scale:
+            self._install_trajectory(idx, cached, scale, vessel.state)
+            self._traj_render_scale[idx] = scale
+        origin = self._traj_render_origin[idx]
+        if origin is not None and self.orbit_nps[idx] is not None:
+            self.orbit_nps[idx].set_pos(*self.transform.to_render(origin))
+
+        if (
+            self._traj_future[idx] is None
+            and now_real - max(
+                self._traj_last_submit_t[idx], self._traj_last_complete_t[idx]
+            ) >= self.TRAJECTORY_REFRESH_S
+        ):
+            horizon = _trajectory_horizon_s(vessel.state, self.world.solar_system)
+            n_pts = 256
+            self._traj_last_submit_t[idx] = now_real
+            self._traj_future[idx] = self._trajectory_executor.submit(
+                self._sample_trajectory,
+                vessel.state,
+                n_pts,
+                horizon,
+                2,
+                True,
+            )
+
+    def _update_responsive_ui(self) -> None:
+        """Apply breakpoint changes only when the viewport dimensions change."""
+        size = (self.win.get_x_size(), self.win.get_y_size())
+        if size == self._ui_viewport or size[0] <= 0 or size[1] <= 0:
+            return
+        self._ui_viewport = size
+        from orbitsim.render.ui.layout import ResponsiveLayout
+
+        layout = ResponsiveLayout.calculate(*size)
+        if hasattr(self, "_maneuver_frame"):
+            scale = min(layout.ui_scale, 1.08)
+            self._maneuver_frame.set_scale(scale)
+            self._action_frame.set_scale(scale)
+
     def _update(self, task):
         real_dt = _global_clock.get_dt()
+        self.frame_meter.add(real_dt)
         self.rig.update(real_dt)
+        self._update_responsive_ui()
+
+        if self.operation.status.running:
+            status = self.operation.tick(steps=1)
+            self.operation_overlay.update(status)
+            return task.cont
+        self.operation_overlay.update(self.operation.status)
 
         if self.solar_system:
             self.clock.advance(real_dt)
@@ -1508,13 +1866,40 @@ class OrbitApp(ShowBase):
         # Feed the current target's position to the TARGET/ANTITARGET SAS hold.
         target_pos = (self._target.state_at(self.clock.sim_time_s).r
                       if self._target is not None else None)
+        maneuver_dir = None
+        planned_node = self._current_node()
+        if planned_node.magnitude_mps > 0.0:
+            from orbitsim.core.maneuvers import maneuver_direction
+
+            try:
+                maneuver_dir = maneuver_direction(self.world.vessels[0].state, planned_node)
+            except ValueError:
+                pass
         for v in self.world.vessels:
             v.sas_target_pos = target_pos
-        sim_dt = self.clock.advance(real_dt)
+            v.sas_maneuver_dir = maneuver_dir
+        # An armed automatic burn lands exactly on its epoch instead of stepping past it
+        # at high warp. This keeps the impulse and the displayed maneuver direction aligned.
+        ttn_before_step = self._time_to_node()
+        requested_dt = real_dt * self.clock.warp
+        if (
+            self._auto_execute_node
+            and ttn_before_step is not None
+            and 0.0 < ttn_before_step <= requested_dt
+        ):
+            sim_dt = ttn_before_step
+            self.clock.sim_time_s += sim_dt
+            self.clock.warp = 1.0
+        else:
+            sim_dt = self.clock.advance(real_dt)
         if self.world.solar_system:
             from orbitsim.core.nbody import refresh_ephemeris_cache
             refresh_ephemeris_cache(self.clock.sim_time_s)
         self.world.step(sim_dt)
+        if self._auto_execute_node and self._time_to_node() is not None:
+            if self._time_to_node() <= self.EXECUTE_TOLERANCE_S:
+                self._auto_execute_node = False
+                self._execute_burn()
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
         self._apply_jogs(real_dt)
@@ -1561,10 +1946,14 @@ class OrbitApp(ShowBase):
         except Exception:
             pass
 
+        import time as _time
+        now_real = _time.monotonic()
         for idx, vessel in enumerate(self.world.vessels):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
-            self._rebuild_trajectory(idx, vessel)
+            self._rebuild_trajectory(idx, vessel, now_real)
+        if self._preview_np is not None and self._preview_origin is not None:
+            self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
         self._place_apsis_markers()
 
         # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
@@ -1611,7 +2000,6 @@ class OrbitApp(ShowBase):
         v0.nodes = [node] if (self._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
         # N-body preview sampling is CPU-heavy, so it runs on one worker. Only the cheap
         # LineSegs swap happens here on the render thread when a result is ready.
-        import time as _time
         self._update_maneuver_preview(node, v0, _time.monotonic())
         # Node marker at the node's predicted position on the orbit (held at the vessel
         # through the brief execute window once the node is due).
@@ -1761,8 +2149,14 @@ class OrbitApp(ShowBase):
         sun_geo = _csun(t_now).r
         sx, sy, sz = self.transform.to_render(sun_geo)
         self._sun_orbit_frame.set_pos(sx, sy, sz)
-        if self._planet_orbit_scale != scale:
+        # Refresh monthly in simulation time.  DE440 positions are in tilted ICRF
+        # axes and the real orbits are eccentric, so flat mean-radius circles do
+        # not describe the paths followed by the rendered planet markers.
+        orbit_epoch_bucket = int(np.floor(t_now / (30.0 * 86400.0)))
+        if (self._planet_orbit_scale != scale
+                or self._planet_orbit_epoch_bucket != orbit_epoch_bucket):
             self._planet_orbit_scale = scale
+            self._planet_orbit_epoch_bucket = orbit_epoch_bucket
             _orbit_colors = {
                 "Mercury": (0.5, 0.5, 0.5, 0.5),
                 "Venus": (0.85, 0.75, 0.45, 0.5),
@@ -1773,25 +2167,28 @@ class OrbitApp(ShowBase):
                 "Uranus": (0.6, 0.85, 0.9, 0.4),
                 "Neptune": (0.3, 0.4, 0.9, 0.4),
             }
-            _orbit_radii = {
-                "Mercury": A_MERCURY,
-                "Venus": A_VENUS,
-                "Earth": A_EARTH,
-                "Mars": A_MARS,
-                "Jupiter": A_JUPITER,
-                "Saturn": A_SATURN,
-                "Uranus": A_URANUS,
-                "Neptune": A_NEPTUNE,
+            earth_state = StateVector(
+                r=np.zeros(3), v=np.zeros(3), mu=0.0, epoch_s=t_now
+            )
+            orbit_states = {
+                "Mercury": _cmercury(t_now),
+                "Venus": _cvenus(t_now),
+                "Earth": earth_state,
+                "Mars": _cmars(t_now),
+                "Jupiter": _cjupiter(t_now),
+                "Saturn": _csaturn(t_now),
+                "Uranus": _curanus(t_now),
+                "Neptune": _cneptune(t_now),
             }
+            sun_state = _csun(t_now)
             for oname in ("Mercury", "Venus", "Earth", "Mars",
                           "Jupiter", "Saturn", "Uranus", "Neptune"):
                 if oname in self._planet_orbit_nps:
                     self._planet_orbit_nps[oname].remove_node()
-                a = _orbit_radii[oname]
-                angles = np.linspace(0, 2 * np.pi, 256, endpoint=False)
-                pts = [(float(a * np.cos(th) / scale),
-                        float(a * np.sin(th) / scale),
-                        0.0) for th in angles]
+                orbit_points = sample_relative_orbit_points(
+                    orbit_states[oname], sun_state, MU_SUN, n=256
+                )
+                pts = [tuple(point / scale) for point in orbit_points]
                 color = _orbit_colors[oname]
                 node = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
                 node.reparent_to(self._sun_orbit_frame)
@@ -1917,7 +2314,12 @@ class OrbitApp(ShowBase):
             dv_remaining=v0.delta_v_remaining,
             warp_locked=self.world.any_thrusting(),
         )
-        self.navball.update(orientation_q=v0.orientation, state=v0.state, target_pos=target_pos)
+        self.navball.update(
+            orientation_q=v0.orientation,
+            state=v0.state,
+            target_pos=target_pos,
+            maneuver_dir=maneuver_dir,
+        )
         from orbitsim.core.attitude import heading_pitch
         heading, pitch = heading_pitch(v0.orientation, v0.state)
         self.sas_panel.update(v0.sas_mode, heading, pitch)

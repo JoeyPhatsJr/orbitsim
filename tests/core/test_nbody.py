@@ -232,6 +232,68 @@ def test_max_safe_warp_respects_substep_budget():
     assert n <= 200
 
 
+def test_solar_max_warp_reaches_one_hundred_million_in_deep_space():
+    from orbitsim.sim.clock import SimClock
+
+    state = StateVector(
+        r=np.array([1.0e11, 0.0, 0.0]),
+        v=np.array([0.0, 3.0e4, 0.0]),
+        mu=MU_EARTH,
+    )
+    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 100_000_000
+
+
+def test_solar_max_warp_is_capped_near_earth():
+    from orbitsim.sim.clock import SimClock
+
+    state = StateVector(
+        r=np.array([7.0e6, 0.0, 0.0]),
+        v=np.array([0.0, 7546.0, 0.0]),
+        mu=MU_EARTH,
+    )
+    cap = nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS)
+
+    assert cap < 10_000_000
+
+
+def test_background_prediction_ignores_live_ephemeris_cache(monkeypatch):
+    cached = StateVector(
+        r=np.array([9.0e15, 8.0e15, 7.0e15]),
+        v=np.zeros(3),
+        mu=0.0,
+        epoch_s=0.0,
+    )
+    monkeypatch.setitem(nb._ephemeris_cache, "SUN", cached)
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", False)
+
+    assert nb._csun(123.0) is cached
+    with nb.stable_prediction_ephemeris():
+        predicted = nb._csun(123.0)
+        assert predicted is not cached
+        assert predicted.epoch_s == 123.0
+    assert nb._csun(123.0) is cached
+
+
+def test_background_prediction_interpolates_its_own_time_varying_ephemeris(monkeypatch):
+    def cubic_ephemeris(name, epoch_s, center):
+        x = epoch_s / nb._PREDICTION_EPHEMERIS_STEP_S
+        return StateVector(
+            r=np.array([x**3, 2.0 * x, -x]),
+            v=np.array([3.0 * x**2, 2.0, -1.0]) / nb._PREDICTION_EPHEMERIS_STEP_S,
+            mu=0.0,
+            epoch_s=epoch_s,
+        )
+
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", cubic_ephemeris)
+    epoch = 0.25 * nb._PREDICTION_EPHEMERIS_STEP_S
+
+    with nb.stable_prediction_ephemeris():
+        state = nb._csun(epoch)
+
+    np.testing.assert_allclose(state.r, [0.25**3, 0.5, -0.25], atol=1e-14)
+
+
 def test_earth_fixed_lagrange_points_are_equilibria():
     # Each L-point nulls the rotating-frame acceleration (gravity+indirect + centrifugal),
     # with the rotation about the Moon's ACTUAL orbit normal. Holds at t=0 and t!=0.
