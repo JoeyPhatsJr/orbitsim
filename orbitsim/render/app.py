@@ -1189,17 +1189,13 @@ class OrbitApp(ShowBase):
         )
         self._sync_maneuver_hud()
 
-    UNLIMITED_RESERVE_KG = 1000.0   # min propellant kept while unlimited (so thrust works at empty)
-
     def _apply_unlimited(self, on: bool) -> None:
-        """Set the unlimited-dV flag on all vessels (no UI). When enabling with a
-        ~empty tank, top fuel up to a reserve so continuous thrust still produces
-        acceleration (integrate_powered needs propellant for its substep impulse;
-        fuel never depletes under unlimited, so this is set once)."""
+        """Set the unlimited-dV flag on all vessels (no UI). The sim layer
+        floors the working propellant mass for the impulse math while
+        unlimited (World.UNLIMITED_FUEL_FLOOR_KG), so thrust works even with
+        an empty tank and the real fuel load is never touched."""
         for vessel in self.world.vessels:
             vessel.unlimited_dv = on
-            if on and vessel.fuel_mass_kg < self.UNLIMITED_RESERVE_KG:
-                vessel.fuel_mass_kg = self.UNLIMITED_RESERVE_KG
 
     def _set_unlimited_dv(self, on: bool) -> None:
         if self.solar_system or not self.world.vessels:
@@ -1321,6 +1317,7 @@ class OrbitApp(ShowBase):
             self.accept("f9", self._quickload)
 
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
+    LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
     SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
     SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
@@ -1929,22 +1926,19 @@ class OrbitApp(ShowBase):
             )
             self._moon_orbit_np.reparent_to(self._orbit_frame)
 
-        # Real Sun direction (Earth->Sun) drives the day/night terminator + sun light.
-        try:
-            from orbitsim.core.ephemeris import body_state
-
-            sun_r = body_state("SUN", self.clock.sim_time_s, center="EARTH").r
-            sun_dir = np.asarray(sun_r, dtype=float)
-            n = np.linalg.norm(sun_dir)
-            if n > 0:
-                sun_dir = sun_dir / n
-                set_sun_dir(self.central_np, tuple(sun_dir))
-                self._sun_light_np.set_pos(float(sun_dir[0]) * 1000.0,
-                                           float(sun_dir[1]) * 1000.0,
-                                           float(sun_dir[2]) * 1000.0)
-                self._sun_light_np.look_at(0, 0, 0)
-        except Exception:
-            pass
+        # Real Sun direction (Earth->Sun) drives the day/night terminator + sun
+        # light. The cached wrapper serves DE440 positions when available and
+        # falls back to the circular approximation offline — never raises.
+        from orbitsim.core.nbody import _csun as _cached_sun
+        sun_dir = np.asarray(_cached_sun(self.clock.sim_time_s).r, dtype=float)
+        n = np.linalg.norm(sun_dir)
+        if n > 0:
+            sun_dir = sun_dir / n
+            set_sun_dir(self.central_np, tuple(sun_dir))
+            self._sun_light_np.set_pos(float(sun_dir[0]) * 1000.0,
+                                       float(sun_dir[1]) * 1000.0,
+                                       float(sun_dir[2]) * 1000.0)
+            self._sun_light_np.look_at(0, 0, 0)
 
         import time as _time
         now_real = _time.monotonic()
@@ -2073,9 +2067,18 @@ class OrbitApp(ShowBase):
         else:
             self._target_label_position = None
             self._target_label.hide()
-        # Lagrange points this frame (rotate with the Moon).
+        # Lagrange points (rotate with the Moon). Each recompute runs three
+        # brentq root-solves, so refresh by sim-time bucket instead of every
+        # frame: the L-points move ~1 km/s, so a 10 s bucket is at most ~10 km
+        # stale (invisible at map zoom) while cutting the per-frame cost to
+        # zero at low warp. At high warp the bucket changes every frame and
+        # the recompute cadence follows automatically.
         from orbitsim.core.nbody import earth_fixed_lagrange_points
-        lps = earth_fixed_lagrange_points(self.clock.sim_time_s)
+        lag_bucket = int(self.clock.sim_time_s // self.LAGRANGE_REFRESH_S)
+        if getattr(self, "_lagrange_bucket", None) != lag_bucket:
+            self._lagrange_bucket = lag_bucket
+            self._lagrange_cache = earth_fixed_lagrange_points(self.clock.sim_time_s)
+        lps = self._lagrange_cache
         for name, mk, lbl in zip(("L1", "L2", "L3", "L4", "L5"),
                                  self._lagrange_nps, self._lagrange_labels):
             rx, ry, rz = self.transform.to_render(lps[name])
@@ -2332,16 +2335,34 @@ class OrbitApp(ShowBase):
         self._update_warp_readout()
         return task.cont
 
+    def _helio_body_pos(self, name: str, t_s: float) -> np.ndarray:
+        """Heliocentric position [m]: DE440 when available, circular fallback offline."""
+        from orbitsim.core.ephemeris import body_state, EphemerisUnavailableError
+        try:
+            return body_state(name.upper(), t_s, center="SUN").r
+        except EphemerisUnavailableError:
+            from orbitsim.core import planets as pl
+            # planets.py states are geocentric; helio = geocentric - sun_geocentric.
+            if name == "Earth":
+                return -pl.sun_state_at(t_s).r
+            geo_fns = {
+                "Mercury": pl.mercury_state_at, "Venus": pl.venus_state_at,
+                "Mars": pl.mars_state_at, "Jupiter": pl.jupiter_state_at,
+                "Saturn": pl.saturn_state_at, "Uranus": pl.uranus_state_at,
+                "Neptune": pl.neptune_state_at,
+            }
+            return geo_fns[name](t_s).r - pl.sun_state_at(t_s).r
+
     def _update_solar_system(self) -> None:
-        """Place the Sun + planets at their DE440 positions for the current sim time."""
+        """Place the Sun + planets for the current sim time (DE440 or fallback)."""
         from datetime import datetime, timedelta
-        from orbitsim.core.ephemeris import body_state
+        from orbitsim.core.ephemeris import available as ephemeris_available
 
         t = self.clock.sim_time_s
         self.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
 
         for body, marker, label in zip(self._planet_bodies, self._planet_nps, self._planet_labels):
-            pos_m = np.zeros(3) if body.name == "Sun" else body_state(body.name.upper(), t, center="SUN").r
+            pos_m = np.zeros(3) if body.name == "Sun" else self._helio_body_pos(body.name, t)
             rx, ry, rz = self.transform.to_render(pos_m)
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 6.0)
@@ -2352,9 +2373,10 @@ class OrbitApp(ShowBase):
         self.rig.apply()
 
         self._update_warp_readout()
+        source = "JPL DE440" if ephemeris_available() else "circular approx (offline)"
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
         self.hud.text.setText(
-            f"Solar system (JPL DE440)\n"
+            f"Solar system ({source})\n"
             f"Date: {date:%Y-%m-%d}\n"
             f"',' / '.' or the buttons change warp"
         )
