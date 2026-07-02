@@ -2,9 +2,10 @@
 
 A full-codebase audit of the N-body integration loop, floating-point/precision
 handling, high-warp behavior, and hidden edge cases, followed by the upgrade
-implemented on this branch. Every claim below was measured with runnable
-scripts before the fix and re-measured after; the measurements are encoded as
-regression tests.
+implemented on this branch — plus one feature (§5, encounter-aware trajectory
+prediction) built on top of the now-trustworthy physics. Every physics claim
+below was measured with runnable scripts before the fix and re-measured after;
+the measurements are encoded as regression tests.
 
 ## 1. What the audit found
 
@@ -155,11 +156,76 @@ at TWR 2 → hand-off to RADIAL_OUT SAS, with every intermediate state finite.
   unlimited-ΔV empty-tank thrust, degenerate-attitude NaN guards,
   relative-orbit sampling, warp-table reach.
 
-## 5. Known limits (honest edges)
+## 5. Feature built on the fixed physics: encounter-aware prediction
+
+Once the integrator predicts a translunar / interplanetary arc accurately over
+weeks (§3), the biggest remaining gap was that the *player couldn't see what
+mattered about it*. The trajectory line is drawn in the Earth-centered inertial
+frame, so a Moon encounter looked like a line passing vaguely near where the
+Moon's orbit is — not where the Moon *will be*. The one number every transfer,
+capture, and gravity-assist decision hinges on — "what's my periapsis at the
+target, and when" — was only shown *after* arrival, once inside the SOI. This
+closes that gap.
+
+### Core — `core/encounters.py` (pure, layer-clean, TDD)
+
+`find_encounters(points, epochs, dominant_fn, primary_name)` walks a
+forward-propagated path, groups the runs of samples that fall inside another
+body's sphere of influence, and returns an `Encounter` per flyby with:
+
+- **closest approach**, measured against the body's *moving* center at each
+  sample's own epoch, parabola-refined to sub-sample accuracy;
+- **time of periapsis**, the fixed world **periapsis point** (marker anchor),
+  **hyperbolic excess speed** (vis-viva at the SOI-entry sample), and an
+  **impact** flag (periapsis below the body's surface radius).
+
+The classifier (which body dominates at a point/time) is **injected**, so the
+module stays pure, imports no graphics, and is unit-testable offline with a
+synthetic body. `earth_moon_dominant` / `solar_dominant` bind the sandbox's
+real classifiers. **7 tests**, no skips, including a deterministic real-N-body
+Moon flyby (Pe ≈ 5,360 km, v∞ ≈ 682 m/s) constructed in the Moon frame to
+sidestep the translunar lead-angle targeting problem, which is not what's under
+test.
+
+### Render — `render/app.py`
+
+- Encounters are computed **inside the same prediction-ephemeris context** that
+  integrated the path (`stable_prediction_ephemeris`), so far-future planet
+  positions match what was actually flown, and returned off the render thread
+  alongside points/epochs for both the live trajectory and the maneuver preview.
+- Each flyby SOI segment draws as a **distinct warm-gold overlay** parented to
+  the trajectory node, so it inherits the floating-origin transform for free;
+  primary-body and heliocentric-escape runs are skipped.
+- A small pool of **periapsis markers + labels** is placed each frame
+  (`Moon Pe 120 km  T-2d 4h`, or `IMPACT`).
+- **While a maneuver is planned, the preview's encounters are shown** instead of
+  the live path's — so dragging the prograde jog walks the predicted lunar
+  periapsis in real time. This is the moment the sandbox starts to feel like KSP.
+- A **predicted-approach HUD line** (Pe altitude, countdown, v∞) fills the flyby
+  slot whenever the vessel isn't already inside an SOI (where the live
+  `core/flyby.py` readout takes over with the exact value).
+
+### Verification note
+
+A full offscreen `OrbitApp` cannot open a window in the build sandbox (same
+X/EGL limit as §4), so the per-frame marker placement is verified by
+construction — the node-building blocks (`build_orbit_node`,
+`build_labeled_marker`, `to_render`) are independently tested, and the new
+`_build_encounter_patches` helper has a dedicated render test (unbound method,
+no `ShowBase`) confirming it builds the Moon patch and skips primary / escape /
+single-sample runs. The detection math itself is fully covered by the core
+suite.
+
+## 6. Known limits (honest edges)
 
 - Trajectory *prediction* for very eccentric orbits now costs more substeps
   (it resolves periapsis properly); it runs on a worker thread and is
   throttled, but the preview refresh can lag a beat behind on extreme orbits.
+- Predicted encounters are only as good as the sampled path: a flyby whose SOI
+  pass falls between two trajectory samples (a fast graze at coarse sampling)
+  can be missed. The adaptive integrator tightens steps near bodies, so this
+  bites only on very short, fast passes; the live `core/flyby.py` readout is
+  exact once the vessel actually arrives.
 - The per-frame ephemeris cache still freezes planet positions within a
   frame; at 1e8 warp one frame spans ~19 days of Sun motion in the indirect
   term. Deep-space accuracy at extreme warp is game-grade, not
