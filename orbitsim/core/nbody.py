@@ -160,6 +160,9 @@ try:
     from orbitsim.core.ephemeris import body_state as _ephem_body_state
     _EPHEMERIS_AVAILABLE = True
 except Exception:
+    # skyfield itself is missing; keep the attribute defined so callers (and
+    # tests) can always reference/patch nbody._ephem_body_state.
+    _ephem_body_state = None
     _EPHEMERIS_AVAILABLE = False
 
 _EPHEM_BODY_NAMES = ("SUN", "MERCURY", "VENUS", "MARS",

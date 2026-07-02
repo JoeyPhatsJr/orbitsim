@@ -1,14 +1,20 @@
 """Ephemeris sanity anchors (Skyfield / DE440).
 
 These tests download de440s.bsp on first run (~30 MB). They are slow once,
-cached after. If offline, they will be skipped via the importorskip guard.
+cached after. If offline (kernel missing and not downloadable), the whole
+module is skipped via the availability guard.
 """
 import numpy as np
 import pytest
 
 skyfield = pytest.importorskip("skyfield")
+from orbitsim.core import ephemeris
 from orbitsim.core.ephemeris import body_state
 from orbitsim.core.constants import MU_SUN
+
+pytestmark = pytest.mark.skipif(
+    not ephemeris.available(), reason="DE440 kernel unavailable (offline)"
+)
 
 
 # 2030-01-01 00:00 TDB, seconds past J2000 (approx): 30 years * 365.25 d.

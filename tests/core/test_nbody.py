@@ -364,9 +364,10 @@ class TestEphemerisCache:
         assert nb._ephemeris_cache == {} or isinstance(nb._ephemeris_cache, dict)
 
     def test_refresh_populates_all_bodies(self):
-        ok = nb.refresh_ephemeris_cache(0.0)
-        if not nb._EPHEMERIS_AVAILABLE:
+        from orbitsim.core import ephemeris
+        if not (nb._EPHEMERIS_AVAILABLE and ephemeris.available()):
             pytest.skip("DE440 kernel not available")
+        ok = nb.refresh_ephemeris_cache(0.0)
         assert ok is True
         for name in nb._EPHEM_BODY_NAMES:
             assert name in nb._ephemeris_cache
