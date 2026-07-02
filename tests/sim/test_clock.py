@@ -30,9 +30,14 @@ def test_warp_down_steps_back():
 
 
 def test_warp_up_clamps_at_max():
-    clock = SimClock(warp=1_000_000.0)
+    clock = SimClock(warp=float(SimClock.WARP_STEPS[-1]))
     clock.warp_up()
-    assert clock.warp == 1_000_000.0
+    assert clock.warp == float(SimClock.WARP_STEPS[-1])
+
+
+def test_warp_table_reaches_deep_space_rate():
+    # The solar-system sandbox promises up to 100,000,000x in deep space.
+    assert SimClock.WARP_STEPS[-1] == 100_000_000
 
 
 def test_warp_down_clamps_at_min():
