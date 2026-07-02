@@ -158,9 +158,18 @@ don't batch many changes into one late commit. Stage specific files by **explici
 - **Download-and-cache** (DE440 kernel, texture maps) lives under `data/` (gitignored). Every path
   MUST return `None`/fall back and never crash offline (validate magic numbers — a CAPTCHA HTML
   page is not a JPEG). Texture source that works: three.js GitHub-raw maps.
-- **N-body coast tests must step at flight cadence.** `World.step` under N-body is *numerically
-  integrated* — a single giant `world.step(period)` is wildly inaccurate. Drive it with many
-  small `dt` steps. At flight cadence LEO coast tracks Kepler to metres.
+- **N-body substeps are sized by the osculating periapsis of the dominant body** (constant
+  along a coast → uniform steps → symplectic Verlet, no secular energy drift), block-quantized
+  to `max_step/2^k`. A single giant `world.step(period)` is now accurate even across periapsis
+  passages, but flight-cadence stepping remains the truest exercise of the sandbox loop. Don't
+  switch the coast integrator to RK4 — it isn't symplectic and drifts on long coasts.
+- **Vessels land, not sink.** `World.step` resolves surface contact after each tick: below the
+  dominant body's surface a vessel is clamped to it with the body's velocity and `landed_on`
+  set; TWR > 1 lifts off again. This (plus the surface-radius floor in the substep caps) is
+  what keeps the singular r→0 gravity region unreachable — don't remove one without the other.
+- **Zero-velocity states are legal** (landed vessels). Anything dividing by `|v|` or `|r×v|`
+  must guard: orbital SAS directions raise `ValueError`; the navball/HUD horizon comes from
+  `local_horizon_basis`, which falls back to an r-only vertical.
 - **Hyperbolic Kepler must converge on the Newton step, not |f|.** Converge on
   `abs(dF) <= tol*(1+abs(F))` instead of `abs(f) < tol`. The elliptic solver is immune.
 - **Trajectory lines are the main per-frame cost — throttle, don't naively cache.** Fix is a
