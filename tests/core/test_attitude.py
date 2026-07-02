@@ -161,3 +161,45 @@ def test_heading_pitch_ranges():
         heading, pitch = heading_pitch(q, _leo_state())
         assert 0.0 <= heading < 2.0 * math.pi
         assert -math.pi / 2 <= pitch <= math.pi / 2
+
+
+# ---------------------------------------------------------------------------
+# Degenerate states (landed: v = 0) must never produce NaN attitude data.
+# ---------------------------------------------------------------------------
+from orbitsim.core.attitude import heading_pitch, local_horizon_basis, sas_target_dir
+from orbitsim.core.state import StateVector as _SV
+from orbitsim.core.constants import MU_EARTH as _MU_E, R_EARTH as _R_E
+
+
+def _landed_state():
+    return _SV(r=np.array([_R_E, 0.0, 0.0]), v=np.zeros(3), mu=_MU_E, epoch_s=0.0)
+
+
+def test_sas_orbital_modes_raise_on_zero_velocity():
+    for mode in ("PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
+                 "RADIAL_IN", "RADIAL_OUT"):
+        with pytest.raises(ValueError):
+            sas_target_dir(mode, _landed_state())
+
+
+def test_sas_target_mode_works_with_zero_velocity():
+    d = sas_target_dir("TARGET", _landed_state(), target_pos=np.array([2.0 * _R_E, 0.0, 0.0]))
+    assert np.allclose(d, [1.0, 0.0, 0.0])
+
+
+def test_local_horizon_basis_is_finite_and_orthonormal_when_landed():
+    prograde, east, up = local_horizon_basis(_landed_state())
+    for vec in (prograde, east, up):
+        assert np.all(np.isfinite(vec))
+        assert abs(np.linalg.norm(vec) - 1.0) < 1e-12
+    assert np.allclose(up, [1.0, 0.0, 0.0])          # radial-out from +x surface point
+    assert abs(np.dot(prograde, east)) < 1e-12
+    assert abs(np.dot(east, up)) < 1e-12
+
+
+def test_heading_pitch_finite_when_landed():
+    # Nose pointing radially out (+x) from the landing site: pitch +90 deg.
+    q = quat_from_axis_angle(np.array([0.0, 1.0, 0.0]), np.pi / 2)
+    heading, pitch = heading_pitch(q, _landed_state())
+    assert np.isfinite(heading) and np.isfinite(pitch)
+    assert abs(pitch - np.pi / 2) < 1e-9

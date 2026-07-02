@@ -118,14 +118,40 @@ SAS_MODES = (
 )
 
 
-def heading_pitch(orientation_q: np.ndarray, state: StateVector) -> tuple[float, float]:
-    """Return ship-nose heading and pitch [rad] relative to the local horizon."""
+def local_horizon_basis(state: StateVector) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Local-horizon basis (prograde, east, radial-out) as inertial unit vectors.
+
+    Degenerate states keep a well-defined vertical: with zero velocity (a
+    landed vessel) or purely radial flight (h = r x v vanishes) there is no
+    orbital 'prograde', so a deterministic horizontal reference is built
+    perpendicular to the local vertical instead — every downstream consumer
+    (navball, HUD heading/pitch) stays finite. Raises ValueError only when r
+    itself is zero (no vertical exists at the frame origin).
+    """
     r = np.asarray(state.r, dtype=np.float64)
     v = np.asarray(state.v, dtype=np.float64)
+    rn = np.linalg.norm(r)
+    if rn == 0.0:
+        raise ValueError("local horizon undefined at the frame origin")
+    h = np.cross(r, v)
+    if np.linalg.norm(v) == 0.0 or np.linalg.norm(h) == 0.0:
+        up = r / rn
+        seed = (np.array([1.0, 0.0, 0.0]) if abs(up[0]) < 0.9
+                else np.array([0.0, 1.0, 0.0]))
+        east = np.cross(up, seed)
+        east = east / np.linalg.norm(east)
+        prograde = np.cross(east, up)
+        return prograde, east, up
     prograde = v / np.linalg.norm(v)
-    radial_out = np.cross(v, np.cross(r, v))
+    radial_out = np.cross(v, h)
     radial_out = radial_out / np.linalg.norm(radial_out)
     east = np.cross(radial_out, prograde)
+    return prograde, east, radial_out
+
+
+def heading_pitch(orientation_q: np.ndarray, state: StateVector) -> tuple[float, float]:
+    """Return ship-nose heading and pitch [rad] relative to the local horizon."""
+    prograde, east, radial_out = local_horizon_basis(state)
     nose = nose_direction(orientation_q)
 
     pitch = math.asin(float(np.clip(np.dot(nose, radial_out), -1.0, 1.0)))
@@ -140,27 +166,11 @@ def sas_target_dir(mode, state: StateVector, target_pos=None) -> np.ndarray:
     """Unit nose direction for an SAS hold mode, from the vessel's orbital state.
 
     Radial-out uses the orthonormal RTN axis v × h (consistent with
-    core.maneuvers), not r/|r|.
+    core.maneuvers), not r/|r|. Orbital modes raise ValueError on degenerate
+    states (zero velocity — e.g. landed — or radial flight) rather than
+    returning NaN directions; TARGET/ANTITARGET only need a target.
     """
-    v = np.asarray(state.v, dtype=np.float64)
-    v_hat = v / np.linalg.norm(v)
-    h = np.cross(state.r, state.v)
-    h_hat = h / np.linalg.norm(h)
-    radial_out = np.cross(v, h)
-    radial_out = radial_out / np.linalg.norm(radial_out)
     mode = mode.upper()
-    if mode == "PROGRADE":
-        return v_hat
-    if mode == "RETROGRADE":
-        return -v_hat
-    if mode == "NORMAL":
-        return h_hat
-    if mode == "ANTINORMAL":
-        return -h_hat
-    if mode == "RADIAL_OUT":
-        return radial_out
-    if mode == "RADIAL_IN":
-        return -radial_out
     if mode in ("TARGET", "ANTITARGET"):
         if target_pos is None:
             raise ValueError(f"{mode} requires target_pos")
@@ -170,4 +180,27 @@ def sas_target_dir(mode, state: StateVector, target_pos=None) -> np.ndarray:
             raise ValueError("target coincides with vessel")
         d = d / n
         return d if mode == "TARGET" else -d
+    v = np.asarray(state.v, dtype=np.float64)
+    vn = np.linalg.norm(v)
+    if vn == 0.0:
+        raise ValueError(f"{mode} undefined with zero velocity")
+    v_hat = v / vn
+    if mode == "PROGRADE":
+        return v_hat
+    if mode == "RETROGRADE":
+        return -v_hat
+    h = np.cross(state.r, state.v)
+    hn = np.linalg.norm(h)
+    if hn == 0.0:
+        raise ValueError(f"{mode} undefined on a radial trajectory (r x v = 0)")
+    if mode == "NORMAL":
+        return h / hn
+    if mode == "ANTINORMAL":
+        return -h / hn
+    radial_out = np.cross(v, h)
+    radial_out = radial_out / np.linalg.norm(radial_out)
+    if mode == "RADIAL_OUT":
+        return radial_out
+    if mode == "RADIAL_IN":
+        return -radial_out
     raise ValueError(f"unknown SAS mode: {mode}")
