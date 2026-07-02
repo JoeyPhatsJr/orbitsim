@@ -530,6 +530,22 @@ _CACHED_BODY_LOOKUP = {
 }
 
 
+def geocentric_body_state(name: str, t_s: float) -> StateVector:
+    """Geocentric StateVector of any named body ('Earth' is the frame origin).
+
+    Uses the per-frame ephemeris cache (with circular fallback) for the Sun
+    and planets, and the on-rails Moon.
+    """
+    if name == "Earth":
+        return StateVector(r=np.zeros(3), v=np.zeros(3), mu=MU_EARTH, epoch_s=t_s)
+    if name == "Moon":
+        return moon_state_at(t_s)
+    fn = _CACHED_BODY_LOOKUP.get(name)
+    if fn is None:
+        raise ValueError(f"unknown body: {name!r}")
+    return fn(t_s)
+
+
 def osculating_elements_solar(state, t_s):
     """Osculating Keplerian elements relative to the dominant body in the solar system.
 
