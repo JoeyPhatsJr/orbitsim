@@ -13,7 +13,10 @@ class SimClock:
         Sim seconds advanced per real second. Must be one of WARP_STEPS.
     """
 
-    WARP_STEPS = [1, 5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000]
+    # The top steps are only reachable in deep space: max_safe_warp[_solar]
+    # caps the usable warp by integration budget near bodies.
+    WARP_STEPS = [1, 5, 10, 50, 100, 1_000, 10_000, 100_000, 1_000_000,
+                  10_000_000, 100_000_000]
 
     def __init__(self, sim_time_s: float = 0.0, warp: float = 1.0) -> None:
         self.sim_time_s = float(sim_time_s)

@@ -244,3 +244,91 @@ def test_world_step_thrust_nbody_fuel_drains():
         world.step(0.1)
     assert v.fuel_mass_kg < fuel0
     assert v.state.v_mag > speed0
+
+
+# ---------------------------------------------------------------------------
+# Surface contact / landing
+# ---------------------------------------------------------------------------
+from orbitsim.core.constants import R_EARTH
+
+
+def _dropped_vessel(altitude_m: float = 2.0e5) -> Vessel:
+    """A vessel released at rest above Earth's surface (plunging trajectory)."""
+    state = StateVector(r=np.array([R_EARTH + altitude_m, 0.0, 0.0]),
+                        v=np.zeros(3), mu=MU_EARTH, epoch_s=0.0)
+    return Vessel(name="lander", state=state)
+
+
+def test_falling_vessel_lands_on_surface_instead_of_diving_to_center():
+    vessel = _dropped_vessel()
+    world = World(central=EARTH, vessels=[vessel])
+    for _ in range(1000):                       # 500 s at flight cadence
+        world.step(0.5)
+        if vessel.landed_on is not None:
+            break
+    assert vessel.landed_on == "Earth"
+    assert abs(np.linalg.norm(vessel.state.r) - R_EARTH) < 1.0
+    assert np.linalg.norm(vessel.state.v) < 1e-9   # at rest on the surface
+
+
+def test_landed_vessel_stays_put_while_coasting():
+    vessel = _dropped_vessel()
+    world = World(central=EARTH, vessels=[vessel])
+    for _ in range(1000):
+        world.step(0.5)
+        if vessel.landed_on is not None:
+            break
+    site = vessel.state.r.copy()
+    epoch = vessel.state.epoch_s
+    world.step(3600.0)                          # one big warp step while landed
+    assert vessel.landed_on == "Earth"
+    assert np.linalg.norm(vessel.state.r - site) < 1.0
+    assert vessel.state.epoch_s == epoch + 3600.0
+
+
+def test_landed_vessel_lifts_off_under_thrust():
+    vessel = _dropped_vessel()
+    vessel.fuel_mass_kg = 1000.0
+    vessel.max_thrust_n = 50000.0               # TWR ~ 2.5 on the pad
+    world = World(central=EARTH, vessels=[vessel])
+    for _ in range(1000):
+        world.step(0.5)
+        if vessel.landed_on is not None:
+            break
+    # Point the nose radially out (body +Z rotated to +x, the landing site's up).
+    from orbitsim.core.attitude import quat_from_axis_angle
+    vessel.orientation = quat_from_axis_angle(np.array([0.0, 1.0, 0.0]), np.pi / 2)
+    vessel.throttle = 1.0
+    for _ in range(20):
+        world.step(0.5)
+    assert vessel.landed_on is None
+    assert np.linalg.norm(vessel.state.r) > R_EARTH + 10.0
+
+
+def test_maneuver_sas_slews_toward_stored_direction():
+    vessel = _circular_vessel()
+    world = World(central=EARTH, vessels=[vessel])
+    from orbitsim.core.attitude import nose_direction
+    target = np.array([0.0, 0.0, 1.0])
+    vessel.sas_mode = "MANEUVER"
+    vessel.sas_maneuver_dir = target
+    before = float(np.dot(nose_direction(vessel.orientation), target))
+    world.step(0.5)
+    after = float(np.dot(nose_direction(vessel.orientation), target))
+    assert after >= before  # nose turns toward the maneuver direction
+    for _ in range(20):
+        world.step(0.5)
+    assert float(np.dot(nose_direction(vessel.orientation), target)) > 0.99
+
+
+def test_unlimited_dv_thrusts_with_empty_tank():
+    vessel = _circular_vessel()
+    vessel.fuel_mass_kg = 0.0
+    vessel.unlimited_dv = True
+    vessel.max_thrust_n = 30000.0
+    vessel.throttle = 1.0
+    world = World(central=EARTH, vessels=[vessel])
+    world.step(1.0)
+    # Nose is +Z (identity orientation): thrust accel = 30 kN / 2000 kg = 15 m/s^2.
+    assert vessel.state.v[2] > 10.0             # thrust produced acceleration
+    assert vessel.fuel_mass_kg == 0.0           # tank untouched under unlimited

@@ -1,6 +1,14 @@
 """Skyfield / DE440 ephemeris wrapper returning SI StateVectors.
 
 Sim time is seconds past J2000 TDB. J2000 epoch = JD 2451545.0 (TDB).
+
+The DE440 kernel (~32 MB) is loaded lazily on first use — never at import
+time — and cached under data/. If it cannot be loaded (first run while
+offline), the failure is remembered so later calls fail fast instead of
+re-attempting a download every frame: `available()` returns False and
+`body_state` raises EphemerisUnavailableError. That error subclasses
+ValueError, so planning code that already treats ValueError as "no solution"
+degrades gracefully to the circular approximations in core/planets.py.
 """
 import os
 import numpy as np
@@ -14,10 +22,45 @@ _DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data"
 )
 
-# Cache the loader, kernel, and timescale at module load.
+
+class EphemerisUnavailableError(ValueError):
+    """The DE440 kernel could not be loaded (e.g. offline on first run)."""
+
+
 _loader = Loader(_DATA_DIR)
-_ts = _loader.timescale()
-_kernel = _loader("de440s.bsp")
+_ts = None
+_kernel = None
+_load_failed = False
+
+
+def _ensure_kernel():
+    """Load (once) and return the DE440 kernel; remember a failed attempt."""
+    global _ts, _kernel, _load_failed
+    if _kernel is not None:
+        return _kernel
+    if _load_failed:
+        raise EphemerisUnavailableError(
+            "DE440 kernel unavailable (download failed on first attempt)"
+        )
+    try:
+        _ts = _loader.timescale()
+        _kernel = _loader("de440s.bsp")
+    except Exception as exc:
+        _load_failed = True
+        raise EphemerisUnavailableError(
+            f"DE440 kernel unavailable: {exc}"
+        ) from exc
+    return _kernel
+
+
+def available() -> bool:
+    """Whether the DE440 kernel can be used (attempts one lazy load)."""
+    try:
+        _ensure_kernel()
+        return True
+    except EphemerisUnavailableError:
+        return False
+
 
 # Map our names to Skyfield kernel targets.
 _TARGETS = {
@@ -39,6 +82,7 @@ _CENTER_MU = {"SUN": MU_SUN, "EARTH": MU_EARTH}
 
 def sim_time_to_skyfield(t_sim_s: float):
     """Convert seconds past J2000 TDB to a Skyfield Time."""
+    _ensure_kernel()
     jd_tdb = _J2000_JD_TDB + t_sim_s / 86400.0
     return _ts.tdb_jd(jd_tdb)
 
@@ -59,10 +103,16 @@ def body_state(name: str, t_sim_s: float, center: str = "SUN") -> StateVector:
     -------
     StateVector
         r, v in J2000/ICRF [m, m/s]; mu is the central body's mu (0.0 if unknown).
+
+    Raises
+    ------
+    EphemerisUnavailableError
+        If the DE440 kernel is not on disk and cannot be downloaded.
     """
+    kernel = _ensure_kernel()
     t = sim_time_to_skyfield(t_sim_s)
-    target = _kernel[_TARGETS[name.upper()]]
-    origin = _kernel[_TARGETS[center.upper()]]
+    target = kernel[_TARGETS[name.upper()]]
+    origin = kernel[_TARGETS[center.upper()]]
     rel = (target - origin).at(t)
     r_m = rel.position.m                     # meters, shape (3,)
     v_m_s = rel.velocity.m_per_s             # m/s, shape (3,)

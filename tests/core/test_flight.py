@@ -111,6 +111,28 @@ def test_burn_stops_when_fuel_exhausted():
     assert abs(out.v[0] - expected_dv) / expected_dv < 2e-3
 
 
+def test_powered_burn_second_order_accuracy():
+    """A finite LEO burn at the default substep count lands within metres of a
+    fine-substep reference.
+
+    Strang (half-impulse / gravity drift / half-impulse) splitting is 2nd
+    order; applying the whole substep impulse before the drift is 1st order
+    and misses this reference by ~700 m at substeps=50.
+    """
+    r0 = 7.0e6
+    s = StateVector(r=np.array([r0, 0.0, 0.0]),
+                    v=np.array([0.0, np.sqrt(MU_EARTH / r0), 0.0]), mu=MU_EARTH)
+    kwargs = dict(
+        dry_mass_kg=1000.0, fuel_kg=800.0,
+        thrust_dir_unit=np.array([0.0, 1.0, 0.0]),
+        throttle=1.0, max_thrust_n=30000.0, ve_mps=3000.0, dt_s=60.0,
+    )
+    ref, ref_fuel = integrate_powered(s, substeps=20000, **kwargs)
+    out, fuel = integrate_powered(s, substeps=50, **kwargs)
+    assert np.linalg.norm(out.r - ref.r) < 5.0
+    assert abs(fuel - ref_fuel) < 1e-9      # exact rocket-equation bookkeeping
+
+
 from orbitsim.core.nbody import earth_moon_accel, propagate_earth_moon
 
 

@@ -48,13 +48,11 @@ def project_direction(d, right, nose, up):
 
 def horizon_frame(state):
     """Local-horizon basis as inertial unit vectors: (prograde, east, radial-out).
-    These become the navball texture's +X (heading 0), +Y, +Z (sky pole)."""
-    v = np.asarray(state.v, dtype=np.float64)
-    v_hat = v / np.linalg.norm(v)
-    radial_out = np.cross(v, np.cross(np.asarray(state.r, dtype=np.float64), v))
-    radial_out = radial_out / np.linalg.norm(radial_out)
-    east = np.cross(radial_out, v_hat)
-    return v_hat, east, radial_out
+    These become the navball texture's +X (heading 0), +Y, +Z (sky pole).
+    Delegates to core.attitude so degenerate states (landed: v = 0) keep the
+    ball finite instead of going NaN."""
+    from orbitsim.core.attitude import local_horizon_basis
+    return local_horizon_basis(state)
 
 
 def horizon_ball_matrix(orientation_q, state):

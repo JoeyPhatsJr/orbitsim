@@ -3,6 +3,11 @@ import numpy as np
 import pytest
 
 pytest.importorskip("skyfield")
+from orbitsim.core import ephemeris
+
+pytestmark = pytest.mark.skipif(
+    not ephemeris.available(), reason="DE440 kernel unavailable (offline)"
+)
 from orbitsim.core.patched_conics import dominant_body
 from orbitsim.core.bodies import SUN, EARTH, PLANETS
 from orbitsim.core.ephemeris import body_state

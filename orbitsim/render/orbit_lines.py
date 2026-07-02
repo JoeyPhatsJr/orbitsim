@@ -87,6 +87,37 @@ def sample_orbit_points(elements: KeplerianElements, n: int = 256) -> np.ndarray
     return pts
 
 
+def sample_relative_orbit_points(body_state, center_state, mu: float, n: int = 256) -> np.ndarray:
+    """Sample the osculating orbit of `body_state` about `center_state`.
+
+    Both states must share one frame (the sandbox passes geocentric states);
+    the orbit is computed from the relative state with the given mu and the
+    returned (n, 3) float64 positions [m] are relative to the center — ready
+    to parent to a frame node placed at the center's rendered position.
+
+    Falls back to a circle at the current relative radius if the relative
+    state is degenerate (zero relative velocity or radius), so the reference
+    line never vanishes.
+    """
+    from orbitsim.core.elements import state_to_elements
+    from orbitsim.core.state import StateVector
+
+    rel = StateVector(
+        r=np.asarray(body_state.r, dtype=np.float64) - np.asarray(center_state.r, dtype=np.float64),
+        v=np.asarray(body_state.v, dtype=np.float64) - np.asarray(center_state.v, dtype=np.float64),
+        mu=mu,
+        epoch_s=body_state.epoch_s,
+    )
+    try:
+        return sample_orbit_points(state_to_elements(rel), n=n)
+    except (ValueError, ZeroDivisionError):
+        radius = float(np.linalg.norm(rel.r))
+        angles = np.linspace(0.0, 2.0 * np.pi, n)
+        return np.stack(
+            [radius * np.cos(angles), radius * np.sin(angles), np.zeros(n)], axis=1
+        )
+
+
 from panda3d.core import LineSegs, NodePath
 
 

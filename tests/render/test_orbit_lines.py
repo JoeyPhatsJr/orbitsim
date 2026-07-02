@@ -86,3 +86,41 @@ def test_path_fade_tracks_distance_not_sample_count():
     assert alpha[0] == 1.0
     assert alpha[-1] == pytest.approx(0.25)
     assert alpha[1] < 0.5  # already 90% of the path despite being the middle sample
+
+
+# ---------------------------------------------------------------------------
+# sample_relative_orbit_points (heliocentric reference lines in the sandbox)
+# ---------------------------------------------------------------------------
+from orbitsim.core.constants import MU_SUN
+from orbitsim.core.planets import mars_state_at, sun_state_at, A_MARS
+from orbitsim.core.state import StateVector
+from orbitsim.render.orbit_lines import sample_relative_orbit_points
+
+
+def test_relative_orbit_points_trace_heliocentric_circle():
+    """Mars' geocentric state relative to the geocentric Sun is its
+    heliocentric orbit: every sampled point sits at ~A_MARS from the center."""
+    t = 1.0e6
+    pts = sample_relative_orbit_points(mars_state_at(t), sun_state_at(t), MU_SUN, n=64)
+    assert pts.shape == (64, 3)
+    radii = np.linalg.norm(pts, axis=1)
+    assert np.allclose(radii, A_MARS, rtol=1e-6)
+
+
+def test_relative_orbit_points_passes_through_current_relative_position():
+    t = 2.5e6
+    mars = mars_state_at(t)
+    sun = sun_state_at(t)
+    rel_now = mars.r - sun.r
+    pts = sample_relative_orbit_points(mars, sun, MU_SUN, n=512)
+    nearest = np.min(np.linalg.norm(pts - rel_now, axis=1))
+    # Orbit circumference / 512 samples bounds the gap to the nearest sample.
+    assert nearest < 2.0 * np.pi * A_MARS / 512 * 1.5
+
+
+def test_relative_orbit_points_degenerate_state_falls_back_to_circle():
+    body = StateVector(r=np.array([1.5e11, 0.0, 0.0]), v=np.zeros(3), mu=0.0, epoch_s=0.0)
+    center = StateVector(r=np.zeros(3), v=np.zeros(3), mu=MU_SUN, epoch_s=0.0)
+    pts = sample_relative_orbit_points(body, center, MU_SUN, n=32)
+    assert pts.shape == (32, 3)
+    assert np.allclose(np.linalg.norm(pts, axis=1), 1.5e11, rtol=1e-9)

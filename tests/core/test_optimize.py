@@ -61,6 +61,9 @@ def test_optimize_transfer_beats_or_matches_grid():
 def test_earth_to_mars_porkchop_has_window():
     import pytest
     pytest.importorskip("skyfield")
+    from orbitsim.core.ephemeris import available
+    if not available():
+        pytest.skip("DE440 kernel unavailable (offline)")
     from orbitsim.core.optimize import interplanetary_porkchop
     # 2031 launch window scan, TOF 150–300 days.
     base = 31.0 * 365.25 * 86400.0
