@@ -73,6 +73,35 @@ def test_reduces_to_two_body_with_stationary_earth():
     assert np.linalg.norm(out2.r - propagate_kepler(st, period).r) < 10.0
 
 
+def test_eccentric_periapsis_passage_resolved_within_one_call():
+    """One propagate call spanning a periapsis passage must stay accurate.
+
+    This is exactly what a high-warp frame does on an eccentric orbit: the
+    call starts near apoapsis (long local timescale => coarse substeps) but
+    crosses periapsis (short timescale) inside the same call. The substep
+    size must adapt to the *current* radius, not the starting one.
+    """
+    earth0 = nb._CircularBody(MU_EARTH, 0.0)   # stationary => clean Kepler reference
+    rp, ra = 6.6e6, 3.0e8
+    a = 0.5 * (rp + ra)
+    vp = np.sqrt(MU_EARTH * (2.0 / rp - 1.0 / a))
+    at_pe = StateVector(r=np.array([rp, 0.0, 0.0]),
+                        v=np.array([0.0, vp, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    period = 2.0 * np.pi * np.sqrt(a**3 / MU_EARTH)
+    at_ap = propagate_kepler(at_pe, period / 2.0)     # start at apoapsis
+    out = nb.propagate_nbody(at_ap, period, attractors=[earth0], max_step_s=3600.0)
+    ref = propagate_kepler(at_ap, period)
+    # Periapsis speed is ~10.9 km/s; the passage must be resolved to a small
+    # fraction of rp, not smeared across multi-kilosecond substeps.
+    assert np.linalg.norm(out.r - ref.r) < 5.0e4
+    # Energy must return to its initial value (no artificial kick at periapsis).
+    # Periapsis-based step sizing keeps the step uniform along the coast, so
+    # velocity Verlet stays symplectic: measured error is ~1e-13 here.
+    eps0 = 0.5 * np.dot(at_ap.v, at_ap.v) - MU_EARTH / np.linalg.norm(at_ap.r)
+    eps1 = 0.5 * np.dot(out.v, out.v) - MU_EARTH / np.linalg.norm(out.r)
+    assert abs(eps1 - eps0) / abs(eps0) < 1e-9
+
+
 def test_propagation_is_reversible():
     st = _leo_state()
     T = 3600.0 * 3

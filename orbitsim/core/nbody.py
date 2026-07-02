@@ -7,7 +7,7 @@ import threading
 import numpy as np
 from scipy.optimize import brentq
 
-from orbitsim.core.constants import MU_EARTH, MU_MOON
+from orbitsim.core.constants import MU_EARTH, MU_MOON, R_EARTH, R_MOON
 from orbitsim.core.state import StateVector
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.elements import state_to_elements
@@ -22,11 +22,13 @@ MOON_X = (1.0 - MASS_RATIO) * D_EM      # Moon rotating-frame x [m]
 
 class _CircularBody:
     """A point mass on a circular barycentric orbit (signed radius along the
-    rotating x-axis at t=0; rotates at OMEGA_EM)."""
+    rotating x-axis at t=0; rotates at OMEGA_EM). body_radius_m floors the
+    substep sizing: below the surface the physics is over anyway."""
 
-    def __init__(self, mu: float, signed_radius_m: float):
+    def __init__(self, mu: float, signed_radius_m: float, body_radius_m: float = 0.0):
         self.mu = mu
         self._R = signed_radius_m
+        self.body_radius_m = body_radius_m
 
     def state_at(self, t_s: float) -> StateVector:
         th = OMEGA_EM * t_s
@@ -36,8 +38,8 @@ class _CircularBody:
                            mu=self.mu, epoch_s=t_s)
 
 
-EARTH = _CircularBody(MU_EARTH, EARTH_X)
-MOON = _CircularBody(MU_MOON, MOON_X)
+EARTH = _CircularBody(MU_EARTH, EARTH_X, R_EARTH)
+MOON = _CircularBody(MU_MOON, MOON_X, R_MOON)
 EARTH_MOON = [EARTH, MOON]
 
 
@@ -63,24 +65,106 @@ def earth_moon_accel(r_m, t_s):
     return a
 
 
-def _substep_count(state, dt_s, attractors, max_step_s):
-    """Number of uniform Verlet sub-steps for |dt_s|: small enough to resolve the
-    closest body's local orbital timescale (1/200 of 2*pi*sqrt(r^3/mu))."""
-    r = np.asarray(state.r, dtype=np.float64)
-    cap = max_step_s
+# Substep sizing. The dominant body's substep is 1/SUBSTEP_DIVISOR of the
+# orbital timescale 2*pi*sqrt(rp^3/mu) at the *osculating periapsis* rp, not
+# at the current radius: on a coast rp is (nearly) constant, so the step is
+# uniform around the whole orbit — velocity Verlet stays symplectic (no
+# secular energy drift) — while periapsis passages are resolved by
+# construction, no matter where inside a long warp step they occur. Other
+# bodies contribute a cap from the current distance (they only matter when
+# close). rp is floored at the body's surface radius: below the surface the
+# flight is over (sim/world.py clamps to the surface), so resolving deeper
+# is pointless. MAX_SUBSTEPS_PER_CALL is a safety bound (not a target) so a
+# pathological state can never hang the caller.
+SUBSTEP_DIVISOR = 200.0
+MAX_SUBSTEPS_PER_CALL = 100_000
+_MIN_SUBSTEP_S = 1e-6      # floor so a zero cap (r exactly at a body) can't stall
+
+
+def _conic_periapsis_m(r_rel, v_rel, mu):
+    """Periapsis radius [m] of the osculating conic — valid for any e (>=0)."""
+    r = np.linalg.norm(r_rel)
+    if r == 0.0:
+        return 0.0
+    h_vec = np.cross(r_rel, v_rel)
+    p = np.dot(h_vec, h_vec) / mu
+    e_vec = np.cross(v_rel, h_vec) / mu - r_rel / r
+    return p / (1.0 + np.linalg.norm(e_vec))
+
+
+def _timescale_cap_s(radius_m, mu):
+    """1/SUBSTEP_DIVISOR of the circular-orbit timescale at radius_m."""
+    return (2 * np.pi * np.sqrt(radius_m**3 / mu)) / SUBSTEP_DIVISOR
+
+
+def _attractor_cap_s(r, v, t_s, attractors, max_step_s):
+    """Largest safe substep at state (r, v) [s].
+
+    The body with the shortest current-distance timescale is treated as
+    dominant and sized by its osculating periapsis; the others by current
+    distance.
+    """
+    caps = []
+    dists = []
     for body in attractors:
-        rb = np.linalg.norm(r - body.state_at(state.epoch_s).r)
-        cap = min(cap, (2 * np.pi * np.sqrt(rb**3 / body.mu)) / 200.0)
+        rb = np.linalg.norm(r - body.state_at(t_s).r)
+        dists.append(rb)
+        caps.append(_timescale_cap_s(rb, body.mu) if rb > 0.0 else np.inf)
+    cap = max_step_s
+    if caps:
+        dom = int(np.argmin(caps))
+        for i, body in enumerate(attractors):
+            if dists[i] <= 0.0:
+                continue
+            if i == dom:
+                st = body.state_at(t_s)
+                rp = _conic_periapsis_m(r - st.r, v - st.v, body.mu)
+                rp = max(rp, body.body_radius_m)
+                if rp > 0.0:
+                    cap = min(cap, _timescale_cap_s(rp, body.mu))
+            else:
+                cap = min(cap, caps[i])
+    return cap
+
+
+def _substep_count(state, dt_s, attractors, max_step_s):
+    """Estimated sub-step count for |dt_s| (used for warp budgeting; must use
+    the same cap the integrator uses so warp budgets stay honest)."""
+    cap = _attractor_cap_s(np.asarray(state.r, dtype=np.float64),
+                           np.asarray(state.v, dtype=np.float64),
+                           state.epoch_s, attractors, max_step_s)
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def _verlet(r, v, t, dt_s, accel_fn, n_sub):
-    """Velocity-Verlet (kick-drift-kick) for n_sub uniform steps. accel_fn(r, t)->a."""
+def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
+    """Velocity-Verlet (kick-drift-kick) with a block-quantized adaptive substep.
+
+    cap_fn(r, v, t) returns the largest allowed substep [s] at that state.
+    With periapsis-based caps the cap is (nearly) constant along a coast, so
+    the steps are uniform and the integrator keeps its symplectic
+    bounded-energy behavior; when the cap does move (SOI hand-offs, thrust
+    history), the step is quantized to base_step_s / 2^k — the largest such
+    value not exceeding the local cap — so step changes are rare, discrete
+    block switches rather than continuous drift-inducing jitter.
+    """
     r = np.asarray(r, dtype=np.float64).copy()
     v = np.asarray(v, dtype=np.float64).copy()
-    h = dt_s / n_sub
+    if dt_s == 0.0:
+        return r, v, t
+    sign = 1.0 if dt_s > 0.0 else -1.0
+    remaining = abs(dt_s)
     a = accel_fn(r, t)
-    for _ in range(n_sub):
+    steps = 0
+    while remaining > 0.0:
+        steps += 1
+        if steps >= MAX_SUBSTEPS_PER_CALL:
+            h_mag = remaining              # budget exhausted: finish coarsely
+        else:
+            cap = max(cap_fn(r, v, t), _MIN_SUBSTEP_S)
+            k = max(0.0, np.ceil(np.log2(base_step_s / cap)))
+            h_mag = min(remaining, base_step_s / 2.0**k)
+        remaining -= h_mag
+        h = sign * h_mag
         v_half = v + 0.5 * a * h
         r = r + v_half * h
         t = t + h
@@ -90,30 +174,54 @@ def _verlet(r, v, t, dt_s, accel_fn, n_sub):
 
 
 def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
-    """Advance the ship by dt_s with velocity Verlet under summed attractors. Reversible."""
-    n = _substep_count(state, dt_s, attractors, max_step_s)
-    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s,
-                      lambda rr, tt: gravity_accel(rr, tt, attractors), n)
-    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+    """Advance the ship by dt_s with adaptive velocity Verlet under summed attractors."""
+    r, v, t = _verlet_adaptive(
+        state.r, state.v, state.epoch_s, dt_s,
+        lambda rr, tt: gravity_accel(rr, tt, attractors),
+        lambda rr, vv, tt: _attractor_cap_s(rr, vv, tt, attractors, max_step_s),
+        max_step_s)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
+
+
+def _earth_moon_cap_s(r, v, t_s, max_step_s):
+    """Largest safe substep at (r, v) for the geocentric Earth+Moon field [s].
+
+    Inside the Moon's SOI the Moon is dominant (periapsis-based cap) and Earth
+    contributes a current-distance cap; outside, the roles swap.
+    """
+    cap = max_step_s
+    moon = moon_state_at(t_s)
+    rM = np.linalg.norm(r - moon.r)
+    rE = np.linalg.norm(r)
+    if rM < MOON_SOI_M:
+        rp = max(_conic_periapsis_m(r - moon.r, v - moon.v, MU_MOON), R_MOON)
+        cap = min(cap, _timescale_cap_s(rp, MU_MOON))
+        if rE > 0.0:
+            cap = min(cap, _timescale_cap_s(rE, MU_EARTH))
+    else:
+        if rE > 0.0:
+            rp = max(_conic_periapsis_m(r, v, MU_EARTH), R_EARTH)
+            cap = min(cap, _timescale_cap_s(rp, MU_EARTH))
+        if rM > 0.0:
+            cap = min(cap, _timescale_cap_s(rM, MU_MOON))
+    return cap
 
 
 def _earth_moon_substeps(state, dt_s, max_step_s):
-    """Sub-steps for propagate_earth_moon: cap by 1/200 of the local orbital timescale
-    at Earth (origin) and at the Moon."""
-    r = np.asarray(state.r, dtype=np.float64)
-    cap = max_step_s
-    rE = np.linalg.norm(r)
-    cap = min(cap, (2 * np.pi * np.sqrt(rE**3 / MU_EARTH)) / 200.0)
-    rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
-    cap = min(cap, (2 * np.pi * np.sqrt(rM**3 / MU_MOON)) / 200.0)
+    """Estimated sub-steps for propagate_earth_moon (used for warp budgeting;
+    must use the same cap the integrator uses so warp budgets stay honest)."""
+    cap = _earth_moon_cap_s(np.asarray(state.r, dtype=np.float64),
+                            np.asarray(state.v, dtype=np.float64),
+                            state.epoch_s, max_step_s)
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
 def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
     """Advance the ship by dt_s under earth_moon_accel (central Earth + Moon + indirect)."""
-    n = _earth_moon_substeps(state, dt_s, max_step_s)
-    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, earth_moon_accel, n)
-    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+    r, v, t = _verlet_adaptive(
+        state.r, state.v, state.epoch_s, dt_s, earth_moon_accel,
+        lambda rr, vv, tt: _earth_moon_cap_s(rr, vv, tt, max_step_s), max_step_s)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
 MOON_SOI_M = 3.844e8 * (MU_MOON / MU_EARTH)**0.4   # Moon sphere of influence [m]
@@ -304,42 +412,89 @@ def solar_system_accel(r_m, t_s):
     return a
 
 
-def _solar_system_substeps(state, dt_s, max_step_s):
-    """Adaptive sub-step count for the solar system propagator.
+from orbitsim.core.constants import (
+    R_SUN, R_MERCURY, R_VENUS, R_MARS,
+    R_JUPITER, R_SATURN, R_URANUS, R_NEPTUNE,
+)
 
-    Caps the sub-step at 1/200 of the local orbital timescale at every body
-    (Earth, Moon, Sun, and each planet). Near a body the timescale is short
-    and many sub-steps are needed; in deep space the timescale is long.
+# (state_fn, mu, soi_m, body_radius_m) for the heliocentric perturbers.
+_SOLAR_CAP_BODIES = [
+    (_csun, MU_SUN, float("inf"), R_SUN),
+    (_cmercury, MU_MERCURY, MERCURY_SOI_M, R_MERCURY),
+    (_cvenus, MU_VENUS, VENUS_SOI_M, R_VENUS),
+    (_cmars, MU_MARS, MARS_SOI_M, R_MARS),
+    (_cjupiter, MU_JUPITER, JUPITER_SOI_M, R_JUPITER),
+    (_csaturn, MU_SATURN, SATURN_SOI_M, R_SATURN),
+    (_curanus, MU_URANUS, URANUS_SOI_M, R_URANUS),
+    (_cneptune, MU_NEPTUNE, NEPTUNE_SOI_M, R_NEPTUNE),
+]
+
+
+def _solar_cap_s(r, v, t_s, max_step_s):
+    """Largest safe substep at (r, v) for the full solar-system field [s].
+
+    The SOI-dominant body (Moon -> planet -> Earth -> Sun) gets a
+    periapsis-based cap; every other body within 10 SOI contributes a
+    current-distance cap. Near a body the timescale is short and many
+    sub-steps are needed; in deep space the timescale is long.
     """
-    r = np.asarray(state.r, dtype=np.float64)
     cap = max_step_s
+    moon = moon_state_at(t_s)
+    rM = np.linalg.norm(r - moon.r)
     rE = np.linalg.norm(r)
-    if rE > 0:
-        cap = min(cap, (2 * np.pi * np.sqrt(rE ** 3 / MU_EARTH)) / 200.0)
-    rM = np.linalg.norm(r - moon_state_at(state.epoch_s).r)
-    if rM > 0:
-        cap = min(cap, (2 * np.pi * np.sqrt(rM ** 3 / MU_MOON)) / 200.0)
-    for state_fn, mu, soi in [
-        (_csun, MU_SUN, float("inf")),
-        (_cmercury, MU_MERCURY, MERCURY_SOI_M),
-        (_cvenus, MU_VENUS, VENUS_SOI_M),
-        (_cmars, MU_MARS, MARS_SOI_M),
-        (_cjupiter, MU_JUPITER, JUPITER_SOI_M),
-        (_csaturn, MU_SATURN, SATURN_SOI_M),
-        (_curanus, MU_URANUS, URANUS_SOI_M),
-        (_cneptune, MU_NEPTUNE, NEPTUNE_SOI_M),
-    ]:
-        rB = np.linalg.norm(r - state_fn(state.epoch_s).r)
-        if rB > 0 and rB < 10 * soi:
-            cap = min(cap, (2 * np.pi * np.sqrt(rB ** 3 / mu)) / 200.0)
+    moon_dominant = rM < MOON_SOI_M
+    if moon_dominant:
+        rp = max(_conic_periapsis_m(r - moon.r, v - moon.v, MU_MOON), R_MOON)
+        cap = min(cap, _timescale_cap_s(rp, MU_MOON))
+    elif rM > 0:
+        cap = min(cap, _timescale_cap_s(rM, MU_MOON))
+
+    planet_dominant = False
+    for state_fn, mu, soi, radius in _SOLAR_CAP_BODIES[1:]:   # planets only
+        st = state_fn(t_s)
+        rB = np.linalg.norm(r - st.r)
+        if rB <= 0 or rB >= 10 * soi:
+            continue
+        if rB < soi and not moon_dominant:
+            planet_dominant = True
+            rp = max(_conic_periapsis_m(r - st.r, v - st.v, mu), radius)
+            cap = min(cap, _timescale_cap_s(rp, mu))
+        else:
+            cap = min(cap, _timescale_cap_s(rB, mu))
+
+    earth_dominant = not moon_dominant and not planet_dominant and rE < EARTH_SOI_M
+    if earth_dominant:
+        rp = max(_conic_periapsis_m(r, v, MU_EARTH), R_EARTH)
+        cap = min(cap, _timescale_cap_s(rp, MU_EARTH))
+    elif rE > 0:
+        cap = min(cap, _timescale_cap_s(rE, MU_EARTH))
+
+    sun = _csun(t_s)
+    rS = np.linalg.norm(r - sun.r)
+    if rS > 0:
+        if moon_dominant or planet_dominant or earth_dominant:
+            cap = min(cap, _timescale_cap_s(rS, MU_SUN))
+        else:
+            rp = max(_conic_periapsis_m(r - sun.r, v - sun.v, MU_SUN), R_SUN)
+            cap = min(cap, _timescale_cap_s(rp, MU_SUN))
+    return cap
+
+
+def _solar_system_substeps(state, dt_s, max_step_s):
+    """Estimated sub-step count for the solar system propagator (used for warp
+    budgeting; must use the same cap the integrator uses)."""
+    cap = _solar_cap_s(np.asarray(state.r, dtype=np.float64),
+                       np.asarray(state.v, dtype=np.float64),
+                       state.epoch_s, max_step_s)
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
 def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0):
     """Propagate a vessel under full solar system gravity (geocentric)."""
-    n = _solar_system_substeps(state, dt_s, max_step_s)
-    r, v, t = _verlet(state.r, state.v, state.epoch_s, dt_s, solar_system_accel, n)
-    return StateVector(r=r, v=v, mu=state.mu, epoch_s=t)
+    r, v, t = _verlet_adaptive(
+        state.r, state.v, state.epoch_s, dt_s, solar_system_accel,
+        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s), max_step_s)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
 def dominant_body_solar(r_m, t_s):
