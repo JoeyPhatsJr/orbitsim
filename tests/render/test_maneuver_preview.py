@@ -71,3 +71,39 @@ def test_interplanetary_polyline_is_localized_before_float32_conversion():
     np.testing.assert_array_equal(actual_origin, origin)
     np.testing.assert_array_equal(local, offsets)
     np.testing.assert_array_equal(local.astype(np.float32), offsets.astype(np.float32))
+
+
+# ---------------------------------------------------------------------------
+# Encounter patch builder (predicted-flyby overlay on the trajectory line).
+# ---------------------------------------------------------------------------
+def test_build_encounter_patches_skips_primary_escape_and_short_runs():
+    import numpy as np
+    from panda3d.core import NodePath
+    from orbitsim.render.app import OrbitApp
+    from orbitsim.core.encounters import Encounter
+
+    class _FakeSelf:
+        ENCOUNTER_COLOR = OrbitApp.ENCOUNTER_COLOR
+
+    def enc(name, start, end, radius):
+        return Encounter(
+            body_name=name, start_index=start, end_index=end,
+            entry_epoch_s=0.0, exit_epoch_s=1.0,
+            periapsis_index=(start + end) // 2, periapsis_epoch_s=0.5,
+            periapsis_radius_m=radius * 1.1, periapsis_point_m=np.zeros(3),
+            v_inf_mps=500.0, body_mu=4.9e12, body_radius_m=radius,
+            closed=True, impact=False,
+        )
+
+    pts = np.random.RandomState(0).standard_normal((60, 3)) * 1.0e7
+    parent = NodePath("traj")
+    encounters = [
+        enc("Moon", 10, 25, 1.7e6),    # kept -> one patch
+        enc("Earth", 30, 40, 6.4e6),   # skipped: primary body
+        enc("Sun", 45, 50, 7.0e8),     # skipped: heliocentric escape
+        enc("Mars", 52, 52, 3.4e6),    # skipped: single-sample run (< 2 points)
+    ]
+    OrbitApp._build_encounter_patches(
+        _FakeSelf(), parent, pts, pts[0].copy(), 2.0e4, encounters
+    )
+    assert parent.get_num_children() == 1

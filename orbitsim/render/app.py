@@ -353,12 +353,14 @@ class OrbitApp(ShowBase):
         self._traj_last_complete_t = [float("-inf") for _ in world.vessels]
         self._traj_render_scale = [None for _ in world.vessels]
         self._traj_render_origin = [None for _ in world.vessels]
+        self._traj_encounters = [None for _ in world.vessels]
 
         self._preview_np = None
         self._preview_origin = None
         self._preview_submit_t = 0.0
         self._preview_future = None
         self._preview_future_key = None
+        self._preview_encounters = []
         if not self.solar_system:
             from concurrent.futures import ThreadPoolExecutor
             self._preview_executor = ThreadPoolExecutor(
@@ -453,6 +455,19 @@ class OrbitApp(ShowBase):
                 label.hide()
                 self._apsis_nps[name] = marker
                 self._apsis_labels[name] = label
+            # Predicted-encounter periapsis cues: a small pool of gold markers +
+            # labels, placed each frame at each upcoming SOI closest approach.
+            self._encounter_marker_nps = []
+            self._encounter_labels = []
+            for _ in range(self.MAX_ENCOUNTER_MARKERS):
+                mk, lbl = build_labeled_marker(
+                    self.render, "", color=self.ENCOUNTER_COLOR,
+                    marker_scale=5.0, label_scale=10.5,
+                )
+                mk.hide()
+                lbl.hide()
+                self._encounter_marker_nps.append(mk)
+                self._encounter_labels.append(lbl)
             self._moon_np = make_uv_sphere(1.0, 12, 16)
             self._moon_np.reparent_to(self.render)
             self._moon_np.set_color(0.7, 0.7, 0.72, 1.0)
@@ -1642,7 +1657,8 @@ class OrbitApp(ShowBase):
         )
 
     def _sample_trajectory(
-        self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1, with_times=False
+        self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1,
+        with_times=False, with_encounters=False,
     ):
         """Forward-integrate state under N-body and return ~n_pts positions [m].
 
@@ -1683,24 +1699,36 @@ class OrbitApp(ShowBase):
                 else:
                     cur = prop_fn(cur, dt)
                 pts[i] = cur.r
-        if with_times:
             epochs = state.epoch_s + np.arange(n_pts, dtype=np.float64) * dt
+            encounters = []
+            if with_encounters:
+                # Classify inside the same ephemeris context that produced the
+                # path, so far-future planet positions match what was integrated.
+                from orbitsim.core.encounters import (
+                    find_encounters, solar_dominant, earth_moon_dominant,
+                )
+                dominant = solar_dominant if self.world.solar_system else earth_moon_dominant
+                encounters = find_encounters(pts, epochs, dominant, primary_name="Earth")
+        if with_encounters:
+            return pts, epochs, encounters
+        if with_times:
             return pts, epochs
         return pts
 
     def _sample_preview(self, state):
-        """Compute world-space preview points without touching Panda3D scene objects."""
+        """Compute preview points + encounters without touching Panda3D scene objects."""
         horizon = _trajectory_horizon_s(state, self.world.solar_system)
-        return self._sample_trajectory(
-            state, n_pts=256, max_horizon_s=horizon, n_orbits=2
+        pts, _epochs, encounters = self._sample_trajectory(
+            state, n_pts=256, max_horizon_s=horizon, n_orbits=2, with_encounters=True
         )
+        return pts, encounters
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
         preview_key = _maneuver_preview_key(node, self._node_epoch_s)
         future = self._preview_future
         if future is not None and future.done():
-            points = future.result()
+            points, encounters = future.result()
             completed_key = self._preview_future_key
             self._preview_future = None
             self._preview_future_key = None
@@ -1715,6 +1743,11 @@ class OrbitApp(ShowBase):
                 )
                 self._preview_np.reparent_to(self.render)
                 self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
+                # Encounter patches ride the preview node (same origin/scale).
+                self._preview_encounters = encounters
+                self._build_encounter_patches(
+                    self._preview_np, points, self._preview_origin, scale, encounters
+                )
 
         if node.magnitude_mps <= 0.0:
             if self._preview_future is not None:
@@ -1725,6 +1758,7 @@ class OrbitApp(ShowBase):
                 self._preview_np.remove_node()
                 self._preview_np = None
                 self._preview_origin = None
+            self._preview_encounters = []
             return
 
         if (
@@ -1741,17 +1775,40 @@ class OrbitApp(ShowBase):
                 self._sample_preview, post_burn
             )
 
+    # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
+    # trajectory and magenta maneuver preview.
+    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
+    MAX_ENCOUNTER_MARKERS = 4   # rarely more than 1-2 flybys visible on a path
+
+    def _build_encounter_patches(self, parent, world_pts, origin, scale, encounters):
+        """Draw each flyby SOI segment as a distinct-colored overlay parented to the
+        trajectory node (so it inherits the floating-origin transform for free)."""
+        for enc in encounters:
+            if enc.body_name in ("Earth", "Sun"):
+                continue   # primary / heliocentric-escape: no periapsis patch
+            seg = world_pts[enc.start_index:enc.end_index + 1]
+            if len(seg) < 2:
+                continue
+            pts = [tuple((p - origin) / scale) for p in seg]
+            node = build_orbit_node(
+                pts, color=self.ENCOUNTER_COLOR, thickness=3.0, fade_minimum=0.7
+            )
+            node.reparent_to(parent)   # local points already relative to origin/scale
+
     def _install_trajectory(self, idx, world_pts, scale, state) -> None:
         """Swap cached prediction points into Panda3D; called only on the render thread."""
         local_pts, origin = _localize_polyline(world_pts)
         pts = [tuple(p / scale) for p in local_pts]
         if self.orbit_nps[idx] is not None:
-            self.orbit_nps[idx].remove_node()
+            self.orbit_nps[idx].remove_node()   # removes any child encounter patches too
         node = build_orbit_node(pts)
         node.reparent_to(self.render)
         node.set_pos(*self.transform.to_render(origin))
         self.orbit_nps[idx] = node
         self._traj_render_origin[idx] = origin
+        encounters = self._traj_encounters[idx] if idx < len(self._traj_encounters) else None
+        if encounters:
+            self._build_encounter_patches(node, world_pts, origin, scale, encounters)
         if idx == 0:
             try:
                 if self.world.solar_system:
@@ -1774,12 +1831,14 @@ class OrbitApp(ShowBase):
         future = self._traj_future[idx]
         if future is not None and future.done():
             try:
-                points, epochs = future.result()
+                points, epochs, encounters = future.result()
                 self._traj_world_cache[idx] = points
                 self._traj_epoch_cache[idx] = epochs
+                self._traj_encounters[idx] = encounters
             except Exception:
                 self._traj_world_cache[idx] = None
                 self._traj_epoch_cache[idx] = None
+                self._traj_encounters[idx] = []
             self._traj_future[idx] = None
             self._traj_last_complete_t[idx] = now_real
             self._traj_render_scale[idx] = None
@@ -1808,7 +1867,8 @@ class OrbitApp(ShowBase):
                 n_pts,
                 horizon,
                 2,
-                True,
+                True,   # with_times
+                True,   # with_encounters
             )
 
     def _update_responsive_ui(self) -> None:
@@ -2332,8 +2392,56 @@ class OrbitApp(ShowBase):
             target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
         self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_encounter_info(v0, dom_body, dom_pos)
+        self._update_encounter_cues()
         self._update_warp_readout()
         return task.cont
+
+    def _update_encounter_cues(self) -> None:
+        """Place predicted-flyby periapsis markers and set the HUD approach line.
+
+        Shows the post-burn preview's encounters while a maneuver is planned,
+        otherwise the live trajectory's. The HUD line is only set when the vessel
+        is not already inside an SOI (the live flyby readout takes that slot)."""
+        if not hasattr(self, "_encounter_marker_nps"):
+            return
+        now = self.clock.sim_time_s
+        source = (self._preview_encounters
+                  if (self._preview_np is not None and self._preview_encounters)
+                  else (self._traj_encounters[0] or []))
+        flybys = sorted(
+            (e for e in source
+             if e.body_name not in ("Earth", "Sun")
+             and e.periapsis_epoch_s > now - self.EXECUTE_TOLERANCE_S),
+            key=lambda e: e.periapsis_epoch_s,
+        )
+        for i, marker in enumerate(self._encounter_marker_nps):
+            label = self._encounter_labels[i]
+            if i >= len(flybys):
+                marker.hide()
+                label.hide()
+                continue
+            enc = flybys[i]
+            rx, ry, rz = self.transform.to_render(enc.periapsis_point_m)
+            marker.set_pos(rx, ry, rz)
+            marker.show()
+            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
+            tag = "IMPACT" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
+            countdown = max(0.0, enc.periapsis_epoch_s - now)
+            label.node().set_text(f"{enc.body_name} {tag}  T-{_fmt_countdown(countdown)}")
+            label.set_pos(rx, ry, rz + 8.0)
+            label.show()
+        # Predicted approach line — only when not already inside an SOI.
+        if flybys and not getattr(self, "_encounter_line", ""):
+            enc = flybys[0]
+            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
+            tag = "impact" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
+            countdown = max(0.0, enc.periapsis_epoch_s - now)
+            v_inf = enc.v_inf_mps / 1000.0 if np.isfinite(enc.v_inf_mps) else 0.0
+            self._encounter_line = (
+                f"Approach {enc.body_name}: {tag}  "
+                f"T-{_fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
+            )
+            self._sync_maneuver_hud()
 
     def _helio_body_pos(self, name: str, t_s: float) -> np.ndarray:
         """Heliocentric position [m]: DE440 when available, circular fallback offline."""
