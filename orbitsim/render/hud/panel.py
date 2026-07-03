@@ -135,3 +135,18 @@ class HudPanel:
             self._bg.show()
         else:
             self._bg.hide()
+
+    def show(self) -> None:
+        self._bg.show()
+        for text in self._texts:
+            if text.getText():
+                text.show()
+
+    def hide(self) -> None:
+        self._bg.hide()
+        for text in self._texts:
+            text.hide()
+
+    @property
+    def visible(self) -> bool:
+        return not self._bg.isHidden()

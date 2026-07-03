@@ -3,6 +3,7 @@ import math
 
 import numpy as np
 from direct.gui.OnscreenText import OnscreenText
+from panda3d.core import TextNode
 
 from orbitsim.render.hud.panel import HudPanel
 
@@ -64,6 +65,13 @@ class Hud:
             text="", pos=(0.0, 0.6), scale=0.07, fg=(1.0, 1.0, 0.6, 1),
             shadow=(0, 0, 0, 1), mayChange=True, parent=base.aspect2d,
         )
+        # Free-form persistent readout (used by the vesselless solar viewer, which has
+        # no orbit/vessel panels to populate).
+        self.text = OnscreenText(
+            text="", pos=(-1.28, 0.9), scale=0.045, align=TextNode.ALeft,
+            fg=(1.0, 1.0, 1.0, 1.0), shadow=(0, 0, 0, 1), mayChange=True,
+            parent=base.aspect2d,
+        )
 
     def set_units(self, units: str) -> None:
         """Set distance units for HUD readouts ('km' or 'mi')."""
@@ -83,6 +91,12 @@ class Hud:
         self.toast.setText("")
         self._toast_task = None
         return task.done
+
+    def toggle_orbit(self) -> None:
+        self._left.hide() if self._left.visible else self._left.show()
+
+    def toggle_vessel(self) -> None:
+        self._right.hide() if self._right.visible else self._right.show()
 
     def _rebuild_left(self) -> None:
         cyan = (0.7, 0.95, 1.0, 1.0)

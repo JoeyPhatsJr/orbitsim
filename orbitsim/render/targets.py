@@ -49,9 +49,31 @@ class PlanetTarget:
     """
     supports_closest_approach = False
 
-    def __init__(self, name: str, state_fn) -> None:
+    def __init__(self, name: str, state_fn, ephemeris_name: str | None = None) -> None:
         self.name = name
         self._state_fn = state_fn
+        self._ephemeris_name = ephemeris_name
 
     def state_at(self, t_s: float) -> StateVector:
         return self._state_fn(t_s)
+
+    def planning_state_at(self, t_s: float) -> StateVector:
+        """Uncached future geocentric state for transfer planning.
+
+        Uses real DE440 when available (accurate future arrival epochs), falling
+        back to the offline circular approximation. This is deliberately NOT the
+        per-frame cached `state_at`, which is frame-constant and unfit for a sweep
+        over future departure/arrival times.
+        """
+        from orbitsim.core.ephemeris import body_state, EphemerisUnavailableError
+        try:
+            return body_state(self._ephemeris_name, t_s, center="EARTH")
+        except EphemerisUnavailableError:
+            from orbitsim.core import planets as pl
+            circular = {
+                "SUN": pl.sun_state_at, "MERCURY": pl.mercury_state_at,
+                "VENUS": pl.venus_state_at, "MARS": pl.mars_state_at,
+                "JUPITER": pl.jupiter_state_at, "SATURN": pl.saturn_state_at,
+                "URANUS": pl.uranus_state_at, "NEPTUNE": pl.neptune_state_at,
+            }[self._ephemeris_name]
+            return circular(t_s)

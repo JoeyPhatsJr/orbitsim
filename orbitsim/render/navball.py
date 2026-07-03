@@ -26,6 +26,7 @@ _MARKER_COLORS = {
     "RADIAL_IN": (1.0, 0.72, 0.20, 1),
     "TARGET": (1.0, 0.2, 1.0, 1),
     "ANTITARGET": (0.6, 0.2, 0.6, 1),
+    "MANEUVER": (0.25, 1.0, 1.0, 1),
 }
 _FILM = 2.6            # orthographic film size (ball has radius 1)
 _CAM_DIST = 10.0       # ortho camera distance along -Y
@@ -207,7 +208,7 @@ class Navball:
         half_w = (side_px / w) / 2.0
         self.dr.set_dimensions(0.5 - half_w, 0.5 + half_w, 0.015, 0.015 + _BALL_FRAC_H)
 
-    def update(self, *, orientation_q, state, target_pos=None) -> None:
+    def update(self, *, orientation_q, state, target_pos=None, maneuver_dir=None) -> None:
         """Orient the ball to the ship attitude and place the orbital markers.
 
         Projection: an inertial direction d maps into ball/screen space as
@@ -237,11 +238,18 @@ class Navball:
         ))
 
         for mode, marker in self._markers.items():
-            try:
-                d = np.asarray(sas_target_dir(mode, state, target_pos), dtype=np.float64)
-            except ValueError:
-                marker.hide()
-                continue
+            if mode == "MANEUVER":
+                if maneuver_dir is None:
+                    marker.hide()
+                    continue
+                d = np.asarray(maneuver_dir, dtype=np.float64)
+                d = d / np.linalg.norm(d)
+            else:
+                try:
+                    d = np.asarray(sas_target_dir(mode, state, target_pos), dtype=np.float64)
+                except ValueError:
+                    marker.hide()
+                    continue
             p = proj(d)
             marker.set_pos(p[0], p[1], p[2])
             if p[1] > 0.2:               # far hemisphere (behind the ball): hide

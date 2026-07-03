@@ -971,30 +971,34 @@ class OrbitApp(ShowBase):
         now = self.clock.sim_time_s
         self._flash_message(f"Planning {self._target.name} intercept...")
         if isinstance(self._target, PlanetTarget):
-            from orbitsim.core.ephemeris import body_state
             from orbitsim.core.optimize import interplanetary_departure_node
             from orbitsim.core.planets import A_EARTH, _N_EARTH
+            from orbitsim.core.constants import MU_SUN
             target_a = {
                 "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
                 "Jupiter": A_JUPITER, "Saturn": A_SATURN,
                 "Uranus": A_URANUS, "Neptune": A_NEPTUNE,
             }.get(self._target.name)
-            if target_a is not None:
-                w_ship = _N_EARTH
-                w_target = np.sqrt(self.world.central.mu / 1.0) if target_a == 0 else 0.0
-                from orbitsim.core.constants import MU_SUN
-                w_target = np.sqrt(MU_SUN / target_a**3)
-                synodic = 2.0 * np.pi / abs(w_ship - w_target)
-            else:
-                synodic = 365.25 * 86400.0
+            if target_a is None:
+                self._flash_message(f"Can't plan a transfer to {self._target.name}")
+                return
+            sun_target = next((t for t in self._targets
+                               if isinstance(t, PlanetTarget) and t.name == "Sun"), None)
+            if sun_target is None:
+                self._flash_message("No intercept found")
+                return
+            # Sweep a full synodic period for departure; time-of-flight brackets the
+            # Hohmann transfer time to Earth's neighbour.
+            w_target = np.sqrt(MU_SUN / target_a**3)
+            synodic = 2.0 * np.pi / abs(_N_EARTH - w_target)
             dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 24)
-            hohmann_tof = np.pi * np.sqrt(((A_EARTH + (target_a or A_EARTH)) / 2.0)**3 / MU_SUN)
+            hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
             tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 32)
             try:
                 node = interplanetary_departure_node(
                     v0.state,
                     self._target.planning_state_at,
-                    lambda epoch: body_state("SUN", epoch, center="EARTH"),
+                    sun_target.planning_state_at,
                     dep,
                     tof,
                 )
