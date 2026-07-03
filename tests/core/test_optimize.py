@@ -220,3 +220,112 @@ def test_intercept_node_callable_raises_when_infeasible():
         return StateVector(r=np.array([1e12, 0, 0]), v=np.zeros(3), mu=mu, epoch_s=t)
     with pytest.raises(ValueError):
         intercept_node_callable(ship, dummy_target, mu, np.array([0.0]), np.array([-1.0, 0.0]))
+
+
+# --- Interplanetary Earth-departure planning -------------------------------
+import pytest
+from orbitsim.core.optimize import hyperbolic_injection_velocity, interplanetary_departure_node
+
+
+def _outgoing_v_infinity(r, v, mu):
+    """Independently compute the outgoing hyperbolic-excess velocity vector of the
+    orbit (r, v) via the eccentricity vector and its asymptote true anomaly.
+
+    Deliberately a *different* formulation than the constructor under test (which
+    works from the orbit equation / true anomaly at r), so agreement is a real
+    round-trip, not a tautology.
+    """
+    r = np.asarray(r, float)
+    v = np.asarray(v, float)
+    r_mag = np.linalg.norm(r)
+    energy = np.dot(v, v) / 2.0 - mu / r_mag
+    assert energy > 0.0, "orbit is not hyperbolic"
+    e_vec = ((np.dot(v, v) - mu / r_mag) * r - np.dot(r, v) * v) / mu
+    e = np.linalg.norm(e_vec)
+    assert e > 1.0
+    h_hat = np.cross(r, v)
+    h_hat /= np.linalg.norm(h_hat)
+    p_hat = e_vec / e                     # toward periapsis
+    q_hat = np.cross(h_hat, p_hat)        # prograde, 90 deg past periapsis
+    nu_inf = np.arccos(-1.0 / e)
+    asymptote_hat = np.cos(nu_inf) * p_hat + np.sin(nu_inf) * q_hat
+    return np.sqrt(2.0 * energy) * asymptote_hat
+
+
+def test_hyperbolic_injection_reproduces_requested_v_infinity():
+    r = np.array([7.0e6, 0.0, 0.0])
+    v_inf = np.array([2000.0, 2500.0, 800.0])   # arbitrary 3D excess velocity
+    v_inj = hyperbolic_injection_velocity(r, v_inf, MU_EARTH)
+    v_inf_out = _outgoing_v_infinity(r, v_inj, MU_EARTH)
+    assert np.allclose(v_inf_out, v_inf, rtol=1e-6, atol=1e-3)
+
+
+def test_hyperbolic_injection_speed_matches_energy():
+    r = np.array([0.0, 7.2e6, 0.0])
+    v_inf = np.array([3100.0, 0.0, 0.0])
+    v_inj = hyperbolic_injection_velocity(r, v_inf, MU_EARTH)
+    r_mag = np.linalg.norm(r)
+    expected_speed = np.sqrt(np.dot(v_inf, v_inf) + 2.0 * MU_EARTH / r_mag)
+    assert abs(np.linalg.norm(v_inj) - expected_speed) < 1e-6
+
+
+def test_hyperbolic_injection_is_coplanar_with_r_and_vinf():
+    r = np.array([5.0e6, 4.0e6, 0.0])
+    v_inf = np.array([-1500.0, 2200.0, 900.0])
+    v_inj = hyperbolic_injection_velocity(r, v_inf, MU_EARTH)
+    plane_normal = np.cross(r, v_inf)
+    plane_normal /= np.linalg.norm(plane_normal)
+    assert abs(np.dot(v_inj, plane_normal)) < 1e-3
+
+
+def test_hyperbolic_injection_raises_when_vinf_parallel_to_r():
+    r = np.array([7.0e6, 0.0, 0.0])
+    v_inf = np.array([3000.0, 0.0, 0.0])   # radial: no unique orbit plane
+    with pytest.raises(ValueError):
+        hyperbolic_injection_velocity(r, v_inf, MU_EARTH)
+
+
+def _leo_ship():
+    r0 = 7.0e6
+    return StateVector(r=np.array([r0, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(MU_EARTH / r0), 0.0]),
+                       mu=MU_EARTH, epoch_s=0.0)
+
+
+def _mars_window():
+    from orbitsim.core.planets import A_EARTH, A_MARS
+    from orbitsim.core.constants import MU_SUN
+    hohmann_tof = np.pi * np.sqrt(((A_EARTH + A_MARS) / 2.0) ** 3 / MU_SUN)
+    w_earth = np.sqrt(MU_SUN / A_EARTH ** 3)
+    w_mars = np.sqrt(MU_SUN / A_MARS ** 3)
+    synodic = 2.0 * np.pi / abs(w_earth - w_mars)
+    dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 20)
+    tof = np.linspace(0.5 * hohmann_tof, 1.5 * hohmann_tof, 20)
+    return dep, tof
+
+
+def test_interplanetary_departure_earth_to_mars_is_escape_within_window():
+    from orbitsim.core.planets import mars_state_at, sun_state_at
+    ship = _leo_ship()
+    dep, tof = _mars_window()
+    node = interplanetary_departure_node(ship, mars_state_at, sun_state_at, dep, tof)
+
+    # Epoch lands inside the swept departure window.
+    assert dep[0] <= node.epoch_s - ship.epoch_s <= dep[-1]
+
+    # Applying the burn yields an Earth-escape hyperbola (specific energy > 0).
+    post = apply_maneuver(ship, node)
+    r_mag = np.linalg.norm(post.r)
+    energy = np.dot(post.v, post.v) / 2.0 - MU_EARTH / r_mag
+    assert energy > 0.0
+
+    # And the injection cost is physically sane (well under an obviously-wrong value).
+    assert 0.0 < node.magnitude_mps < 20_000.0
+
+
+def test_interplanetary_departure_raises_when_infeasible():
+    from orbitsim.core.planets import mars_state_at, sun_state_at
+    ship = _leo_ship()
+    with pytest.raises(ValueError):
+        interplanetary_departure_node(
+            ship, mars_state_at, sun_state_at, np.array([0.0]), np.array([-1.0, 0.0]))
