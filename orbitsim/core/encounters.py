@@ -11,6 +11,12 @@ The heavy lifting (which body dominates at a given point/time) is injected as a
 synthetic classifier and never imports the render layer. Convenience wrappers
 (`earth_moon_dominant`, `solar_dominant`) bind the sandbox's real classifiers.
 
+A fast, shallow flyby can have its whole SOI crossing fall *between* two
+display samples, so a sample-only scan misses it. Each gap whose endpoints are
+both primary-dominated is therefore probed at a few interpolated sub-points
+(`refine_steps`); a run of probes inside a body's SOI becomes a "graze"
+encounter anchored to its bracketing sample pair (so render indices stay valid).
+
 Periapsis is measured against the body's center **at each sample's own epoch**
 (the body moves), refined to sub-sample accuracy with a parabola through the
 three samples bracketing the minimum. ``v_inf`` is the hyperbolic excess speed
@@ -19,6 +25,7 @@ body-relative position for the relative velocity — accurate enough for a
 planning readout, and the live in-SOI HUD (`core/flyby.py`) shows the exact
 value once the vessel actually arrives.
 """
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -85,49 +92,61 @@ def _parabola_vertex(x0, x1, x2, y0, y1, y2):
         return x1, y1
     a = (x2 * (y1 - y0) + x1 * (y0 - y2) + x0 * (y2 - y1)) / denom
     if a <= 0.0:
-        return x1, y1                      # not a minimum (or a line) — keep sample
+        return x1, y1  # not a minimum (or a line) — keep sample
     b = (x2 * x2 * (y0 - y1) + x1 * x1 * (y2 - y0) + x0 * x0 * (y1 - y2)) / denom
-    c = (x1 * x2 * (x1 - x2) * y0 + x2 * x0 * (x2 - x0) * y1
-         + x0 * x1 * (x0 - x1) * y2) / denom
+    c = (x1 * x2 * (x1 - x2) * y0 + x2 * x0 * (x2 - x0) * y1 + x0 * x1 * (x0 - x1) * y2) / denom
     xv = -b / (2.0 * a)
     lo, hi = min(x0, x2), max(x0, x2)
-    if not (lo <= xv <= hi):               # vertex outside the bracket — keep sample
+    if not (lo <= xv <= hi):  # vertex outside the bracket — keep sample
         return x1, y1
     return xv, a * xv * xv + b * xv + c
+
+
+def _periapsis_and_vinf(rel, epochs_run, mu):
+    """Closest-approach and hyperbolic-excess-speed of a run of body-relative
+    samples ``rel`` (shape (M, 3)) at epochs ``epochs_run``.
+
+    Returns ``(k, pe_epoch_s, pe_radius_m, v_inf_mps)`` where ``k`` is the local
+    index of the sample nearest closest approach; the epoch and radius are
+    parabola-refined to sub-sample accuracy when the minimum is interior.
+
+    ``v_inf`` is vis-viva at the entry sample: ``v_inf^2 = v_rel^2 - 2 mu/r_rel``,
+    with the relative velocity a finite difference of the (already body-relative)
+    position — well conditioned near entry where the geometry is nearly straight.
+    """
+    dist = np.linalg.norm(rel, axis=1)
+    m = len(dist)
+    k = int(np.argmin(dist))
+    if 0 < k < m - 1:
+        te, de = _parabola_vertex(
+            epochs_run[k - 1],
+            epochs_run[k],
+            epochs_run[k + 1],
+            float(dist[k - 1]),
+            float(dist[k]),
+            float(dist[k + 1]),
+        )
+        pe_epoch, pe_radius = float(te), float(de)
+    else:
+        pe_epoch, pe_radius = float(epochs_run[k]), float(dist[k])
+
+    v_inf = float("nan")
+    if mu > 0.0 and m >= 2:
+        dt = epochs_run[1] - epochs_run[0]
+        if dt != 0.0:
+            v_rel = (rel[1] - rel[0]) / dt
+            r_rel = np.linalg.norm(rel[0])
+            if r_rel > 0.0:
+                v_inf = float(np.sqrt(max(0.0, float(v_rel @ v_rel) - 2.0 * mu / r_rel)))
+    return k, pe_epoch, pe_radius, v_inf
 
 
 def _build_encounter(points, epochs, centers, start, end, name, mu, radius):
     """Assemble one Encounter from a resolved [start, end] run inside an SOI."""
     idx = np.arange(start, end + 1)
     rel = points[idx] - centers[idx]
-    dist = np.linalg.norm(rel, axis=1)
-    k = int(np.argmin(dist))               # local index within the run
+    k, pe_epoch, pe_radius, v_inf = _periapsis_and_vinf(rel, epochs[idx], mu)
     pe_index = start + k
-
-    # Sub-sample refinement of the closest-approach distance and epoch.
-    if 0 < k < len(dist) - 1:
-        te, de = _parabola_vertex(
-            epochs[pe_index - 1], epochs[pe_index], epochs[pe_index + 1],
-            float(dist[k - 1]), float(dist[k]), float(dist[k + 1]))
-        pe_epoch, pe_radius = float(te), float(de)
-    else:
-        pe_epoch, pe_radius = float(epochs[pe_index]), float(dist[k])
-
-    # v_inf from vis-viva at the entry sample: v_inf^2 = v_rel^2 - 2 mu / r_rel.
-    # The relative velocity is a finite difference of the body-relative position
-    # (which already removes the body's own motion). Use the entry sample where
-    # the geometry is nearly straight, so the difference is well conditioned.
-    v_inf = float("nan")
-    if mu > 0.0 and end > start:
-        e0 = start if start + 1 <= end else start - 1
-        e1 = e0 + 1
-        dt = epochs[e1] - epochs[e0]
-        if dt != 0.0:
-            v_rel = (rel[e1 - start] - rel[e0 - start]) / dt
-            r_rel = np.linalg.norm(rel[e0 - start])
-            if r_rel > 0.0:
-                v_inf = float(np.sqrt(max(0.0, float(v_rel @ v_rel) - 2.0 * mu / r_rel)))
-
     closed = end < len(points) - 1 and start > 0
     return Encounter(
         body_name=name,
@@ -147,7 +166,98 @@ def _build_encounter(points, epochs, centers, start, end, name, mu, radius):
     )
 
 
-def find_encounters(points, epochs, dominant_fn, primary_name="Earth"):
+def _catmull_rom(p0, p1, p2, p3, u):
+    """Position at parameter ``u`` in [0, 1] between ``p1`` and ``p2`` on a
+    uniform Catmull-Rom spline; falls back to linear at path ends (``p0`` or
+    ``p3`` is None). Bows the interpolant toward a nearby body so a graze
+    hiding between two coarse samples is more likely to be probed inside it."""
+    if p0 is None or p3 is None:
+        return p1 + u * (p2 - p1)
+    u2 = u * u
+    u3 = u2 * u
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    )
+
+
+def _build_graze(rs, ts, centers, a, b, gap_i, epochs, name, mu, radius):
+    """Assemble an Encounter for an SOI pass found *between* samples gap_i and
+    gap_i+1 by gap probing. Indices reported (start/end/periapsis) stay valid in
+    the original sample arrays — the render layer draws the segment and anchors
+    the marker off them — while the closest-approach point/epoch/radius come from
+    the finer probe samples ``rs``/``ts``/``centers`` over local range [a, b]."""
+    run_r = np.asarray(rs[a : b + 1], dtype=np.float64)
+    run_t = np.asarray(ts[a : b + 1], dtype=np.float64)
+    rel = run_r - np.asarray(centers[a : b + 1], dtype=np.float64)
+    k, pe_epoch, pe_radius, v_inf = _periapsis_and_vinf(rel, run_t, mu)
+    # Anchor the marker to whichever bracketing original sample is nearer in time.
+    pe_index = gap_i if (pe_epoch - epochs[gap_i]) <= (epochs[gap_i + 1] - pe_epoch) else gap_i + 1
+    return Encounter(
+        body_name=name,
+        start_index=gap_i,
+        end_index=gap_i + 1,
+        entry_epoch_s=float(run_t[0]),
+        exit_epoch_s=float(run_t[-1]),
+        periapsis_index=int(pe_index),
+        periapsis_epoch_s=pe_epoch,
+        periapsis_radius_m=pe_radius,
+        periapsis_point_m=run_r[k].copy(),
+        v_inf_mps=v_inf,
+        body_mu=float(mu),
+        body_radius_m=float(radius),
+        closed=True,  # entered and exited within the gap
+        impact=bool(pe_radius < radius),
+    )
+
+
+def _refine_gaps(points, epochs, names, dominant_fn, primary_name, refine_steps):
+    """Recover SOI passes whose whole crossing falls between two consecutive
+    samples that are *both* dominated by the primary body — the case the
+    sample-only scan misses on a fast, shallow flyby. Each such gap is probed at
+    ``refine_steps`` interpolated sub-points; a contiguous run of probes inside
+    some body's SOI becomes one graze Encounter."""
+    n = len(points)
+    grazes = []
+    for i in range(n - 1):
+        if names[i] != primary_name or names[i + 1] != primary_name:
+            continue  # a real crossing already lands on a sample
+        p1, p2 = points[i], points[i + 1]
+        p0 = points[i - 1] if i - 1 >= 0 else None
+        p3 = points[i + 2] if i + 2 < n else None
+        t1, t2 = float(epochs[i]), float(epochs[i + 1])
+        rs, ts, pnames, pcenters, props = [], [], [], [], {}
+        for step in range(1, refine_steps + 1):
+            u = step / (refine_steps + 1.0)
+            rs.append(_catmull_rom(p0, p1, p2, p3, u))
+            ts.append(t1 + u * (t2 - t1))
+            nm, center, mu, radius = dominant_fn(rs[-1], ts[-1])
+            pnames.append(nm)
+            pcenters.append(np.asarray(center, dtype=np.float64))
+            props[nm] = (mu, radius)
+        j = 0
+        while j < len(pnames):
+            if pnames[j] == primary_name:
+                j += 1
+                continue
+            nm = pnames[j]
+            end = j
+            while end + 1 < len(pnames) and pnames[end + 1] == nm:
+                end += 1
+            mu, radius = props[nm]
+            grazes.append(_build_graze(rs, ts, pcenters, j, end, i, epochs, nm, mu, radius))
+            j = end + 1
+    return grazes
+
+
+_GAP_REFINE_STEPS = 6
+
+
+def find_encounters(
+    points, epochs, dominant_fn, primary_name="Earth", refine_steps=_GAP_REFINE_STEPS
+):
     """Detect SOI passes along a sampled trajectory.
 
     Parameters
@@ -162,12 +272,20 @@ def find_encounters(points, epochs, dominant_fn, primary_name="Earth"):
         same frame, and its μ and physical radius.
     primary_name : str
         The frame's central body; runs dominated by it are not encounters.
+    refine_steps : int
+        Sub-samples probed inside each primary-to-primary gap to recover a fast,
+        shallow SOI pass whose whole crossing falls between two samples (the
+        adaptive integrator keeps this rare, but coarse *display* sampling can
+        still hide one). 0 disables refinement (sample-only scan). The residual:
+        a pass narrower than ~1/(refine_steps+1) of a gap can still slip through;
+        the live ``core/flyby.py`` readout is exact once the vessel arrives.
 
     Returns
     -------
     list[Encounter]
-        One per run whose dominant body differs from ``primary_name``, in the
-        order encountered along the path.
+        One per SOI pass whose dominant body differs from ``primary_name``, in
+        path order. ``start_index``/``end_index``/``periapsis_index`` are always
+        valid indices into ``points`` (grazes anchor to their bracketing pair).
     """
     points = np.asarray(points, dtype=np.float64)
     epochs = np.asarray(epochs, dtype=np.float64)
@@ -177,7 +295,7 @@ def find_encounters(points, epochs, dominant_fn, primary_name="Earth"):
 
     names = []
     centers = np.empty((n, 3), dtype=np.float64)
-    props = {}                              # name -> (mu, radius)
+    props = {}  # name -> (mu, radius)
     for i in range(n):
         name, center, mu, radius = dominant_fn(points[i], float(epochs[i]))
         names.append(name)
@@ -193,9 +311,14 @@ def find_encounters(points, epochs, dominant_fn, primary_name="Earth"):
             j += 1
         if name != primary_name:
             mu, radius = props[name]
-            encounters.append(
-                _build_encounter(points, epochs, centers, i, j, name, mu, radius))
+            encounters.append(_build_encounter(points, epochs, centers, i, j, name, mu, radius))
         i = j + 1
+
+    if refine_steps > 0 and n >= 2:
+        encounters.extend(
+            _refine_gaps(points, epochs, names, dominant_fn, primary_name, refine_steps)
+        )
+        encounters.sort(key=lambda e: (e.start_index, e.periapsis_epoch_s))
     return encounters
 
 

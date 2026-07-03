@@ -6,6 +6,7 @@ function is pure: it takes sampled positions + epochs and a classifier, and
 returns closest-approach and hyperbolic-excess-speed records. These tests use a
 synthetic classifier so they run offline with no ephemeris.
 """
+
 import numpy as np
 import pytest
 
@@ -20,7 +21,7 @@ def _straight_line(v_mps, b_m, t0, t1, n):
     Returns (points, epochs).
     """
     epochs = np.linspace(t0, t1, n)
-    x = v_mps * epochs                       # x = 0 at t = 0
+    x = v_mps * epochs  # x = 0 at t = 0
     pts = np.stack([x, np.full(n, b_m), np.zeros(n)], axis=1)
     return pts, epochs
 
@@ -32,7 +33,7 @@ def test_finds_single_encounter_with_correct_periapsis():
     # near-massless body; vis-viva at the SOI edge then leaves v_inf ~ the speed.
     soi = 5.0e7
     b = 8.0e6
-    mu = 1.0e11          # tiny body: 2mu/r at the SOI edge is negligible vs v^2
+    mu = 1.0e11  # tiny body: 2mu/r at the SOI edge is negligible vs v^2
     radius = 1.7e6
     pts, epochs = _straight_line(v_mps=1000.0, b_m=b, t0=-1.0e5, t1=1.0e5, n=401)
 
@@ -50,7 +51,7 @@ def test_finds_single_encounter_with_correct_periapsis():
     assert abs(enc.periapsis_radius_m - b) < 1.0e3
     # Periapsis is at the midpoint (t = 0).
     assert abs(enc.periapsis_epoch_s) < 1.0e3
-    assert enc.closed          # trajectory enters and exits the SOI
+    assert enc.closed  # trajectory enters and exits the SOI
     # A straight line is the v_inf -> infinity limit: measured v_inf ~ the speed.
     assert abs(enc.v_inf_mps - 1000.0) / 1000.0 < 0.05
 
@@ -59,7 +60,7 @@ def test_no_encounter_when_never_enters_soi():
     pts, epochs = _straight_line(v_mps=1000.0, b_m=8.0e6, t0=-1.0e5, t1=1.0e5, n=201)
 
     def dominant(r, t):
-        return "Earth", np.zeros(3), 0.0, 0.0   # never dominated by another body
+        return "Earth", np.zeros(3), 0.0, 0.0  # never dominated by another body
 
     assert find_encounters(pts, epochs, dominant, primary_name="Earth") == []
 
@@ -83,7 +84,7 @@ def test_open_encounter_when_trajectory_ends_inside_soi():
 def test_periapsis_below_surface_is_an_impact():
     # Impact parameter smaller than the body radius -> flagged as an impact.
     soi = 5.0e7
-    b = 1.0e6            # inside a 1.7e6 m radius
+    b = 1.0e6  # inside a 1.7e6 m radius
     pts, epochs = _straight_line(v_mps=1000.0, b_m=b, t0=-1.0e5, t1=1.0e5, n=401)
 
     def dominant(r, t):
@@ -137,6 +138,66 @@ def test_moving_body_periapsis_is_relative_to_body_center():
     assert abs(enc.periapsis_radius_m - b) < 1.0e3
 
 
+def test_grazing_pass_between_samples_is_detected():
+    # A fast, shallow flyby whose entire SOI pass falls *between* two coarse
+    # samples: no sampled point lands inside the SOI, so the sample-only scan
+    # misses it. Gap refinement (default) must recover it.
+    #
+    # Body at (0, y_off, 0) with SOI = R; ship flies straight along +x through
+    # the origin, y = z = 0. Closest approach is y_off = 0.6 R < R (inside), but
+    # the two samples that bracket x = 0 sit at |x| = R, i.e. distance
+    # sqrt(R^2 + (0.6R)^2) = 1.17 R > R (outside). No sample is inside the SOI.
+    soi = 5.0e7
+    y_off = 0.6 * soi
+    delta = soi  # bracketing samples at |x| = R
+    mu = 1.0e11  # near-massless: v_inf ~ speed
+    radius = 1.0e6
+    center = np.array([0.0, y_off, 0.0])
+    # Samples at x = -3d, -2d, -d, +d, +2d, +3d (deliberately skipping x = 0).
+    xs = np.array([-3, -2, -1, 1, 2, 3], dtype=float) * delta
+    v = 1000.0
+    epochs = xs / v  # x = v * t  ->  t = x / v
+    pts = np.stack([xs, np.zeros(6), np.zeros(6)], axis=1)
+
+    def dominant(r, t):
+        if np.linalg.norm(r - center) < soi:
+            return "Mars", center, mu, radius
+        return "Earth", np.zeros(3), 0.0, 0.0
+
+    # Sample-only scan (refinement disabled) reproduces the miss.
+    assert find_encounters(pts, epochs, dominant, primary_name="Earth", refine_steps=0) == []
+
+    # With gap refinement on (the default), the graze is recovered.
+    encs = find_encounters(pts, epochs, dominant, primary_name="Earth")
+    mars = [e for e in encs if e.body_name == "Mars"]
+    assert len(mars) == 1
+    enc = mars[0]
+    # Closest approach is the impact parameter y_off, resolved between samples.
+    assert abs(enc.periapsis_radius_m - y_off) < 0.05 * y_off
+    assert enc.periapsis_radius_m < soi
+    assert not enc.impact  # y_off well above the surface
+    # The drawn segment anchors to the two bracketing samples (valid indices).
+    assert enc.start_index == 2 and enc.end_index == 3
+    assert 0 <= enc.periapsis_index < len(pts)
+
+
+def test_refinement_does_not_invent_encounters_on_a_clear_path():
+    # A straight pass that stays comfortably outside the SOI everywhere: gap
+    # refinement must not manufacture a spurious encounter.
+    soi = 1.0e7
+    center = np.array([0.0, 5.0e7, 0.0])  # far from the y = 0 track
+    xs = np.linspace(-1.0e8, 1.0e8, 50)
+    epochs = xs / 1000.0
+    pts = np.stack([xs, np.zeros_like(xs), np.zeros_like(xs)], axis=1)
+
+    def dominant(r, t):
+        if np.linalg.norm(r - center) < soi:
+            return "Mars", center, 1.0e11, 1.0e6
+        return "Earth", np.zeros(3), 0.0, 0.0
+
+    assert find_encounters(pts, epochs, dominant, primary_name="Earth") == []
+
+
 # ---------------------------------------------------------------------------
 # Integration: a real translunar arc under the offline (circular-Moon) N-body.
 # ---------------------------------------------------------------------------
@@ -154,11 +215,11 @@ def test_translunar_arc_detects_a_moon_encounter():
     # logic is what's under test here, not translunar targeting.)
     t0 = 0.0
     m = moon_state_at(t0)
-    u = np.array([1.0, 0.0, 0.0])                    # cross-track approach axis
-    w = np.array([0.0, 0.0, 1.0])                    # offset axis (orbit normal)
+    u = np.array([1.0, 0.0, 0.0])  # cross-track approach axis
+    w = np.array([0.0, 0.0, 1.0])  # offset axis (orbit normal)
     b0, v_rel = 1.2e7, 800.0
-    r0 = m.r + (-1.3 * MOON_SOI_M) * u + b0 * w      # just outside the SOI
-    v0 = m.v + v_rel * u                             # heading across the Moon
+    r0 = m.r + (-1.3 * MOON_SOI_M) * u + b0 * w  # just outside the SOI
+    v0 = m.v + v_rel * u  # heading across the Moon
     state = StateVector(r=r0, v=v0, mu=MU_EARTH, epoch_s=t0)
 
     n = 512

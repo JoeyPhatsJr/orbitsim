@@ -178,7 +178,11 @@ don't batch many changes into one late commit. Stage specific files by **explici
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.
-- **Ephemeris cache positions are constant within a frame.** The cached wrappers (`_csun`, etc.)
-  ignore their `t_s` argument when the cache is populated — this is by design (planet positions
-  don't change meaningfully over one frame's substeps). The Moon is NOT cached; it uses
-  `moon_state_at()` per substep since it moves significantly at high warp.
+- **Ephemeris cache is a per-frame snapshot, linearly extrapolated within the frame.** The
+  cached wrappers (`_csun`, etc.) advance the snapshot by `v·dt` from its epoch to the requested
+  `t_s` — first-order (constant-velocity) extrapolation using the velocity already in the
+  snapshot. At normal warp `dt` is tiny and this is indistinguishable from freezing; at extreme
+  warp (one frame ≈ days) it keeps the Sun/planet indirect term honest instead of freezing the
+  whole arc. Don't assume `_csun(t)` is `t`-independent. The Moon is NOT cached at all; it uses
+  `moon_state_at()` per substep since it moves significantly at high warp. Background predictions
+  use the higher-order time-interpolated cache (`stable_prediction_ephemeris`) instead.

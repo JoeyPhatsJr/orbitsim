@@ -223,13 +223,20 @@ suite.
   throttled, but the preview refresh can lag a beat behind on extreme orbits.
 - Predicted encounters are only as good as the sampled path: a flyby whose SOI
   pass falls between two trajectory samples (a fast graze at coarse sampling)
-  can be missed. The adaptive integrator tightens steps near bodies, so this
-  bites only on very short, fast passes; the live `core/flyby.py` readout is
-  exact once the vessel actually arrives.
-- The per-frame ephemeris cache still freezes planet positions within a
-  frame; at 1e8 warp one frame spans ~19 days of Sun motion in the indirect
-  term. Deep-space accuracy at extreme warp is game-grade, not
-  ephemeris-grade. (Background predictions already use time-interpolated
-  samples via `stable_prediction_ephemeris`.)
+  could be missed. **Addressed:** `find_encounters` now probes each
+  primary-to-primary gap at a few interpolated sub-points (`refine_steps`,
+  Catmull-Rom interpolation), recovering a graze hidden between samples and
+  anchoring it to its bracketing sample pair so render indices stay valid. The
+  residual: a pass narrower than ~1/(refine_steps+1) of a gap can still slip
+  through; the live `core/flyby.py` readout is exact once the vessel arrives.
+- The per-frame ephemeris cache used to freeze planet positions within a frame;
+  at 1e8 warp one frame spans ~19 days of Sun motion in the indirect term.
+  **Addressed:** the cached wrappers now advance the snapshot by `v·dt` (first-
+  order extrapolation, using the velocity already in the snapshot — no extra
+  cost), shrinking the per-frame error from the full arc to its curvature (~4×
+  better at a 19-day frame, and O(dt²) so far better at moderate warp). Deep-
+  space accuracy at extreme warp remains game-grade, not ephemeris-grade — the
+  residual is now second-order rather than first. (Background predictions still
+  use the higher-order time-interpolated samples via `stable_prediction_ephemeris`.)
 - Bodies do not rotate, so a landed vessel sits at a fixed inertial radial;
   there is no surface co-rotation velocity to exploit or fight at launch.

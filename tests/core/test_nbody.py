@@ -33,7 +33,7 @@ def test_single_attractor_matches_point_mass_gravity():
     a = nb.gravity_accel(r, 0.0, attractors=[nb.EARTH])
     e = nb.EARTH.state_at(0.0).r
     d = r - e
-    expected = -MU_EARTH * d / np.linalg.norm(d)**3
+    expected = -MU_EARTH * d / np.linalg.norm(d) ** 3
     assert np.allclose(a, expected, rtol=1e-12)
 
 
@@ -49,9 +49,12 @@ def _leo_state():
     r = 7.0e6
     # State referenced to Earth's *barycentric* position so it's a clean Earth orbit.
     e = nb.EARTH.state_at(0.0)
-    return StateVector(r=e.r + np.array([r, 0.0, 0.0]),
-                       v=e.v + np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
-                       mu=MU_EARTH, epoch_s=0.0)
+    return StateVector(
+        r=e.r + np.array([r, 0.0, 0.0]),
+        v=e.v + np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=0.0,
+    )
 
 
 def test_reduces_to_two_body_with_stationary_earth():
@@ -61,9 +64,12 @@ def test_reduces_to_two_body_with_stationary_earth():
     # ~35 m/quarter-orbit — that residual is real physics, not integrator error).
     earth0 = nb._CircularBody(MU_EARTH, 0.0)
     r = 7.0e6
-    st = StateVector(r=np.array([r, 0.0, 0.0]),
-                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
-                     mu=MU_EARTH, epoch_s=0.0)
+    st = StateVector(
+        r=np.array([r, 0.0, 0.0]),
+        v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=0.0,
+    )
     period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
     # Quarter orbit: fine step so 2nd-order Verlet error is sub-metre.
     out = nb.propagate_nbody(st, period / 4, attractors=[earth0], max_step_s=0.5)
@@ -81,14 +87,15 @@ def test_eccentric_periapsis_passage_resolved_within_one_call():
     crosses periapsis (short timescale) inside the same call. The substep
     size must adapt to the *current* radius, not the starting one.
     """
-    earth0 = nb._CircularBody(MU_EARTH, 0.0)   # stationary => clean Kepler reference
+    earth0 = nb._CircularBody(MU_EARTH, 0.0)  # stationary => clean Kepler reference
     rp, ra = 6.6e6, 3.0e8
     a = 0.5 * (rp + ra)
     vp = np.sqrt(MU_EARTH * (2.0 / rp - 1.0 / a))
-    at_pe = StateVector(r=np.array([rp, 0.0, 0.0]),
-                        v=np.array([0.0, vp, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    at_pe = StateVector(
+        r=np.array([rp, 0.0, 0.0]), v=np.array([0.0, vp, 0.0]), mu=MU_EARTH, epoch_s=0.0
+    )
     period = 2.0 * np.pi * np.sqrt(a**3 / MU_EARTH)
-    at_ap = propagate_kepler(at_pe, period / 2.0)     # start at apoapsis
+    at_ap = propagate_kepler(at_pe, period / 2.0)  # start at apoapsis
     out = nb.propagate_nbody(at_ap, period, attractors=[earth0], max_step_s=3600.0)
     ref = propagate_kepler(at_ap, period)
     # Periapsis speed is ~10.9 km/s; the passage must be resolved to a small
@@ -113,8 +120,9 @@ def test_propagation_is_reversible():
 def test_jacobi_constant_conserved_over_seven_days():
     # A ship out between Earth and Moon where both attractors matter.
     e = nb.EARTH.state_at(0.0)
-    st = StateVector(r=np.array([1.2e8, 0.0, 0.0]),
-                     v=np.array([0.0, 900.0, 50.0]), mu=MU_EARTH, epoch_s=0.0)
+    st = StateVector(
+        r=np.array([1.2e8, 0.0, 0.0]), v=np.array([0.0, 900.0, 50.0]), mu=MU_EARTH, epoch_s=0.0
+    )
     c0 = nb.jacobi_constant(st, 0.0)
     # Velocity Verlet's Jacobi error is bounded O(h^2) (no secular drift); 200 s steps
     # give ~2.7e-7 here. (Do not relax the 1e-6 tolerance — tighten the step instead.)
@@ -129,16 +137,16 @@ def test_L4_L5_exact_equilateral_geometry():
     m = np.array([nb.MOON_X, 0.0, 0.0])
     for key, sign in (("L4", +1), ("L5", -1)):
         p = L[key]
-        assert abs(np.linalg.norm(p - e) - nb.D_EM) < 1e-3   # distance d from Earth
-        assert abs(np.linalg.norm(p - m) - nb.D_EM) < 1e-3   # distance d from Moon
-        assert np.sign(p[1]) == sign                          # L4 leads (+y), L5 trails
+        assert abs(np.linalg.norm(p - e) - nb.D_EM) < 1e-3  # distance d from Earth
+        assert abs(np.linalg.norm(p - m) - nb.D_EM) < 1e-3  # distance d from Moon
+        assert np.sign(p[1]) == sign  # L4 leads (+y), L5 trails
 
 
 def test_collinear_points_match_known_positions_and_balance():
     L = nb.lagrange_points(0.0)
     # Published Earth-Moon CR3BP rotating-frame x (units of d), barycenter origin.
     for key, x_over_d in (("L1", 0.8369), ("L2", 1.1557), ("L3", -1.0051)):
-        x = L[key][0]                              # at t=0 rotating == inertial x
+        x = L[key][0]  # at t=0 rotating == inertial x
         assert abs(x / nb.D_EM - x_over_d) < 1e-3
         # Net effective (gravity + centrifugal) acceleration ~ 0 at the point.
         p = L[key]
@@ -150,11 +158,11 @@ def test_collinear_points_match_known_positions_and_balance():
 def test_L4_stays_bounded_over_a_day():
     L = nb.lagrange_points(0.0)
     p = L["L4"]
-    v = np.cross([0.0, 0.0, nb.OMEGA_EM], p)       # co-rotating: stationary in rot frame
+    v = np.cross([0.0, 0.0, nb.OMEGA_EM], p)  # co-rotating: stationary in rot frame
     st = StateVector(r=p, v=v, mu=MU_EARTH, epoch_s=0.0)
     out = nb.propagate_nbody(st, 86400.0, attractors=nb.EARTH_MOON, max_step_s=60.0)
     moved_L4 = nb.lagrange_points(86400.0)["L4"]
-    assert np.linalg.norm(out.r - moved_L4) < 0.1 * nb.D_EM   # stable: doesn't escape
+    assert np.linalg.norm(out.r - moved_L4) < 0.1 * nb.D_EM  # stable: doesn't escape
 
 
 MU_TOTAL_FOR_TEST = MU_EARTH + MU_MOON
@@ -164,9 +172,10 @@ def test_earth_moon_accel_has_indirect_term():
     r = np.array([2.0e7, 1.0e7, 0.0])
     a = nb.earth_moon_accel(r, 0.0)
     rM = moon_state_at(0.0).r
-    direct = (-MU_EARTH * r / np.linalg.norm(r)**3
-              - MU_MOON * (r - rM) / np.linalg.norm(r - rM)**3)
-    indirect = -MU_MOON * rM / np.linalg.norm(rM)**3
+    direct = (
+        -MU_EARTH * r / np.linalg.norm(r) ** 3 - MU_MOON * (r - rM) / np.linalg.norm(r - rM) ** 3
+    )
+    indirect = -MU_MOON * rM / np.linalg.norm(rM) ** 3
     assert np.allclose(a, direct + indirect, rtol=1e-12)
 
 
@@ -175,7 +184,7 @@ def test_L4_balances_in_the_earth_fixed_model():
     t = 1.0e5
     m = moon_state_at(t)
     d = np.linalg.norm(m.r)
-    w = np.cross(m.r, m.v) / d**2                 # Moon's angular velocity vector
+    w = np.cross(m.r, m.v) / d**2  # Moon's angular velocity vector
     omega = np.linalg.norm(w)
     axis = w / omega
     # Rodrigues rotation of r_M by +60 deg about the orbit normal.
@@ -190,9 +199,12 @@ def test_L4_balances_in_the_earth_fixed_model():
 def test_propagate_earth_moon_reduces_to_two_body_near_earth():
     # A LEO orbit: the Moon's perturbation is tiny, so it tracks Kepler closely.
     r = 7.0e6
-    st = StateVector(r=np.array([r, 0.0, 0.0]),
-                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
-                     mu=MU_EARTH, epoch_s=0.0)
+    st = StateVector(
+        r=np.array([r, 0.0, 0.0]),
+        v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=0.0,
+    )
     period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
     out = nb.propagate_earth_moon(st, period / 4, max_step_s=0.5)
     # Within ~1 km of two-body over a quarter LEO orbit (Moon tug is sub-km here).
@@ -200,8 +212,9 @@ def test_propagate_earth_moon_reduces_to_two_body_near_earth():
 
 
 def test_propagate_earth_moon_reversible():
-    st = StateVector(r=np.array([5.0e7, 0.0, 0.0]),
-                     v=np.array([0.0, 1500.0, 100.0]), mu=MU_EARTH, epoch_s=0.0)
+    st = StateVector(
+        r=np.array([5.0e7, 0.0, 0.0]), v=np.array([0.0, 1500.0, 100.0]), mu=MU_EARTH, epoch_s=0.0
+    )
     T = 3600.0 * 6
     fwd = nb.propagate_earth_moon(st, T, max_step_s=20.0)
     back = nb.propagate_earth_moon(fwd, -T, max_step_s=20.0)
@@ -213,9 +226,12 @@ from orbitsim.core.elements import state_to_elements
 
 def test_osculating_elements_earth_dominant_matches_two_body():
     r = 8.0e6
-    st = StateVector(r=np.array([r, 0.0, 0.0]),
-                     v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
-                     mu=MU_EARTH, epoch_s=0.0)
+    st = StateVector(
+        r=np.array([r, 0.0, 0.0]),
+        v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=0.0,
+    )
     osc = nb.osculating_elements(st, 0.0)
     ref = state_to_elements(StateVector(st.r, st.v, MU_EARTH, 0.0))
     assert abs(osc.a - ref.a) < 1.0 and abs(osc.e - ref.e) < 1e-9
@@ -224,14 +240,17 @@ def test_osculating_elements_earth_dominant_matches_two_body():
 def test_osculating_elements_switches_to_moon_inside_soi():
     t = 0.0
     m = moon_state_at(t)
-    r_lo = 3.0e6                                   # 3000 km lunar orbit (inside SOI)
+    r_lo = 3.0e6  # 3000 km lunar orbit (inside SOI)
     # Circular about the Moon, in the Moon's frame.
-    st = StateVector(r=m.r + np.array([r_lo, 0.0, 0.0]),
-                     v=m.v + np.array([0.0, np.sqrt(MU_MOON / r_lo), 0.0]),
-                     mu=MU_EARTH, epoch_s=t)
+    st = StateVector(
+        r=m.r + np.array([r_lo, 0.0, 0.0]),
+        v=m.v + np.array([0.0, np.sqrt(MU_MOON / r_lo), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=t,
+    )
     osc = nb.osculating_elements(st, t)
-    assert osc.mu == MU_MOON                       # dominant body is the Moon
-    assert abs(osc.a - r_lo) < 1.0e4 and osc.e < 0.01   # ~circular lunar orbit
+    assert osc.mu == MU_MOON  # dominant body is the Moon
+    assert abs(osc.a - r_lo) < 1.0e4 and osc.e < 0.01  # ~circular lunar orbit
 
 
 WARP_STEPS = (1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0, 100000.0)
@@ -241,21 +260,26 @@ def test_max_safe_warp_caps_low_orbits_below_high_orbits():
     # Under a tight sub-step budget, a fast low orbit (short local timescale) caps at a
     # lower warp than a slow high orbit. (The proximity sub-stepping is so cheap that the
     # cap only bites under a tight budget / very close approach — see Part 2 for tuning.)
-    low = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
-                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
-    high = StateVector(r=np.array([1.5e8, 0.0, 0.0]),
-                       v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
-                       mu=MU_EARTH, epoch_s=0.0)
+    low = StateVector(
+        r=np.array([7.0e6, 0.0, 0.0]), v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0
+    )
+    high = StateVector(
+        r=np.array([1.5e8, 0.0, 0.0]),
+        v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
+        mu=MU_EARTH,
+        epoch_s=0.0,
+    )
     w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_substeps=20)
     w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_substeps=20)
     assert w_low in WARP_STEPS and w_high in WARP_STEPS
-    assert w_high > w_low                      # slower/farther orbit allows faster warp
-    assert w_low >= 1.0                         # never below the floor
+    assert w_high > w_low  # slower/farther orbit allows faster warp
+    assert w_low >= 1.0  # never below the floor
 
 
 def test_max_safe_warp_respects_substep_budget():
-    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
-                      v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    leo = StateVector(
+        r=np.array([7.0e6, 0.0, 0.0]), v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0
+    )
     w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
     n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
     assert n <= 200
@@ -295,12 +319,13 @@ def test_background_prediction_ignores_live_ephemeris_cache(monkeypatch):
     monkeypatch.setitem(nb._ephemeris_cache, "SUN", cached)
     monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", False)
 
-    assert nb._csun(123.0) is cached
+    # Live path draws from the live snapshot (v = 0 here, so no drift).
+    np.testing.assert_array_equal(nb._csun(123.0).r, cached.r)
     with nb.stable_prediction_ephemeris():
         predicted = nb._csun(123.0)
         assert predicted is not cached
         assert predicted.epoch_s == 123.0
-    assert nb._csun(123.0) is cached
+    np.testing.assert_array_equal(nb._csun(123.0).r, cached.r)
 
 
 def test_background_prediction_interpolates_its_own_time_varying_ephemeris(monkeypatch):
@@ -321,6 +346,62 @@ def test_background_prediction_interpolates_its_own_time_varying_ephemeris(monke
         state = nb._csun(epoch)
 
     np.testing.assert_allclose(state.r, [0.25**3, 0.5, -0.25], atol=1e-14)
+
+
+def test_live_cache_extrapolates_position_within_a_frame(monkeypatch):
+    # The live per-frame snapshot carries a velocity; a query later in the same
+    # frame must advance the frozen position by v*dt instead of returning it
+    # unchanged. (Fixes the frozen-planet indirect-term error at extreme warp.)
+    r0 = np.array([1.0e11, 2.0e10, -5.0e9])
+    v0 = np.array([1.0e4, -2.0e4, 3.0e3])
+
+    def fake(name, epoch_s, center):
+        return StateVector(r=r0.copy(), v=v0.copy(), mu=0.0, epoch_s=epoch_s)
+
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", fake)
+    t0 = 1.0e6
+    assert nb.refresh_ephemeris_cache(t0) is True
+
+    np.testing.assert_array_equal(nb._csun(t0).r, r0)  # exact at the snapshot epoch
+    dt = 5.0 * 86400.0
+    np.testing.assert_allclose(nb._csun(t0 + dt).r, r0 + v0 * dt, rtol=0, atol=1e-3)
+    np.testing.assert_array_equal(nb._csun(t0 + dt).v, v0)  # velocity held to 1st order
+
+
+def test_live_extrapolation_beats_freezing_against_true_motion(monkeypatch):
+    # Analytic circular geocentric motion. Extrapolating the snapshot to a later
+    # time must land strictly closer to the true position than freezing it, and
+    # by a wide margin over a ~19-day (1e8x warp) frame.
+    R = 1.5e11
+    omega = 2.0 * np.pi / (365.25 * 86400.0)
+
+    def analytic(name, epoch_s, center):
+        th = omega * epoch_s
+        return StateVector(
+            r=np.array([R * np.cos(th), R * np.sin(th), 0.0]),
+            v=np.array([-R * omega * np.sin(th), R * omega * np.cos(th), 0.0]),
+            mu=0.0,
+            epoch_s=epoch_s,
+        )
+
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", analytic)
+    t0 = 0.0
+    nb.refresh_ephemeris_cache(t0)
+    snapshot = analytic("SUN", t0, "EARTH")
+
+    for dt in (3600.0, 86400.0, 5.0 * 86400.0, 19.0 * 86400.0):
+        true_r = analytic("SUN", t0 + dt, "EARTH").r
+        frozen_err = np.linalg.norm(snapshot.r - true_r)
+        extrap_err = np.linalg.norm(nb._csun(t0 + dt).r - true_r)
+        assert extrap_err < frozen_err
+
+    dt = 19.0 * 86400.0
+    true_r = analytic("SUN", t0 + dt, "EARTH").r
+    frozen_err = np.linalg.norm(snapshot.r - true_r)
+    extrap_err = np.linalg.norm(nb._csun(t0 + dt).r - true_r)
+    assert extrap_err < 0.2 * frozen_err
 
 
 def test_earth_fixed_lagrange_points_are_equilibria():
@@ -345,11 +426,11 @@ def test_earth_fixed_L4_L5_equilateral():
     lps = nb.earth_fixed_lagrange_points(t)
     for name in ("L4", "L5"):
         L = lps[name]
-        assert abs(np.linalg.norm(L) - d) < 1.0          # distance d from Earth
-        assert abs(np.linalg.norm(L - m.r) - d) < 1.0    # distance d from the Moon
+        assert abs(np.linalg.norm(L) - d) < 1.0  # distance d from Earth
+        assert abs(np.linalg.norm(L - m.r) - d) < 1.0  # distance d from the Moon
         cosang = np.dot(L, m.r) / (np.linalg.norm(L) * d)
         ang = np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
-        assert abs(ang - 60.0) < 1e-3                     # 60 deg from the Moon
+        assert abs(ang - 60.0) < 1e-3  # 60 deg from the Moon
     # L4 leads the Moon, L5 trails (opposite sides of the Earth-Moon line).
     nrm = np.cross(m.r, m.v)
     assert np.dot(np.cross(m.r, lps["L4"]), nrm) > 0
@@ -363,10 +444,10 @@ def test_earth_fixed_collinear_placement():
     u = m.r / d
     lps = nb.earth_fixed_lagrange_points(t)
     s = {k: float(np.dot(lps[k], u)) for k in ("L1", "L2", "L3")}
-    assert 0.0 < s["L1"] < d < s["L2"]      # L1 between bodies, L2 beyond the Moon
-    assert s["L3"] < 0.0                     # L3 beyond Earth
+    assert 0.0 < s["L1"] < d < s["L2"]  # L1 between bodies, L2 beyond the Moon
+    assert s["L3"] < 0.0  # L3 beyond Earth
     for k in ("L1", "L2", "L3"):
-        assert np.linalg.norm(np.cross(lps[k], u)) < 1.0   # on the Earth-Moon line
+        assert np.linalg.norm(np.cross(lps[k], u)) < 1.0  # on the Earth-Moon line
 
 
 def test_earth_fixed_lagrange_distance_invariant_under_rotation():
@@ -377,7 +458,7 @@ def test_earth_fixed_lagrange_distance_invariant_under_rotation():
         for n in names:
             dist[n].append(np.linalg.norm(lps[n]))
     for n in names:
-        assert max(dist[n]) - min(dist[n]) < 1.0   # rigid rotation: |L| constant
+        assert max(dist[n]) - min(dist[n]) < 1.0  # rigid rotation: |L| constant
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +475,7 @@ class TestEphemerisCache:
 
     def test_refresh_populates_all_bodies(self):
         from orbitsim.core import ephemeris
+
         if not (nb._EPHEMERIS_AVAILABLE and ephemeris.available()):
             pytest.skip("DE440 kernel not available")
         ok = nb.refresh_ephemeris_cache(0.0)
@@ -413,19 +495,25 @@ class TestEphemerisCache:
         np.testing.assert_array_equal(result.r, cached_sun.r)
         np.testing.assert_array_equal(result.v, cached_sun.v)
 
-    def test_cached_fn_ignores_t_argument_when_cached(self):
+    def test_cached_fn_extrapolates_with_t_when_cached(self):
+        # The live cache now advances the snapshot by v*dt within a frame rather
+        # than freezing the position (fixes the extreme-warp indirect-term error).
         ok = nb.refresh_ephemeris_cache(0.0)
         if not ok:
             pytest.skip("DE440 kernel not available")
-        r1 = nb._csun(0.0).r.copy()
-        r2 = nb._csun(1e6).r.copy()
-        np.testing.assert_array_equal(r1, r2)
+        cached_sun = nb._ephemeris_cache["SUN"]
+        np.testing.assert_array_equal(nb._csun(0.0).r, cached_sun.r)  # dt = 0: exact
+        dt = 1e6
+        np.testing.assert_allclose(
+            nb._csun(dt).r, cached_sun.r + cached_sun.v * dt, rtol=0, atol=1e-3
+        )
 
     def test_fallback_when_cache_empty(self):
         saved = nb._ephemeris_cache.copy()
         try:
             nb._ephemeris_cache = {}
             from orbitsim.core.planets import sun_state_at
+
             result = nb._csun(100.0)
             expected = sun_state_at(100.0)
             np.testing.assert_allclose(result.r, expected.r, rtol=1e-12)
@@ -437,6 +525,7 @@ class TestEphemerisCache:
         if not ok:
             pytest.skip("DE440 kernel not available")
         from orbitsim.core.planets import mars_state_at
+
         circular_mars = mars_state_at(0.0).r
         real_mars = nb._ephemeris_cache["MARS"].r
         diff = np.linalg.norm(real_mars - circular_mars)
@@ -459,9 +548,12 @@ class TestEphemerisCache:
         if not ok:
             pytest.skip("DE440 kernel not available")
         r = 7.0e6
-        st = StateVector(r=np.array([r, 0.0, 0.0]),
-                         v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
-                         mu=MU_EARTH, epoch_s=0.0)
+        st = StateVector(
+            r=np.array([r, 0.0, 0.0]),
+            v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+            mu=MU_EARTH,
+            epoch_s=0.0,
+        )
         period = 2 * np.pi * np.sqrt(r**3 / MU_EARTH)
         out = nb.propagate_solar_system(st, period / 4, max_step_s=10.0)
         assert np.linalg.norm(out.r) > 0

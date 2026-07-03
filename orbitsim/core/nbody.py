@@ -1,6 +1,7 @@
 """Restricted N-body (CR3BP) core: idealized circular Earth+Moon, a velocity-Verlet
 ship propagator, the Jacobi constant, and the Lagrange points. Barycentric inertial,
 SI, float64. The ship is a massless test particle; the bodies are on rails."""
+
 from contextlib import contextmanager
 import threading
 
@@ -12,12 +13,12 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.elements import state_to_elements
 
-D_EM = 3.844e8                          # Earth-Moon separation [m]
+D_EM = 3.844e8  # Earth-Moon separation [m]
 MU_TOTAL = MU_EARTH + MU_MOON
 OMEGA_EM = np.sqrt(MU_TOTAL / D_EM**3)  # mean motion [rad/s]
-MASS_RATIO = MU_MOON / MU_TOTAL         # ~0.01215
-EARTH_X = -MASS_RATIO * D_EM            # Earth rotating-frame x [m]
-MOON_X = (1.0 - MASS_RATIO) * D_EM      # Moon rotating-frame x [m]
+MASS_RATIO = MU_MOON / MU_TOTAL  # ~0.01215
+EARTH_X = -MASS_RATIO * D_EM  # Earth rotating-frame x [m]
+MOON_X = (1.0 - MASS_RATIO) * D_EM  # Moon rotating-frame x [m]
 
 
 class _CircularBody:
@@ -34,8 +35,7 @@ class _CircularBody:
         th = OMEGA_EM * t_s
         u = np.array([np.cos(th), np.sin(th), 0.0])
         n = np.array([-np.sin(th), np.cos(th), 0.0])
-        return StateVector(r=self._R * u, v=self._R * OMEGA_EM * n,
-                           mu=self.mu, epoch_s=t_s)
+        return StateVector(r=self._R * u, v=self._R * OMEGA_EM * n, mu=self.mu, epoch_s=t_s)
 
 
 EARTH = _CircularBody(MU_EARTH, EARTH_X, R_EARTH)
@@ -49,7 +49,7 @@ def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
     a = np.zeros(3)
     for body in attractors:
         d = r - body.state_at(t_s).r
-        a += -body.mu * d / np.linalg.norm(d)**3
+        a += -body.mu * d / np.linalg.norm(d) ** 3
     return a
 
 
@@ -60,8 +60,8 @@ def earth_moon_accel(r_m, t_s):
     the Lagrange points balance."""
     r = np.asarray(r_m, dtype=np.float64)
     rM = moon_state_at(t_s).r
-    a = -MU_EARTH * r / np.linalg.norm(r)**3
-    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM)**3 + rM / np.linalg.norm(rM)**3)
+    a = -MU_EARTH * r / np.linalg.norm(r) ** 3
+    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM) ** 3 + rM / np.linalg.norm(rM) ** 3)
     return a
 
 
@@ -78,7 +78,7 @@ def earth_moon_accel(r_m, t_s):
 # pathological state can never hang the caller.
 SUBSTEP_DIVISOR = 200.0
 MAX_SUBSTEPS_PER_CALL = 100_000
-_MIN_SUBSTEP_S = 1e-6      # floor so a zero cap (r exactly at a body) can't stall
+_MIN_SUBSTEP_S = 1e-6  # floor so a zero cap (r exactly at a body) can't stall
 
 
 def _conic_periapsis_m(r_rel, v_rel, mu):
@@ -130,9 +130,13 @@ def _attractor_cap_s(r, v, t_s, attractors, max_step_s):
 def _substep_count(state, dt_s, attractors, max_step_s):
     """Estimated sub-step count for |dt_s| (used for warp budgeting; must use
     the same cap the integrator uses so warp budgets stay honest)."""
-    cap = _attractor_cap_s(np.asarray(state.r, dtype=np.float64),
-                           np.asarray(state.v, dtype=np.float64),
-                           state.epoch_s, attractors, max_step_s)
+    cap = _attractor_cap_s(
+        np.asarray(state.r, dtype=np.float64),
+        np.asarray(state.v, dtype=np.float64),
+        state.epoch_s,
+        attractors,
+        max_step_s,
+    )
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
@@ -158,7 +162,7 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
     while remaining > 0.0:
         steps += 1
         if steps >= MAX_SUBSTEPS_PER_CALL:
-            h_mag = remaining              # budget exhausted: finish coarsely
+            h_mag = remaining  # budget exhausted: finish coarsely
         else:
             cap = max(cap_fn(r, v, t), _MIN_SUBSTEP_S)
             k = max(0.0, np.ceil(np.log2(base_step_s / cap)))
@@ -176,10 +180,14 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
 def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
     """Advance the ship by dt_s with adaptive velocity Verlet under summed attractors."""
     r, v, t = _verlet_adaptive(
-        state.r, state.v, state.epoch_s, dt_s,
+        state.r,
+        state.v,
+        state.epoch_s,
+        dt_s,
         lambda rr, tt: gravity_accel(rr, tt, attractors),
         lambda rr, vv, tt: _attractor_cap_s(rr, vv, tt, attractors, max_step_s),
-        max_step_s)
+        max_step_s,
+    )
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
@@ -210,21 +218,30 @@ def _earth_moon_cap_s(r, v, t_s, max_step_s):
 def _earth_moon_substeps(state, dt_s, max_step_s):
     """Estimated sub-steps for propagate_earth_moon (used for warp budgeting;
     must use the same cap the integrator uses so warp budgets stay honest)."""
-    cap = _earth_moon_cap_s(np.asarray(state.r, dtype=np.float64),
-                            np.asarray(state.v, dtype=np.float64),
-                            state.epoch_s, max_step_s)
+    cap = _earth_moon_cap_s(
+        np.asarray(state.r, dtype=np.float64),
+        np.asarray(state.v, dtype=np.float64),
+        state.epoch_s,
+        max_step_s,
+    )
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
 def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
     """Advance the ship by dt_s under earth_moon_accel (central Earth + Moon + indirect)."""
     r, v, t = _verlet_adaptive(
-        state.r, state.v, state.epoch_s, dt_s, earth_moon_accel,
-        lambda rr, vv, tt: _earth_moon_cap_s(rr, vv, tt, max_step_s), max_step_s)
+        state.r,
+        state.v,
+        state.epoch_s,
+        dt_s,
+        earth_moon_accel,
+        lambda rr, vv, tt: _earth_moon_cap_s(rr, vv, tt, max_step_s),
+        max_step_s,
+    )
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
-MOON_SOI_M = 3.844e8 * (MU_MOON / MU_EARTH)**0.4   # Moon sphere of influence [m]
+MOON_SOI_M = 3.844e8 * (MU_MOON / MU_EARTH) ** 0.4  # Moon sphere of influence [m]
 
 
 def osculating_elements(state, t_s):
@@ -242,14 +259,32 @@ def osculating_elements(state, t_s):
 # Solar-system extension: Sun + all planets as geocentric perturbers.
 # ---------------------------------------------------------------------------
 from orbitsim.core.constants import (
-    MU_SUN, MU_MERCURY, MU_VENUS, MU_MARS,
-    MU_JUPITER, MU_SATURN, MU_URANUS, MU_NEPTUNE,
+    MU_SUN,
+    MU_MERCURY,
+    MU_VENUS,
+    MU_MARS,
+    MU_JUPITER,
+    MU_SATURN,
+    MU_URANUS,
+    MU_NEPTUNE,
 )
 from orbitsim.core.planets import (
-    sun_state_at, mercury_state_at, venus_state_at, mars_state_at,
-    jupiter_state_at, saturn_state_at, uranus_state_at, neptune_state_at,
-    EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
-    JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
+    sun_state_at,
+    mercury_state_at,
+    venus_state_at,
+    mars_state_at,
+    jupiter_state_at,
+    saturn_state_at,
+    uranus_state_at,
+    neptune_state_at,
+    EARTH_SOI_M,
+    MERCURY_SOI_M,
+    VENUS_SOI_M,
+    MARS_SOI_M,
+    JUPITER_SOI_M,
+    SATURN_SOI_M,
+    URANUS_SOI_M,
+    NEPTUNE_SOI_M,
 )
 from orbitsim.core.bodies import SUN as SUN_BODY, MERCURY as MERCURY_BODY
 from orbitsim.core.bodies import VENUS as VENUS_BODY, MARS as MARS_BODY, EARTH as EARTH_BODY
@@ -266,6 +301,7 @@ _ephemeris_context = threading.local()
 
 try:
     from orbitsim.core.ephemeris import body_state as _ephem_body_state
+
     _EPHEMERIS_AVAILABLE = True
 except Exception:
     # skyfield itself is missing; keep the attribute defined so callers (and
@@ -273,8 +309,7 @@ except Exception:
     _ephem_body_state = None
     _EPHEMERIS_AVAILABLE = False
 
-_EPHEM_BODY_NAMES = ("SUN", "MERCURY", "VENUS", "MARS",
-                     "JUPITER", "SATURN", "URANUS", "NEPTUNE")
+_EPHEM_BODY_NAMES = ("SUN", "MERCURY", "VENUS", "MARS", "JUPITER", "SATURN", "URANUS", "NEPTUNE")
 
 
 def refresh_ephemeris_cache(t_s: float) -> bool:
@@ -356,15 +391,33 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
 
 
 def _make_cached_state_fn(name, fallback_fn):
-    """Create a state function that returns cached ephemeris when available."""
+    """Create a state function that returns cached ephemeris when available.
+
+    The live per-frame cache is a single JPL snapshot (r, v) at the frame's
+    epoch. Rather than freeze the position for the whole frame — which at extreme
+    warp spans days and moves the Sun/planets a long way, corrupting the
+    indirect term — the snapshot is advanced by ``v * dt`` to the requested time.
+    That first-order (constant-velocity) extrapolation is exact to O(dt) and
+    uses the velocity already in the snapshot, so it costs nothing extra and
+    shrinks the per-frame error from the full arc (zeroth order) to its
+    curvature (second order). Background predictions use the higher-order
+    time-interpolated cache instead (see ``_prediction_ephemeris_state``).
+    """
+
     def fn(t_s):
         prediction_cache = getattr(_ephemeris_context, "prediction_cache", None)
         if prediction_cache is not None:
             return _prediction_ephemeris_state(name, fallback_fn, t_s)
         cached = _ephemeris_cache.get(name)
         if cached is not None:
-            return cached
+            dt = float(t_s) - cached.epoch_s
+            if dt == 0.0:
+                return cached
+            return StateVector(
+                r=cached.r + cached.v * dt, v=cached.v, mu=cached.mu, epoch_s=float(t_s)
+            )
         return fallback_fn(t_s)
+
     return fn
 
 
@@ -413,8 +466,14 @@ def solar_system_accel(r_m, t_s):
 
 
 from orbitsim.core.constants import (
-    R_SUN, R_MERCURY, R_VENUS, R_MARS,
-    R_JUPITER, R_SATURN, R_URANUS, R_NEPTUNE,
+    R_SUN,
+    R_MERCURY,
+    R_VENUS,
+    R_MARS,
+    R_JUPITER,
+    R_SATURN,
+    R_URANUS,
+    R_NEPTUNE,
 )
 
 # (state_fn, mu, soi_m, body_radius_m) for the heliocentric perturbers.
@@ -450,7 +509,7 @@ def _solar_cap_s(r, v, t_s, max_step_s):
         cap = min(cap, _timescale_cap_s(rM, MU_MOON))
 
     planet_dominant = False
-    for state_fn, mu, soi, radius in _SOLAR_CAP_BODIES[1:]:   # planets only
+    for state_fn, mu, soi, radius in _SOLAR_CAP_BODIES[1:]:  # planets only
         st = state_fn(t_s)
         rB = np.linalg.norm(r - st.r)
         if rB <= 0 or rB >= 10 * soi:
@@ -483,17 +542,26 @@ def _solar_cap_s(r, v, t_s, max_step_s):
 def _solar_system_substeps(state, dt_s, max_step_s):
     """Estimated sub-step count for the solar system propagator (used for warp
     budgeting; must use the same cap the integrator uses)."""
-    cap = _solar_cap_s(np.asarray(state.r, dtype=np.float64),
-                       np.asarray(state.v, dtype=np.float64),
-                       state.epoch_s, max_step_s)
+    cap = _solar_cap_s(
+        np.asarray(state.r, dtype=np.float64),
+        np.asarray(state.v, dtype=np.float64),
+        state.epoch_s,
+        max_step_s,
+    )
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
 def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0):
     """Propagate a vessel under full solar system gravity (geocentric)."""
     r, v, t = _verlet_adaptive(
-        state.r, state.v, state.epoch_s, dt_s, solar_system_accel,
-        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s), max_step_s)
+        state.r,
+        state.v,
+        state.epoch_s,
+        dt_s,
+        solar_system_accel,
+        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s),
+        max_step_s,
+    )
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
@@ -504,6 +572,7 @@ def dominant_body_solar(r_m, t_s):
     rM = moon_state_at(t_s).r
     if np.linalg.norm(r - rM) < MOON_SOI_M:
         from orbitsim.core.bodies import MOON as MOON_BODY
+
         return MOON_BODY, rM
     planet_checks = [
         (_cmercury, MERCURY_SOI_M, MERCURY_BODY),
@@ -525,8 +594,14 @@ def dominant_body_solar(r_m, t_s):
 
 
 _CACHED_BODY_LOOKUP = {
-    "Sun": _csun, "Mercury": _cmercury, "Venus": _cvenus, "Mars": _cmars,
-    "Jupiter": _cjupiter, "Saturn": _csaturn, "Uranus": _curanus, "Neptune": _cneptune,
+    "Sun": _csun,
+    "Mercury": _cmercury,
+    "Venus": _cvenus,
+    "Mars": _cmars,
+    "Jupiter": _cjupiter,
+    "Saturn": _csaturn,
+    "Uranus": _curanus,
+    "Neptune": _cneptune,
 }
 
 
@@ -569,8 +644,11 @@ def osculating_elements_solar(state, t_s):
 
 def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
     """Largest warp whose per-frame integration stays within budget_substeps (solar system)."""
-    allowed = [w for w in warp_steps
-               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) <= budget_substeps]
+    allowed = [
+        w
+        for w in warp_steps
+        if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) <= budget_substeps
+    ]
     return max(allowed) if allowed else min(warp_steps)
 
 
@@ -600,17 +678,19 @@ def jacobi_constant(state, t_s):
 
 def _collinear_accel_x(x):
     """Net rotating-frame x-acceleration for a point on the Earth-Moon axis at x."""
-    ax_g = (-MU_EARTH * (x - EARTH_X) / abs(x - EARTH_X)**3
-            - MU_MOON * (x - MOON_X) / abs(x - MOON_X)**3)
+    ax_g = (
+        -MU_EARTH * (x - EARTH_X) / abs(x - EARTH_X) ** 3
+        - MU_MOON * (x - MOON_X) / abs(x - MOON_X) ** 3
+    )
     return OMEGA_EM**2 * x + ax_g
 
 
 def lagrange_points(t_s):
     """Inertial positions of L1..L5 at t_s [m]."""
     eps = 1e-3 * D_EM
-    x1 = brentq(_collinear_accel_x, EARTH_X + eps, MOON_X - eps)      # between bodies
+    x1 = brentq(_collinear_accel_x, EARTH_X + eps, MOON_X - eps)  # between bodies
     x2 = brentq(_collinear_accel_x, MOON_X + eps, MOON_X + 0.4 * D_EM)  # beyond Moon
-    x3 = brentq(_collinear_accel_x, -1.6 * D_EM, EARTH_X - eps)       # beyond Earth
+    x3 = brentq(_collinear_accel_x, -1.6 * D_EM, EARTH_X - eps)  # beyond Earth
     h = np.sqrt(3.0) / 2.0 * D_EM
     xtri = (0.5 - MASS_RATIO) * D_EM
     rot = {
@@ -620,7 +700,7 @@ def lagrange_points(t_s):
         "L4": np.array([xtri, h, 0.0]),
         "L5": np.array([xtri, -h, 0.0]),
     }
-    Rinv = _rot_z(OMEGA_EM * t_s).T   # rotating -> inertial
+    Rinv = _rot_z(OMEGA_EM * t_s).T  # rotating -> inertial
     return {k: Rinv @ v for k, v in rot.items()}
 
 
@@ -646,11 +726,11 @@ def earth_fixed_lagrange_points(t_s):
     n_hat = np.cross(rM, m.v)
     n_hat = n_hat / np.linalg.norm(n_hat)
     eps = 1e-3 * d
-    s1 = brentq(_earth_fixed_collinear_accel_along, eps, d - eps, args=(u, t_s))           # L1
-    s2 = brentq(_earth_fixed_collinear_accel_along, d + eps, d + 0.4 * d, args=(u, t_s))   # L2
-    s3 = brentq(_earth_fixed_collinear_accel_along, -1.6 * d, -eps, args=(u, t_s))         # L3
+    s1 = brentq(_earth_fixed_collinear_accel_along, eps, d - eps, args=(u, t_s))  # L1
+    s2 = brentq(_earth_fixed_collinear_accel_along, d + eps, d + 0.4 * d, args=(u, t_s))  # L2
+    s3 = brentq(_earth_fixed_collinear_accel_along, -1.6 * d, -eps, args=(u, t_s))  # L3
 
-    def _rot(vec, ang):   # Rodrigues rotation of vec by ang about n_hat
+    def _rot(vec, ang):  # Rodrigues rotation of vec by ang about n_hat
         c, sn = np.cos(ang), np.sin(ang)
         return vec * c + np.cross(n_hat, vec) * sn + n_hat * np.dot(n_hat, vec) * (1.0 - c)
 
@@ -666,6 +746,9 @@ def earth_fixed_lagrange_points(t_s):
 def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
     """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
     sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
-    allowed = [w for w in warp_steps
-               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+    allowed = [
+        w
+        for w in warp_steps
+        if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps
+    ]
     return max(allowed) if allowed else min(warp_steps)
