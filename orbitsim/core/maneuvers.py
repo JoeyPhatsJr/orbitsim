@@ -87,6 +87,33 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
     )
 
 
+def maneuver_direction(state: StateVector, node: ManeuverNode) -> np.ndarray:
+    """Inertial unit direction of a planned RTN burn (propagates to the node epoch first).
+
+    Same RTN basis as ``apply_maneuver``. Raises ValueError for a zero-dV node,
+    which has no defined direction.
+    """
+    dt = node.epoch_s - state.epoch_s
+    burn_state = propagate_kepler(state, dt)
+
+    r = burn_state.r
+    v = burn_state.v
+    v_hat = v / np.linalg.norm(v)
+    h = np.cross(r, v)
+    h_hat = h / np.linalg.norm(h)
+    r_hat = np.cross(h_hat, v_hat)
+
+    dv = (
+        node.dv_prograde_mps * v_hat
+        + node.dv_normal_mps * h_hat
+        + node.dv_radial_mps * r_hat
+    )
+    magnitude = np.linalg.norm(dv)
+    if magnitude == 0.0:
+        raise ValueError("zero-dV maneuver has no direction")
+    return dv / magnitude
+
+
 def predict_elements_after(state: StateVector, node: ManeuverNode) -> KeplerianElements:
     """Return the Keplerian elements that result from applying ``node`` to ``state``.
 

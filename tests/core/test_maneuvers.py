@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from hypothesis import given, strategies as st
 from orbitsim.core.maneuvers import (
-    ManeuverNode, apply_maneuver, time_to_periapsis, time_to_apoapsis,
+    ManeuverNode, apply_maneuver, maneuver_direction, time_to_periapsis, time_to_apoapsis,
 )
 from orbitsim.core.state import StateVector
 from orbitsim.core.elements import KeplerianElements, state_to_elements, elements_to_state
@@ -74,6 +74,51 @@ def test_node_epoch_propagates_before_burn():
     # Burn happens at apoapsis (half a period later): position is on the far side.
     assert new_state.r[0] < 0
     assert abs(new_state.epoch_s - (state.epoch_s + period / 2.0)) < 1e-6
+
+
+def test_maneuver_direction_pure_prograde_matches_velocity_hat():
+    state = _periapsis_state()
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=100.0, dv_normal_mps=0.0, dv_radial_mps=0.0)
+    d = maneuver_direction(state, node)
+    v_hat = state.v / np.linalg.norm(state.v)
+    assert np.allclose(d, v_hat, atol=1e-9)
+
+
+def test_maneuver_direction_is_unit_length():
+    state = _periapsis_state()
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=30.0, dv_normal_mps=40.0, dv_radial_mps=0.0)
+    d = maneuver_direction(state, node)
+    assert abs(np.linalg.norm(d) - 1.0) < 1e-12
+
+
+def test_maneuver_direction_matches_dv_vector_applied_to_state():
+    state = _periapsis_state()
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=30.0, dv_normal_mps=40.0, dv_radial_mps=10.0)
+    d = maneuver_direction(state, node)
+    new_state = apply_maneuver(state, node)
+    dv_vec = new_state.v - state.v
+    expected = dv_vec / np.linalg.norm(dv_vec)
+    assert np.allclose(d, expected, atol=1e-9)
+
+
+def test_maneuver_direction_propagates_to_burn_epoch():
+    state = _periapsis_state()
+    period = state_to_elements(state).period_s
+    node = ManeuverNode(
+        epoch_s=period / 2.0, dv_prograde_mps=100.0, dv_normal_mps=0.0, dv_radial_mps=0.0
+    )
+    burn_state = apply_maneuver(_periapsis_state(), ManeuverNode(
+        epoch_s=period / 2.0, dv_prograde_mps=0.0, dv_normal_mps=0.0, dv_radial_mps=0.0))
+    d = maneuver_direction(state, node)
+    expected = burn_state.v / np.linalg.norm(burn_state.v)
+    assert np.allclose(d, expected, atol=1e-9)
+
+
+def test_maneuver_direction_raises_on_zero_dv():
+    state = _periapsis_state()
+    node = ManeuverNode(epoch_s=0.0, dv_prograde_mps=0.0, dv_normal_mps=0.0, dv_radial_mps=0.0)
+    with pytest.raises(ValueError):
+        maneuver_direction(state, node)
 
 
 def test_predict_elements_after_matches_apply_then_convert():
