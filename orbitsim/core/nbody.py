@@ -136,7 +136,8 @@ def _substep_count(state, dt_s, attractors, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
+def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s,
+                     min_substep_s=_MIN_SUBSTEP_S):
     """Velocity-Verlet (kick-drift-kick) with a block-quantized adaptive substep.
 
     cap_fn(r, v, t) returns the largest allowed substep [s] at that state.
@@ -146,6 +147,12 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
     history), the step is quantized to base_step_s / 2^k — the largest such
     value not exceeding the local cap — so step changes are rare, discrete
     block switches rather than continuous drift-inducing jitter.
+
+    ``min_substep_s`` floors the substep. The accurate on-rails sim leaves it at
+    the tiny default; the visual trajectory prediction raises it so a near-Earth
+    climb-out (deep in the gravity well, where the periapsis cap would otherwise
+    force ~25 s steps) stays cheap — it trades sub-periapsis detail the coarse
+    prediction line never draws anyway for a large speed-up.
     """
     r = np.asarray(r, dtype=np.float64).copy()
     v = np.asarray(v, dtype=np.float64).copy()
@@ -160,7 +167,7 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
         if steps >= MAX_SUBSTEPS_PER_CALL:
             h_mag = remaining              # budget exhausted: finish coarsely
         else:
-            cap = max(cap_fn(r, v, t), _MIN_SUBSTEP_S)
+            cap = max(cap_fn(r, v, t), min_substep_s)
             k = max(0.0, np.ceil(np.log2(base_step_s / cap)))
             h_mag = min(remaining, base_step_s / 2.0**k)
         remaining -= h_mag
@@ -173,13 +180,14 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s):
     return r, v, t
 
 
-def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0):
+def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0,
+                    min_substep_s=_MIN_SUBSTEP_S):
     """Advance the ship by dt_s with adaptive velocity Verlet under summed attractors."""
     r, v, t = _verlet_adaptive(
         state.r, state.v, state.epoch_s, dt_s,
         lambda rr, tt: gravity_accel(rr, tt, attractors),
         lambda rr, vv, tt: _attractor_cap_s(rr, vv, tt, attractors, max_step_s),
-        max_step_s)
+        max_step_s, min_substep_s=min_substep_s)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
@@ -216,11 +224,12 @@ def _earth_moon_substeps(state, dt_s, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_earth_moon(state, dt_s, max_step_s=3600.0):
+def propagate_earth_moon(state, dt_s, max_step_s=3600.0, min_substep_s=_MIN_SUBSTEP_S):
     """Advance the ship by dt_s under earth_moon_accel (central Earth + Moon + indirect)."""
     r, v, t = _verlet_adaptive(
         state.r, state.v, state.epoch_s, dt_s, earth_moon_accel,
-        lambda rr, vv, tt: _earth_moon_cap_s(rr, vv, tt, max_step_s), max_step_s)
+        lambda rr, vv, tt: _earth_moon_cap_s(rr, vv, tt, max_step_s), max_step_s,
+        min_substep_s=min_substep_s)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 
@@ -489,11 +498,13 @@ def _solar_system_substeps(state, dt_s, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0):
+def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0,
+                           min_substep_s=_MIN_SUBSTEP_S):
     """Propagate a vessel under full solar system gravity (geocentric)."""
     r, v, t = _verlet_adaptive(
         state.r, state.v, state.epoch_s, dt_s, solar_system_accel,
-        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s), max_step_s)
+        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s), max_step_s,
+        min_substep_s=min_substep_s)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 

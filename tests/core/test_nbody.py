@@ -110,6 +110,68 @@ def test_propagation_is_reversible():
     assert np.linalg.norm(back.r - st.r) < 1.0
 
 
+def test_verlet_min_substep_floor_reduces_substep_count():
+    """A larger min_substep_s floors the adaptive step, cutting substep (accel) calls.
+
+    This is the knob the visual trajectory prediction uses to stay cheap through the
+    near-Earth gravity well without touching the accurate on-rails sim (which keeps
+    the default tiny floor).
+    """
+    calls = {"fine": 0, "coarse": 0}
+
+    def make_accel(key):
+        def accel(r, t):
+            calls[key] += 1
+            return np.zeros(3)
+        return accel
+
+    cap_fn = lambda r, v, t: 1.0        # force a tiny 1 s cap everywhere
+    dt = 1000.0
+    nb._verlet_adaptive(np.array([7e6, 0.0, 0.0]), np.array([0.0, 7546.0, 0.0]), 0.0,
+                        dt, make_accel("fine"), cap_fn, base_step_s=1024.0,
+                        min_substep_s=1e-6)
+    nb._verlet_adaptive(np.array([7e6, 0.0, 0.0]), np.array([0.0, 7546.0, 0.0]), 0.0,
+                        dt, make_accel("coarse"), cap_fn, base_step_s=1024.0,
+                        min_substep_s=128.0)
+    assert calls["coarse"] < calls["fine"]
+
+
+def _geocentric_leo():
+    """A clean geocentric LEO state (Earth fixed at origin), for the solar propagator."""
+    r = 7.0e6
+    return StateVector(r=np.array([r, 0.0, 0.0]),
+                       v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                       mu=MU_EARTH, epoch_s=0.0)
+
+
+def test_propagate_solar_system_min_substep_defaults_to_current_behavior():
+    """Omitting min_substep_s must reproduce the pre-existing sim result exactly."""
+    st = _geocentric_leo()
+    default = nb.propagate_solar_system(st, 3600.0)
+    explicit = nb.propagate_solar_system(st, 3600.0, min_substep_s=nb._MIN_SUBSTEP_S)
+    assert np.array_equal(default.r, explicit.r)
+    assert np.array_equal(default.v, explicit.v)
+
+
+def test_coarse_min_substep_safe_for_incrementally_sampled_bound_orbit():
+    """The coarse floor must not harm a bound-orbit prediction.
+
+    The renderer samples a trajectory in many small dt steps; for a bound orbit each
+    step is far shorter than the coarse floor, so the floor never engages and the
+    coarse path tracks the fine one to within a few km over a full orbit.
+    """
+    st = _geocentric_leo()
+    T = 2 * np.pi * np.sqrt(7.0e6**3 / MU_EARTH)
+    n = 256
+    cur_c, cur_f = st, st
+    worst = 0.0
+    for _ in range(n):
+        cur_c = nb.propagate_solar_system(cur_c, T / n, min_substep_s=300.0)
+        cur_f = nb.propagate_solar_system(cur_f, T / n)
+        worst = max(worst, float(np.linalg.norm(cur_c.r - cur_f.r)))
+    assert worst < 50_000.0   # a few km over the whole orbit — invisible on the line
+
+
 def test_jacobi_constant_conserved_over_seven_days():
     # A ship out between Earth and Moon where both attractors matter.
     e = nb.EARTH.state_at(0.0)

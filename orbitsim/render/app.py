@@ -673,6 +673,8 @@ class OrbitApp(ShowBase):
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
     PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
     TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
+    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
+                                      # (sim is untouched): escape climb-out 4.6s -> ~1.7s
 
     def _build_maneuver_ui(self) -> None:
         """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
@@ -1697,9 +1699,14 @@ class OrbitApp(ShowBase):
             cur = state
             for i in range(1, n_pts):
                 if self.world.solar_system:
-                    # Visual prediction uses a coarser deep-space ceiling. Adaptive near-body
-                    # stepping still tightens this automatically for encounters and flybys.
-                    cur = prop_fn(cur, dt, max_step_s=6.0 * 3600.0)
+                    # The visual prediction is far cheaper than the on-rails sim: a larger
+                    # deep-space ceiling AND a coarse substep floor so a near-Earth escape
+                    # climb-out (which the periapsis cap would otherwise integrate at ~25 s
+                    # steps, ~4.6 s per refresh) stays responsive. The line loses only
+                    # sub-periapsis detail it never draws; adaptive stepping still tightens
+                    # for encounters/flybys above the floor.
+                    cur = prop_fn(cur, dt, max_step_s=24.0 * 3600.0,
+                                  min_substep_s=self.PREDICTION_MIN_SUBSTEP_S)
                 else:
                     cur = prop_fn(cur, dt)
                 pts[i] = cur.r
