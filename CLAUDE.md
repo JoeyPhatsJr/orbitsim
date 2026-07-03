@@ -182,3 +182,13 @@ don't batch many changes into one late commit. Stage specific files by **explici
   ignore their `t_s` argument when the cache is populated — this is by design (planet positions
   don't change meaningfully over one frame's substeps). The Moon is NOT cached; it uses
   `moon_state_at()` per substep since it moves significantly at high warp.
+- **Multi-core work goes through the app's one persistent `ProcessPoolExecutor`** (`render/app.py`
+  `_build_process_pool`, `spawn` context, thread-executor fallback). Rules: work sent to it must be
+  **module-level + picklable** — the grid fan-out uses top-level `_*_row` functions in
+  `core/optimize.py`; the trajectory samplers live in `render/trajectory_sampling.py` (no `self`, no
+  Panda3D). Never submit a bound `OrbitApp` method (it drags Panda3D across the pickle). The planning
+  *search* runs on a 1-worker **thread** (`_planning_executor`) that fans cells across the pool and
+  is polled in `_update` — so the render thread never blocks. A passed `executor=` must not change a
+  result (serial vs pooled is bit-identical; tests pin it). Sequential ODEs (one trajectory sample,
+  high-warp `world.step`) are **not** parallelisable — don't try. Keep `orbitsim/__main__.py`'s
+  `if __name__ == "__main__"` guard: `spawn` re-imports it in every worker.
