@@ -329,3 +329,93 @@ def test_interplanetary_departure_raises_when_infeasible():
     with pytest.raises(ValueError):
         interplanetary_departure_node(
             ship, mars_state_at, sun_state_at, np.array([0.0]), np.array([-1.0, 0.0]))
+
+
+# ---------------------------------------------------------------------------
+# Multi-core fan-out: a passed executor must not change results
+# ---------------------------------------------------------------------------
+#
+# The `executor` parameter fans departure-time rows across worker threads or
+# processes. Correctness invariant: the pooled result is *identical* to the
+# serial result, whatever the worker count. We validate the fan-out logic with
+# a ThreadPoolExecutor (fast, in-process) and picklability with a real
+# ProcessPoolExecutor on a small grid.
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from orbitsim.core.optimize import (
+    intercept_node, interplanetary_departure_node_by_name, planning_planet_state,
+)
+
+
+def test_porkchop_executor_matches_serial_threads():
+    r1, r2 = 7000e3, 14000e3
+    dep = _circular(r1)
+    arr_v = np.sqrt(MU_EARTH / r2)
+    arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, arr_v, 0.0]), mu=MU_EARTH)
+    dep_times = np.linspace(0.0, 3.0e4, 17)
+    tof_grid = np.linspace(1.0e3, 4.0e4, 23)
+
+    dv_serial, argmin_serial = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        dv_par, argmin_par = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH, executor=ex)
+    assert np.array_equal(dv_serial, dv_par)     # bit-identical, inf-aware
+    assert argmin_serial == argmin_par
+
+
+def test_porkchop_executor_matches_serial_processes():
+    r1, r2 = 7000e3, 14000e3
+    dep = _circular(r1)
+    arr_v = np.sqrt(MU_EARTH / r2)
+    arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, arr_v, 0.0]), mu=MU_EARTH)
+    dep_times = np.linspace(0.0, 3.0e4, 8)       # small grid: spawn cost dominates
+    tof_grid = np.linspace(1.0e3, 4.0e4, 10)
+
+    dv_serial, argmin_serial = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH)
+    with ProcessPoolExecutor(max_workers=2) as ex:
+        dv_par, argmin_par = porkchop(dep, arr, dep_times, tof_grid, MU_EARTH, executor=ex)
+    assert np.array_equal(dv_serial, dv_par)
+    assert argmin_serial == argmin_par
+
+
+def test_intercept_node_executor_matches_serial():
+    ship, target, mu = _ship_and_target()
+    dep = np.linspace(0.0, 3.0e3, 13)
+    tof = np.linspace(1.0e3, 4.0e4, 29)
+    node_serial = intercept_node(ship, target, mu, dep, tof, refine=False)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        node_par = intercept_node(ship, target, mu, dep, tof, refine=False, executor=ex)
+    assert node_serial.epoch_s == node_par.epoch_s
+    assert node_serial.dv_prograde_mps == node_par.dv_prograde_mps
+    assert node_serial.dv_normal_mps == node_par.dv_normal_mps
+    assert node_serial.dv_radial_mps == node_par.dv_radial_mps
+
+
+def test_planning_planet_state_returns_geocentric_offline_or_online():
+    # Whatever the ephemeris availability, planning_planet_state must return a
+    # finite geocentric StateVector (real DE440 or circular fallback).
+    st = planning_planet_state("MARS", 0.0)
+    assert st.r.shape == (3,) and np.all(np.isfinite(st.r))
+    assert st.mu == MU_EARTH
+
+
+def test_interplanetary_departure_by_name_escape_within_window():
+    ship = _leo_ship()
+    dep, tof = _mars_window()
+    node = interplanetary_departure_node_by_name(ship, "MARS", "SUN", dep, tof)
+    assert dep[0] <= node.epoch_s - ship.epoch_s <= dep[-1]
+    post = apply_maneuver(ship, node)
+    energy = np.dot(post.v, post.v) / 2.0 - MU_EARTH / np.linalg.norm(post.r)
+    assert energy > 0.0
+    assert 0.0 < node.magnitude_mps < 20_000.0
+
+
+def test_interplanetary_departure_by_name_executor_matches_serial():
+    ship = _leo_ship()
+    dep, tof = _mars_window()
+    node_serial = interplanetary_departure_node_by_name(ship, "MARS", "SUN", dep, tof)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        node_par = interplanetary_departure_node_by_name(
+            ship, "MARS", "SUN", dep, tof, executor=ex)
+    assert node_serial.epoch_s == node_par.epoch_s
+    assert node_serial.dv_prograde_mps == node_par.dv_prograde_mps
+    assert node_serial.dv_normal_mps == node_par.dv_normal_mps
+    assert node_serial.dv_radial_mps == node_par.dv_radial_mps
