@@ -21,23 +21,24 @@ Goal: turn the working simulator into a shippable desktop app for the author + a
 - Cache orbit-line geometry; only rebuild on orbit change. Use analytic propagation on-rails,
   reserve `propagate_numeric` for active burns / perturbed vessels.
 - Profile the per-frame task; keep 60 FPS with a handful of vessels.
-- **Multi-core trajectory/planning work (deferred, not started).** A single trajectory sample
-  (256-point N-body integration) is a sequential ODE — point *i+1* needs point *i* — so it
-  cannot be split across cores; the render app already offloads it to a background thread
-  (`_preview_executor`/`_trajectory_executor`, each `max_workers=1`), which pegs one core at
-  ~100% but reads as ~6% system-wide on a 16-core machine (single Python thread, GIL). Two
-  real opportunities if this becomes worth revisiting:
-  - **Easy, high-value:** the intercept/porkchop grid search (`core/optimize.py` —
-    `intercept_node`, `interplanetary_departure_node`, `porkchop`) sweeps departure ×
-    time-of-flight as independent Lambert solves (~24×32 cells) on one core. Fanning that
-    grid out over a `ProcessPoolExecutor` is embarrassingly parallel and self-contained to
-    `core/optimize.py` — no change needed to `render/app.py`'s executor setup.
-  - **Moderate effort, smaller payoff:** the live orbit line and the maneuver preview run on
-    separate threads but still GIL-serialize when both are computing at once (a common case
-    while flying with a node planned). Switching those to `ProcessPoolExecutor` would let them
-    truly overlap, but requires extracting `_sample_trajectory`/`_sample_preview` out of the
-    `OrbitApp` class into plain, picklable functions (they barely touch `self` today, so this
-    is mostly mechanical) so they're importable by spawned worker processes.
+- **Multi-core trajectory/planning work (done).** All heavy CPU work now runs on a single
+  persistent `ProcessPoolExecutor` owned by `OrbitApp` (spawn context; falls back to threads
+  if workers can't spawn), so the sim uses many cores instead of GIL-serialising on one:
+  - **Planning grid search.** `core/optimize.py`'s `porkchop`, `intercept_node`,
+    `interplanetary_porkchop`, and the new picklable `interplanetary_departure_node_by_name`
+    take an optional `executor=` and fan their departure-time rows across it (result is
+    bit-identical to serial — tests pin this). `_plan_intercept` / `_toggle_porkchop` now
+    dispatch the search to a background *planning thread* (which fans cells across the pool)
+    and apply the node / draw the porkchop on poll — the render thread never freezes.
+  - **Flight-time overlap.** `_sample_trajectory`/`_sample_preview` were extracted into pure,
+    picklable functions in `render/trajectory_sampling.py`; the live orbit line and the
+    maneuver preview submit to the pool and now run in *separate processes*, so they truly
+    overlap instead of GIL-serialising.
+  - **Still single-core by nature (not a regression):** a single trajectory sample and the
+    high-warp `world.step` are sequential ODEs (point *i+1* needs point *i*) and cannot be
+    split across cores. Warp stutter is therefore an algorithmic problem (step sizing /
+    off-thread on-rails propagation with interpolation), not a multi-core one — out of scope
+    for this pass.
 
 ## Task 6.4 — packaging (PyInstaller)
 - `pyinstaller` one-folder build bundling Panda3D assets and the DE440 kernel (or download-on-

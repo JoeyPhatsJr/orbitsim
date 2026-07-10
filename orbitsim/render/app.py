@@ -1,4 +1,5 @@
 """Panda3D ShowBase bootstrap and per-frame loop."""
+import os
 from contextlib import nullcontext
 
 import numpy as np
@@ -28,6 +29,10 @@ from orbitsim.core.attitude import (
 from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
+from orbitsim.render.trajectory_sampling import (
+    sample_trajectory, sample_preview,
+    trajectory_horizon_s as _trajectory_horizon_s,
+)
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere, make_ring
 from orbitsim.core.nbody import MOON_SOI_M
@@ -91,28 +96,40 @@ def _maneuver_preview_key(node, scheduled_epoch_s):
     )
 
 
-def _trajectory_horizon_s(state, solar_system: bool) -> float:
-    """Prediction horizon that keeps escape trajectories continuous across Earth SOI."""
-    if not solar_system:
-        return 7.0 * 86400.0
-    from orbitsim.core.constants import MU_EARTH
-    from orbitsim.core.planets import EARTH_SOI_M
+def _pool_warmup():
+    """Trivial picklable task used to prove a spawned worker actually starts."""
+    return True
 
-    radius = float(np.linalg.norm(state.r))
-    energy = 0.5 * float(np.dot(state.v, state.v)) - MU_EARTH / radius
-    if energy >= 0.0:
-        return 400.0 * 86400.0
-    semi_major = -MU_EARTH / (2.0 * energy)
-    eccentricity_vector = (
-        ((float(np.dot(state.v, state.v)) - MU_EARTH / radius) * state.r
-         - float(np.dot(state.r, state.v)) * state.v)
-        / MU_EARTH
-    )
-    apoapsis = semi_major * (1.0 + float(np.linalg.norm(eccentricity_vector)))
-    if apoapsis >= 0.8 * EARTH_SOI_M:
-        return 400.0 * 86400.0
-    period = 2.0 * np.pi * np.sqrt(semi_major**3 / MU_EARTH)
-    return min(2.0 * period, 30.0 * 86400.0)
+
+def _build_process_pool():
+    """Create a spawn-based ``ProcessPoolExecutor`` and confirm a worker starts.
+
+    All heavy CPU work (the planning grid search and the flight-time trajectory
+    sampling) is submitted here so it runs across cores instead of GIL-serialising
+    on one Python thread. Uses the ``spawn`` context explicitly so a worker never
+    inherits the parent's OpenGL/Panda3D state (a fork-after-GL hazard on Linux).
+
+    Returns the pool, or ``None`` if the environment cannot spawn workers (spawn
+    blocked, no picklable entry point, sandboxed CI) — the caller then falls back
+    to threads. Never raises: honours the project's degrade-don't-crash rule.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    pool = None
+    try:
+        workers = max(1, min((os.cpu_count() or 2) - 1, 16))
+        ctx = multiprocessing.get_context("spawn")
+        pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+        # Warm one worker now so a spawn failure surfaces deterministically here
+        # (clean fallback) rather than on the first preview, and the first real
+        # sample doesn't pay the whole cold-start cost.
+        pool.submit(_pool_warmup).result(timeout=30)
+        return pool
+    except Exception:
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+        return None
 
 
 def _coast_chunks(duration_s: float, max_chunk_s: float = 86400.0) -> list[float]:
@@ -155,11 +172,14 @@ class OrbitApp(ShowBase):
         self._build_title_screen()
 
     def destroy(self) -> None:
-        for attr in ("_preview_executor", "_trajectory_executor", "_planning_executor"):
+        # De-duplicate: _compute_executor and _grid_executor may both be _pool.
+        seen = set()
+        for attr in ("_planning_executor", "_compute_executor", "_grid_executor", "_pool"):
             executor = getattr(self, attr, None)
-            if executor is not None:
+            if executor is not None and id(executor) not in seen:
+                seen.add(id(executor))
                 executor.shutdown(wait=False, cancel_futures=True)
-                setattr(self, attr, None)
+            setattr(self, attr, None)
         super().destroy()
 
     # ------------------------------------------------------------------ title screen
@@ -363,16 +383,30 @@ class OrbitApp(ShowBase):
         self._preview_encounters = []
         if not self.solar_system:
             from concurrent.futures import ThreadPoolExecutor
-            self._preview_executor = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="orbit-preview"
-            )
-            self._trajectory_executor = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="trajectory"
-            )
+            # One persistent process pool does all heavy CPU work: the planning grid
+            # search (fanned across cores) and the flight-time trajectory/preview
+            # sampling (so the live line and the maneuver preview run in separate
+            # processes instead of GIL-serialising against each other and the render
+            # thread). Falls back to threads where spawning workers isn't possible.
+            self._pool = _build_process_pool()
+            # The planning search always runs on a 1-worker *thread* so it never blocks
+            # the render thread; inside that thread it fans grid cells across the pool.
             self._planning_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="planner"
             )
-            self._porkchop_future = None
+            if self._pool is not None:
+                self._compute_executor = self._pool   # preview + live-line sampling
+                self._grid_executor = self._pool      # optimize.py cell fan-out
+            else:
+                # Threaded fallback: two workers keep preview + live-line overlapping
+                # as much as the GIL allows; grid search stays serial (executor=None).
+                self._compute_executor = ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="compute"
+                )
+                self._grid_executor = None
+            self._planning_future = None      # in-flight intercept plan (thread future)
+            self._porkchop_future = None      # in-flight porkchop grid (thread future)
+            self._porkchop_render = None      # (dep_times, tof_grid, label) for on-poll draw
             self._porkchop_request = 0
         self._porkchop_card = None
         if self.solar_system:
@@ -962,18 +996,27 @@ class OrbitApp(ShowBase):
             self._node_time_text.setText("T+0s")
 
     def _plan_intercept(self):
-        """Auto-plan a flyby of the current target via a departure-dV porkchop."""
+        """Auto-plan an intercept/departure of the current target.
+
+        The Lambert grid search is the expensive part, so it runs on the planning
+        thread (fanning cells across the process pool) instead of freezing the
+        render thread. This method only builds the grids and submits the job;
+        ``_poll_planning`` applies the resulting node when it completes.
+        """
         import numpy as np
         from orbitsim.core.elements import state_to_elements
         from orbitsim.render.targets import PlanetTarget
         if self._target is None:
             self._flash_message("No target selected")
             return
+        if self._planning_future is not None and not self._planning_future.done():
+            self._flash_message("Planning already in progress...")
+            return
         v0 = self.world.vessels[0]
         now = self.clock.sim_time_s
-        self._flash_message(f"Planning {self._target.name} intercept...")
+        grid_executor = self._grid_executor
         if isinstance(self._target, PlanetTarget):
-            from orbitsim.core.optimize import interplanetary_departure_node
+            from orbitsim.core.optimize import interplanetary_departure_node_by_name
             from orbitsim.core.planets import A_EARTH, _N_EARTH
             from orbitsim.core.constants import MU_SUN
             target_a = {
@@ -996,17 +1039,13 @@ class OrbitApp(ShowBase):
             dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 24)
             hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
             tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 32)
-            try:
-                node = interplanetary_departure_node(
-                    v0.state,
-                    self._target.planning_state_at,
-                    sun_target.planning_state_at,
-                    dep,
-                    tof,
-                )
-            except ValueError:
-                self._flash_message("No intercept found")
-                return
+            ship_state = v0.state
+            target_name = self._target._ephemeris_name
+            sun_name = sun_target._ephemeris_name
+
+            def job():
+                return interplanetary_departure_node_by_name(
+                    ship_state, target_name, sun_name, dep, tof, executor=grid_executor)
         else:
             from orbitsim.core.optimize import intercept_node
             try:
@@ -1016,12 +1055,19 @@ class OrbitApp(ShowBase):
                 return
             dep = np.linspace(0.0, period, 24)
             tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
-            try:
-                node = intercept_node(v0.state, self._target.state_at(now),
-                                      self.world.central.mu, dep, tof)
-            except ValueError:
-                self._flash_message("No intercept found")
-                return
+            ship_state = v0.state
+            target_now = self._target.state_at(now)
+            mu = self.world.central.mu
+
+            def job():
+                return intercept_node(
+                    ship_state, target_now, mu, dep, tof, executor=grid_executor)
+
+        self._flash_message(f"Planning {self._target.name} intercept...")
+        self._planning_future = self._planning_executor.submit(job)
+
+    def _apply_planned_node(self, node) -> None:
+        """Install a freshly-planned maneuver node into the editor (render thread only)."""
         self._node_epoch_s = node.epoch_s
         self._auto_execute_node = False
         self._dv["pro"] = node.dv_prograde_mps
@@ -1031,6 +1077,24 @@ class OrbitApp(ShowBase):
             self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
         self._refresh_readout()
         self._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
+
+    def _poll_planning(self) -> None:
+        """Apply an intercept plan once its background job finishes."""
+        future = getattr(self, "_planning_future", None)
+        if future is None or not future.done():
+            return
+        self._planning_future = None
+        try:
+            node = future.result()
+        except ValueError:
+            self._flash_message("No intercept found")
+            return
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self._flash_message("Planning failed")
+            return
+        self._apply_planned_node(node)
 
     def _clear_target(self):
         """Deselect the current target; remove its closest-approach markers + readout."""
@@ -1581,8 +1645,13 @@ class OrbitApp(ShowBase):
                 self._porkchop_modal = None
             return
 
+        if self._porkchop_future is not None and not self._porkchop_future.done():
+            self._flash_message("Computing porkchop...")
+            return
+
         mu = self.world.central.mu
         ship = self.world.vessels[0].state
+        grid_executor = self._grid_executor
 
         from orbitsim.render.targets import PlanetTarget
         if self._target is not None and isinstance(self._target, PlanetTarget):
@@ -1604,13 +1673,14 @@ class OrbitApp(ShowBase):
                 hohmann_tof = 180.0 * 86400.0
             dep_times = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
             tof_grid = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 36)
-            self._flash_message(f"Computing {self._target.name} porkchop...")
-            dv, _ = interplanetary_porkchop(
-                "EARTH",
-                self._target.name.upper(),
-                ship.epoch_s + dep_times,
-                tof_grid,
-            )
+            label = self._target.name
+            target_name = self._target.name.upper()
+            abs_dep = ship.epoch_s + dep_times
+
+            def job():
+                dv, _ = interplanetary_porkchop(
+                    "EARTH", target_name, abs_dep, tof_grid, executor=grid_executor)
+                return dv
         elif self._target is not None:
             now = self.clock.sim_time_s
             from orbitsim.core.elements import state_to_elements
@@ -1622,7 +1692,12 @@ class OrbitApp(ShowBase):
             dep_times = np.linspace(0.0, period, 24)
             tof_grid = np.linspace(3.0e3, 14.0 * 86400.0, 36)
             target_state = self._target.state_at(now)
-            dv, _ = porkchop(ship, target_state, dep_times, tof_grid, mu)
+            label = self._target.name
+
+            def job():
+                dv, _ = porkchop(
+                    ship, target_state, dep_times, tof_grid, mu, executor=grid_executor)
+                return dv
         else:
             r1 = ship.r_mag
             r2 = r1 * 2.0
@@ -1634,8 +1709,36 @@ class OrbitApp(ShowBase):
             t_hohmann = np.pi * np.sqrt(((r1 + r2) / 2.0) ** 3 / mu)
             dep_times = np.linspace(0.0, t_syn, 24)
             tof_grid = np.linspace(0.4 * t_hohmann, 1.6 * t_hohmann, 36)
-            dv, _ = porkchop(ship, arr, dep_times, tof_grid, mu)
+            label = "transfer"
 
+            def job():
+                dv, _ = porkchop(ship, arr, dep_times, tof_grid, mu, executor=grid_executor)
+                return dv
+
+        self._flash_message(f"Computing {label} porkchop...")
+        self._porkchop_render = (dep_times, tof_grid)
+        self._porkchop_future = self._planning_executor.submit(job)
+
+    def _poll_porkchop(self) -> None:
+        """Draw the porkchop overlay once its background grid finishes."""
+        future = getattr(self, "_porkchop_future", None)
+        if future is None or not future.done():
+            return
+        self._porkchop_future = None
+        try:
+            dv = future.result()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self._flash_message("Porkchop failed")
+            self._porkchop_render = None
+            return
+        dep_times, tof_grid = self._porkchop_render
+        self._porkchop_render = None
+        self._build_porkchop_modal(dv, dep_times, tof_grid)
+
+    def _build_porkchop_modal(self, dv, dep_times, tof_grid) -> None:
+        """Render the porkchop PNG and build its overlay modal (render thread only)."""
         png = render_porkchop_png(dv, dep_times, tof_grid, "porkchop.png")
         from orbitsim.render.ui.theme import THEME, button_options
         self._porkchop_modal = DirectFrame(
@@ -1661,78 +1764,6 @@ class OrbitApp(ShowBase):
             text="CLOSE", scale=0.048, pos=(-0.38, 0, -0.61),
             command=self._toggle_porkchop, parent=self._porkchop_modal, **button_options(),
         )
-
-    def _sample_trajectory(
-        self, state, n_pts=256, max_horizon_s=7 * 86400, n_orbits=1,
-        with_times=False, with_encounters=False,
-    ):
-        """Forward-integrate state under N-body and return ~n_pts positions [m].
-
-        Horizon is ``n_orbits`` osculating orbital periods capped at max_horizon_s; for an
-        Earth-bound orbit this draws that many closed loops (successive loops drift slightly
-        under perturbation), for a translunar/hyperbolic arc (no period) it shows the
-        next ``max_horizon_s`` of the perturbed path. Returns an (n_pts, 3) float64 array of
-        world-meter positions in the Earth-centered inertial frame.
-        """
-        if self.world.solar_system:
-            from orbitsim.core.nbody import (
-                osculating_elements_solar,
-                propagate_solar_system,
-                stable_prediction_ephemeris,
-            )
-            osc_fn = osculating_elements_solar
-            prop_fn = propagate_solar_system
-        else:
-            from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
-            osc_fn = osculating_elements
-            prop_fn = propagate_earth_moon
-        context = stable_prediction_ephemeris() if self.world.solar_system else nullcontext()
-        with context:
-            try:
-                osc = osc_fn(state, state.epoch_s)
-                horizon_s = min(n_orbits * float(osc.period_s), max_horizon_s)
-            except (ValueError, AttributeError):
-                horizon_s = float(max_horizon_s)
-            dt = horizon_s / n_pts
-            pts = np.empty((n_pts, 3), dtype=np.float64)
-            pts[0] = state.r
-            cur = state
-            for i in range(1, n_pts):
-                if self.world.solar_system:
-                    # The visual prediction is far cheaper than the on-rails sim: a larger
-                    # deep-space ceiling AND a coarse substep floor so a near-Earth escape
-                    # climb-out (which the periapsis cap would otherwise integrate at ~25 s
-                    # steps, ~4.6 s per refresh) stays responsive. The line loses only
-                    # sub-periapsis detail it never draws; adaptive stepping still tightens
-                    # for encounters/flybys above the floor.
-                    cur = prop_fn(cur, dt, max_step_s=24.0 * 3600.0,
-                                  min_substep_s=self.PREDICTION_MIN_SUBSTEP_S)
-                else:
-                    cur = prop_fn(cur, dt)
-                pts[i] = cur.r
-            epochs = state.epoch_s + np.arange(n_pts, dtype=np.float64) * dt
-            encounters = []
-            if with_encounters:
-                # Classify inside the same ephemeris context that produced the
-                # path, so far-future planet positions match what was integrated.
-                from orbitsim.core.encounters import (
-                    find_encounters, solar_dominant, earth_moon_dominant,
-                )
-                dominant = solar_dominant if self.world.solar_system else earth_moon_dominant
-                encounters = find_encounters(pts, epochs, dominant, primary_name="Earth")
-        if with_encounters:
-            return pts, epochs, encounters
-        if with_times:
-            return pts, epochs
-        return pts
-
-    def _sample_preview(self, state):
-        """Compute preview points + encounters without touching Panda3D scene objects."""
-        horizon = _trajectory_horizon_s(state, self.world.solar_system)
-        pts, _epochs, encounters = self._sample_trajectory(
-            state, n_pts=256, max_horizon_s=horizon, n_orbits=2, with_encounters=True
-        )
-        return pts, encounters
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
@@ -1782,8 +1813,9 @@ class OrbitApp(ShowBase):
             post_burn = apply_maneuver(vessel.state, node)
             self._preview_submit_t = now_real
             self._preview_future_key = preview_key
-            self._preview_future = self._preview_executor.submit(
-                self._sample_preview, post_burn
+            self._preview_future = self._compute_executor.submit(
+                sample_preview, post_burn,
+                self.world.solar_system, self.PREDICTION_MIN_SUBSTEP_S,
             )
 
     # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
@@ -1872,9 +1904,11 @@ class OrbitApp(ShowBase):
             horizon = _trajectory_horizon_s(vessel.state, self.world.solar_system)
             n_pts = 256
             self._traj_last_submit_t[idx] = now_real
-            self._traj_future[idx] = self._trajectory_executor.submit(
-                self._sample_trajectory,
+            self._traj_future[idx] = self._compute_executor.submit(
+                sample_trajectory,
                 vessel.state,
+                self.world.solar_system,
+                self.PREDICTION_MIN_SUBSTEP_S,
                 n_pts,
                 horizon,
                 2,
@@ -1912,6 +1946,10 @@ class OrbitApp(ShowBase):
             self.clock.advance(real_dt)
             self._update_solar_system()
             return task.cont
+
+        # Apply any finished background planning work (runs off the render thread).
+        self._poll_planning()
+        self._poll_porkchop()
 
         # Flight input, then bound warp: 1x while thrusting (no integrating through warp),
         # else cap to the largest warp whose per-frame sub-step count stays in budget near
