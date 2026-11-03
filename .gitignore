@@ -37,3 +37,7 @@ saves/
 
 # Downloaded texture cache
 data/textures/
+
+# Claude Code: personal settings and session worktrees (never commit)
+.claude/settings.local.json
+.claude/worktrees/
