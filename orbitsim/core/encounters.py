@@ -19,6 +19,7 @@ body-relative position for the relative velocity — accurate enough for a
 planning readout, and the live in-SOI HUD (`core/flyby.py`) shows the exact
 value once the vessel actually arrives.
 """
+from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np

@@ -5,6 +5,7 @@ The flyby model treats the encounter as an instantaneous deflection of the
 v-infinity vector at the planet (patched-conic approximation for planning;
 the actual N-body trajectory handles the real physics during flight).
 """
+from __future__ import annotations
 import numpy as np
 from orbitsim.core.constants import MU_SUN
 

@@ -1,5 +1,6 @@
 """Download + cache real surface texture maps; offline-safe (flat-color fallback
 is the caller's job when this returns None)."""
+from __future__ import annotations
 import os
 import urllib.request
 

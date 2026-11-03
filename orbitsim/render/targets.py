@@ -3,6 +3,7 @@
 A Target answers 'where is it at time t' in the same inertial, Earth-centered
 frame as the vessel. Ships become Targets in a later cycle.
 """
+from __future__ import annotations
 import numpy as np
 
 from orbitsim.core.moon import moon_state_at
