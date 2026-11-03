@@ -234,12 +234,15 @@ def test_earth_moon_accel_has_indirect_term():
 
 def test_L4_balances_in_the_earth_fixed_model():
     # L4: 60 deg ahead of the Moon in its orbital plane, distance d from Earth and Moon.
+    # The Moon is eccentric (real ephemeris), so the balance holds in the pulsating
+    # frame: rotation at the Kepler rate for the CURRENT separation d, sqrt(mu/d^3),
+    # about the actual orbit normal -- not at the Moon's instantaneous angular rate.
     t = 1.0e5
     m = moon_state_at(t)
     d = np.linalg.norm(m.r)
-    w = np.cross(m.r, m.v) / d**2                 # Moon's angular velocity vector
-    omega = np.linalg.norm(w)
-    axis = w / omega
+    axis = np.cross(m.r, m.v)
+    axis = axis / np.linalg.norm(axis)
+    w = np.sqrt(nb.MU_TOTAL / d**3) * axis
     # Rodrigues rotation of r_M by +60 deg about the orbit normal.
     c, s = np.cos(np.radians(60)), np.sin(np.radians(60))
     L4 = m.r * c + np.cross(axis, m.r) * s + axis * np.dot(axis, m.r) * (1 - c)
@@ -391,7 +394,8 @@ def test_earth_fixed_lagrange_points_are_equilibria():
     for t in (0.0, 1.0e5):
         m = moon_state_at(t)
         n = np.cross(m.r, m.v)
-        omega = nb.OMEGA_EM * (n / np.linalg.norm(n))
+        # Pulsating frame: Kepler rate at the current (eccentric) separation.
+        omega = np.sqrt(nb.MU_TOTAL / np.linalg.norm(m.r)**3) * (n / np.linalg.norm(n))
         lps = nb.earth_fixed_lagrange_points(t)
         assert set(lps) == {"L1", "L2", "L3", "L4", "L5"}
         for name, r in lps.items():
@@ -431,15 +435,18 @@ def test_earth_fixed_collinear_placement():
         assert np.linalg.norm(np.cross(lps[k], u)) < 1.0   # on the Earth-Moon line
 
 
-def test_earth_fixed_lagrange_distance_invariant_under_rotation():
+def test_earth_fixed_lagrange_geometry_scales_with_moon_distance():
+    # Pulsating frame: as the real Moon's distance d(t) varies (~357k-406k km),
+    # each L-point keeps a fixed ratio |L|/d (the CR3BP geometry, rescaled).
     names = ("L1", "L2", "L3", "L4", "L5")
-    dist = {n: [] for n in names}
+    ratio = {n: [] for n in names}
     for t in (0.0, 3.0e5, 6.0e5, 9.0e5):
+        d = np.linalg.norm(moon_state_at(t).r)
         lps = nb.earth_fixed_lagrange_points(t)
         for n in names:
-            dist[n].append(np.linalg.norm(lps[n]))
+            ratio[n].append(np.linalg.norm(lps[n]) / d)
     for n in names:
-        assert max(dist[n]) - min(dist[n]) < 1.0   # rigid rotation: |L| constant
+        assert max(ratio[n]) - min(ratio[n]) < 1e-9, n
 
 
 # ---------------------------------------------------------------------------

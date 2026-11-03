@@ -20,7 +20,7 @@ On Linux the venv lives at `.venv/bin/`, on Windows at `.venv/Scripts/`.
 
 ```bash
 # Linux
-.venv/bin/python -m pytest tests/ -q                     # full suite (~266 tests)
+.venv/bin/python -m pytest tests/ -q                     # full suite (~400 tests)
 .venv/bin/python -m pytest tests/core -q                 # physics core only (no graphics needed)
 .venv/bin/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/bin/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
@@ -68,7 +68,7 @@ no vessel).
 **Full solar-system N-body** (`core/nbody.py`): the ship is a massless test particle in a
 geocentric non-inertial frame. Gravity comes from:
 - Earth (central, at origin)
-- Moon (circular orbit, evaluated per substep via `moon_state_at`)
+- Moon (real DE440 position via `moon_state_at`, evaluated per substep; circular fallback offline)
 - Sun + 7 planets (third-body perturbations + indirect terms for the non-inertial frame)
 
 **Ephemeris cache** (`refresh_ephemeris_cache`): snapshots all planet geocentric positions from
@@ -180,8 +180,17 @@ don't batch many changes into one late commit. Stage specific files by **explici
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.
 - **Ephemeris cache positions are constant within a frame.** The cached wrappers (`_csun`, etc.)
   ignore their `t_s` argument when the cache is populated — this is by design (planet positions
-  don't change meaningfully over one frame's substeps). The Moon is NOT cached; it uses
-  `moon_state_at()` per substep since it moves significantly at high warp.
+  don't change meaningfully over one frame's substeps). The Moon is NOT frame-frozen: it moves
+  too much at high warp, so `moon_state_at()` is evaluated per substep — from hourly DE440
+  samples, cubic-Hermite interpolated (~1 cm error, ~8 µs/call; a raw Skyfield call is ~35×
+  slower). Offline or outside DE440's 1849–2150 range it falls back to
+  `moon_circular_state_at`, a circle fitted to the real Moon's J2000 plane/phase (i = 20.9° to
+  the **equator** — 5.1° is the inclination to the *ecliptic*; the frame here is ICRF).
+- **The real Moon is eccentric, so Lagrange points pulsate.** `earth_fixed_lagrange_points`
+  balances gravity against the Kepler rate for the *current* separation, `sqrt(μ/d³)` (the
+  elliptic-R3BP pulsating frame), not the constant `OMEGA_EM`. L-point distances scale with
+  d(t); their velocity is `ω_line × r + (ḋ/d)·r`. `OMEGA_EM`/`rotating_frame`/`jacobi_constant`
+  remain the idealized circular-CR3BP analysis model only.
 - **Multi-core work goes through the app's one persistent `ProcessPoolExecutor`** (`render/app.py`
   `_build_process_pool`, `spawn` context, thread-executor fallback). Rules: work sent to it must be
   **module-level + picklable** — the grid fan-out uses top-level `_*_row` functions in

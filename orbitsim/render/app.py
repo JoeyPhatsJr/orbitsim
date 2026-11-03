@@ -21,7 +21,7 @@ from panda3d.core import (
 
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
-from orbitsim.core.moon import MOON_ORBIT, moon_state_at
+from orbitsim.core.moon import moon_state_at
 from orbitsim.core.rendezvous import closest_approach
 from orbitsim.core.attitude import (
     quat_from_axis_angle, quat_multiply, quat_normalize, quat_rotate_vector, nose_direction,
@@ -509,6 +509,7 @@ class OrbitApp(ShowBase):
             self._moon_np.set_scale(7.0)
             self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
             self._moon_orbit_scale = None
+            self._moon_orbit_epoch_s = None  # sim time of the osculating ellipse drawn
             # Moon sphere-of-influence: faint true-scale translucent tinted shell.
             from panda3d.core import TransparencyAttrib
             self._soi_np = make_uv_sphere(1.0, 24, 32)
@@ -706,6 +707,7 @@ class OrbitApp(ShowBase):
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
     PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
+    MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
     TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
     PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
                                       # (sim is untouched): escape climb-out 4.6s -> ~1.7s
@@ -2025,11 +2027,17 @@ class OrbitApp(ShowBase):
         # to_render(p)). Translate-only avoids a tiny node scale (which Panda flags as singular).
         self._orbit_frame.set_pos(cx, cy, cz)  # = to_render(0)
         scale = self.transform.scale_m_per_unit
-        if self._moon_orbit_scale != scale:  # rebuild the fixed Moon ring on zoom
+        # The real Moon's orbit is eccentric and perturbed, so the ring is its *osculating*
+        # ellipse (always passes through the Moon); rebuilt on zoom or every 6 sim-hours.
+        t_now = self.clock.sim_time_s
+        if (self._moon_orbit_scale != scale or self._moon_orbit_epoch_s is None
+                or abs(t_now - self._moon_orbit_epoch_s) > self.MOON_RING_REFRESH_S):
             self._moon_orbit_scale = scale
+            self._moon_orbit_epoch_s = t_now
             if self._moon_orbit_np is not None:
                 self._moon_orbit_np.remove_node()
-            moon_pts = [tuple(p / scale) for p in sample_orbit_points(MOON_ORBIT, n=256)]
+            moon_elements = state_to_elements(moon_state_at(t_now))
+            moon_pts = [tuple(p / scale) for p in sample_orbit_points(moon_elements, n=256)]
             self._moon_orbit_np = build_orbit_node(
                 moon_pts, color=REFERENCE_ORBIT_COLOR, thickness=1.4, fade_minimum=1.0
             )

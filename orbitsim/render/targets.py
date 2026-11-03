@@ -8,7 +8,7 @@ import numpy as np
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.state import StateVector
 from orbitsim.core.constants import MU_EARTH
-from orbitsim.core.nbody import earth_fixed_lagrange_points, OMEGA_EM
+from orbitsim.core.nbody import earth_fixed_lagrange_points
 
 
 class MoonTarget:
@@ -20,9 +20,9 @@ class MoonTarget:
 
 
 class LagrangePointTarget:
-    """An Earth-Moon Lagrange point as a navigation target. It rotates rigidly with the Moon,
-    so it is NOT on a Keplerian orbit; closest-approach prediction is not applicable (the render
-    layer shows a live distance/relative-speed readout instead)."""
+    """An Earth-Moon Lagrange point as a navigation target. It turns and pulsates with the
+    (eccentric) Earth-Moon line, so it is NOT on a Keplerian orbit; closest-approach prediction
+    is not applicable (the render layer shows a live distance/relative-speed readout instead)."""
 
     supports_closest_approach = False
 
@@ -32,12 +32,15 @@ class LagrangePointTarget:
         # (kept distinct so a future display name like "EML4" can map to point id "L4")
 
     def state_at(self, t_s: float) -> StateVector:
-        r = earth_fixed_lagrange_points(t_s)[self.point_id]
+        r = np.asarray(earth_fixed_lagrange_points(t_s)[self.point_id], dtype=np.float64)
         m = moon_state_at(t_s)
-        n_hat = np.cross(m.r, m.v)
-        n_hat = n_hat / np.linalg.norm(n_hat)
-        v = np.cross(OMEGA_EM * n_hat, r)   # rigid-rotation velocity about the Moon's normal
-        return StateVector(r=np.asarray(r, dtype=np.float64), v=v, mu=MU_EARTH, epoch_s=t_s)
+        d2 = float(np.dot(m.r, m.r))
+        # The point keeps a fixed shape relative to the Earth-Moon line, so it moves like
+        # the Moon: rotation at the line's actual rate plus radial pulsation at d'/d.
+        omega = np.cross(m.r, m.v) / d2
+        pulsation = float(np.dot(m.r, m.v)) / d2
+        v = np.cross(omega, r) + pulsation * r
+        return StateVector(r=r, v=v, mu=MU_EARTH, epoch_s=t_s)
 
 
 class PlanetTarget:

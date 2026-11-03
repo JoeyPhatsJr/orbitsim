@@ -10,6 +10,7 @@ from scipy.optimize import brentq
 from orbitsim.core.constants import MU_EARTH, MU_MOON, R_EARTH, R_MOON
 from orbitsim.core.state import StateVector
 from orbitsim.core.moon import moon_state_at
+from orbitsim.core.hermite import hermite_state
 from orbitsim.core.elements import state_to_elements
 
 D_EM = 3.844e8                          # Earth-Moon separation [m]
@@ -348,20 +349,7 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
 
     start = sample(bucket)
     end = sample(bucket + 1)
-    u = (float(t_s) - bucket * step) / step
-    u2 = u * u
-    u3 = u2 * u
-    h00 = 2.0 * u3 - 3.0 * u2 + 1.0
-    h10 = u3 - 2.0 * u2 + u
-    h01 = -2.0 * u3 + 3.0 * u2
-    h11 = u3 - u2
-    r = h00 * start.r + h10 * step * start.v + h01 * end.r + h11 * step * end.v
-    dh00 = (6.0 * u2 - 6.0 * u) / step
-    dh10 = 3.0 * u2 - 4.0 * u + 1.0
-    dh01 = (-6.0 * u2 + 6.0 * u) / step
-    dh11 = 3.0 * u2 - 2.0 * u
-    v = dh00 * start.r + dh10 * start.v + dh01 * end.r + dh11 * end.v
-    return StateVector(r=r, v=v, mu=start.mu, epoch_s=float(t_s))
+    return hermite_state(start, end, bucket * step, step, t_s, mu=start.mu)
 
 
 def _make_cached_state_fn(name, fallback_fn):
@@ -635,31 +623,37 @@ def lagrange_points(t_s):
     return {k: Rinv @ v for k, v in rot.items()}
 
 
-def _earth_fixed_collinear_accel_along(s, u, t_s):
+def _earth_fixed_collinear_accel_along(s, u, t_s, omega_sq):
     """Net rotating-frame acceleration at the point p = s*u (signed distance s along the
     Earth-Moon unit vector u), projected onto u: live gravity (with the indirect term) plus
-    the centrifugal term OMEGA_EM**2 * p about the origin."""
+    the centrifugal term omega_sq * p about the origin."""
     p = s * np.asarray(u, dtype=np.float64)
-    a = earth_moon_accel(p, t_s) + OMEGA_EM**2 * p
+    a = earth_moon_accel(p, t_s) + omega_sq * p
     return float(np.dot(a, u))
 
 
 def earth_fixed_lagrange_points(t_s):
     """Inertial positions of L1..L5 [m] in the live Earth-fixed frame, consistent with
-    earth_moon_accel (indirect term) and the Moon's actual geometry at t_s (e=0 but inclined).
+    earth_moon_accel (indirect term) and the Moon's actual (real, eccentric) geometry at t_s.
 
-    Collinear points solve net_along(s)=0 along the Earth-Moon line; the equilateral points are
-    the Moon position rotated +/-60 deg about the orbit normal."""
+    The Moon's orbit is eccentric, so there is no rigidly rotating frame; the points are
+    defined in the pulsating frame of the elliptic restricted 3-body problem: the CR3BP
+    geometry rescaled to the current separation d, i.e. balance points of gravity against
+    the Kepler rate for that separation, sqrt(mu/d^3). Collinear points solve net_along(s)=0
+    along the Earth-Moon line; the equilateral points are the Moon position rotated +/-60
+    deg about the orbit normal (exact for that rate)."""
     m = moon_state_at(t_s)
     rM = np.asarray(m.r, dtype=np.float64)
     d = np.linalg.norm(rM)
     u = rM / d
     n_hat = np.cross(rM, m.v)
     n_hat = n_hat / np.linalg.norm(n_hat)
+    omega_sq = MU_TOTAL / d**3
     eps = 1e-3 * d
-    s1 = brentq(_earth_fixed_collinear_accel_along, eps, d - eps, args=(u, t_s))           # L1
-    s2 = brentq(_earth_fixed_collinear_accel_along, d + eps, d + 0.4 * d, args=(u, t_s))   # L2
-    s3 = brentq(_earth_fixed_collinear_accel_along, -1.6 * d, -eps, args=(u, t_s))         # L3
+    args = (u, t_s, omega_sq)
+    s1 = brentq(_earth_fixed_collinear_accel_along, eps, d - eps, args=args)           # L1
+    s2 = brentq(_earth_fixed_collinear_accel_along, d + eps, d + 0.4 * d, args=args)   # L2
+    s3 = brentq(_earth_fixed_collinear_accel_along, -1.6 * d, -eps, args=args)         # L3
 
     def _rot(vec, ang):   # Rodrigues rotation of vec by ang about n_hat
         c, sn = np.cos(ang), np.sin(ang)
