@@ -551,3 +551,48 @@ class TestEphemerisCache:
         # leaked JPL cache silently swaps circular planet positions for real
         # ones in every later test (it broke test_near_jupiter_is_jupiter).
         assert nb._ephemeris_cache == {}
+
+
+# ---------------------------------------------------------------------------
+# Ephemeris fallbacks degrade on *expected* ephemeris failures only (kernel
+# missing, date outside DE440 -- both ValueErrors) and let genuine bugs surface,
+# instead of silently swapping real planets for the circular approximations.
+# ---------------------------------------------------------------------------
+from orbitsim.core.ephemeris import EphemerisUnavailableError
+
+
+def _raise(exc):
+    def fn(*args, **kwargs):
+        raise exc
+    return fn
+
+
+def test_refresh_cache_falls_back_when_kernel_unavailable(monkeypatch):
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", _raise(EphemerisUnavailableError("offline")))
+    assert nb.refresh_ephemeris_cache(0.0) is False
+    assert nb._ephemeris_cache == {}
+
+
+def test_refresh_cache_surfaces_programming_errors(monkeypatch):
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", _raise(TypeError("bug")))
+    with pytest.raises(TypeError):
+        nb.refresh_ephemeris_cache(0.0)
+
+
+def test_prediction_ephemeris_falls_back_when_kernel_unavailable(monkeypatch):
+    from orbitsim.core.planets import sun_state_at
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", _raise(EphemerisUnavailableError("offline")))
+    with nb.stable_prediction_ephemeris():
+        got = nb._csun(0.0)
+    np.testing.assert_allclose(got.r, sun_state_at(0.0).r, rtol=1e-12)
+
+
+def test_prediction_ephemeris_surfaces_programming_errors(monkeypatch):
+    monkeypatch.setattr(nb, "_EPHEMERIS_AVAILABLE", True)
+    monkeypatch.setattr(nb, "_ephem_body_state", _raise(TypeError("bug")))
+    with nb.stable_prediction_ephemeris():
+        with pytest.raises(TypeError):
+            nb._csun(0.0)
