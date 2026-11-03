@@ -123,6 +123,11 @@ def predict_elements_after(state: StateVector, node: ManeuverNode) -> KeplerianE
     return state_to_elements(apply_maneuver(state, node))
 
 
+# Mean-anomaly gap treated as "already there". ~1e5× above the noise it absorbs, yet
+# only ~10 µs of flight even at GEO's mean motion — far below anything displayed.
+_APSIS_SNAP_RAD = 1e-9
+
+
 def _time_to_mean_anomaly(state: StateVector, target_M: float) -> float:
     """Seconds until the vessel's mean anomaly next reaches ``target_M`` (bound orbits only)."""
     elem = state_to_elements(state)
@@ -132,6 +137,11 @@ def _time_to_mean_anomaly(state: StateVector, target_M: float) -> float:
     M = eccentric_to_mean_anomaly(E, elem.e)
     n = 2.0 * np.pi / elem.period_s  # mean motion [rad/s]
     dM = (target_M - M) % (2.0 * np.pi)  # forward angle to the target, in [0, 2π)
+    # On the apsis itself, ν round-trip noise (~1e-16 rad, either sign; dM/dν
+    # amplifies it ≤ ~10× at high e) can put M a hair *past* the target, wrapping
+    # dM to ~2π: "one full orbit away". Within that noise, the apsis is now.
+    if 2.0 * np.pi - dM < _APSIS_SNAP_RAD:
+        dM = 0.0
     return dM / n
 
 

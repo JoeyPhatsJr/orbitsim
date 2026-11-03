@@ -184,3 +184,21 @@ def test_timing_invariant_zero_to_period(nu, e):
     T = elem.period_s
     assert 0.0 <= time_to_periapsis(state) < T + 1e-6
     assert 0.0 <= time_to_apoapsis(state) < T + 1e-6
+
+
+def test_time_to_apsis_is_zero_on_the_apsis_for_any_geometry():
+    """Sitting exactly on an apsis means 0 s to it, never a full period.
+
+    Even with atan2 the recovered ν carries ~1e-16 rad of noise of either sign;
+    without a snap, ~5% of geometries wrap "a hair past apoapsis" into "one orbit
+    until apoapsis" and the HUD countdown jumps to T.
+    """
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        kw = dict(a=rng.uniform(6.6e6, 4.0e7), e=rng.uniform(0.001, 0.9),
+                  i=rng.uniform(0.0, np.pi), raan=rng.uniform(0.0, 2 * np.pi),
+                  argp=rng.uniform(0.0, 2 * np.pi), mu=MU_EARTH)
+        peri = elements_to_state(KeplerianElements(nu=0.0, **kw))
+        apo = elements_to_state(KeplerianElements(nu=np.pi, **kw))
+        assert time_to_periapsis(peri) < 1e-3, kw
+        assert time_to_apoapsis(apo) < 1e-3, kw
