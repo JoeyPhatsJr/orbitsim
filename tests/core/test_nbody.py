@@ -452,7 +452,7 @@ class TestEphemerisCache:
     """Tests for the per-frame ephemeris cache in nbody."""
 
     def test_cache_starts_empty(self):
-        assert nb._ephemeris_cache == {} or isinstance(nb._ephemeris_cache, dict)
+        assert nb._ephemeris_cache == {}
 
     def test_refresh_populates_all_bodies(self):
         from orbitsim.core import ephemeris
@@ -538,3 +538,9 @@ class TestEphemerisCache:
             assert nb.ephemeris_available() is True
         finally:
             nb._ephemeris_cache = saved
+
+    def test_cache_does_not_leak_from_earlier_tests(self):
+        # Runs after the tests above that call refresh_ephemeris_cache(). A
+        # leaked JPL cache silently swaps circular planet positions for real
+        # ones in every later test (it broke test_near_jupiter_is_jupiter).
+        assert nb._ephemeris_cache == {}
