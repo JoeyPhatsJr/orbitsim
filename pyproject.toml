@@ -30,6 +30,9 @@ render = [
 [project.scripts]
 orbitsim = "orbitsim.__main__:main"
 
+[tool.setuptools.packages.find]
+include = ["orbitsim*"]
+
 [tool.black]
 line-length = 100
 target-version = ["py39"]
