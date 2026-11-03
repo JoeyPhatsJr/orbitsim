@@ -262,3 +262,50 @@ class TestRoundTrip:
         assert raan_error < 1e-7, f"raan error {raan_error} exceeds 1e-7"
         assert argp_error < 1e-7, f"argp error {argp_error} exceeds 1e-7"
         assert nu_error < 1e-7, f"nu error {nu_error} exceeds 1e-7"
+
+
+def _wrapped_angle_error(a0, a1):
+    """|a0 - a1| on the circle, in [0, π]."""
+    return abs((a0 - a1 + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+class TestAngleConditioning:
+    """Angles must stay accurate where arccos is ill-conditioned (cos = ±1).
+
+    arccos has infinite slope at ±1, so a 1-ulp error in its argument becomes a
+    ~sqrt(eps) ≈ 1.5e-8 rad error in the angle — exactly at periapsis/apoapsis,
+    at Ω or ω of 0/π, and for near-equatorial orbits. That error once made a ship
+    sitting on apoapsis report "one full orbit until apoapsis". atan2 is
+    well-conditioned everywhere, so these should round-trip to ~1e-15.
+    """
+
+    BASE = dict(a=7.0e6, e=0.2, i=0.5, raan=0.3, argp=0.4, nu=1.0)
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("nu", 0.0),                 # periapsis
+            ("nu", np.pi),               # apoapsis
+            ("raan", 0.0),
+            ("raan", np.pi),
+            ("argp", 0.0),
+            ("argp", np.pi),
+            ("i", 1e-7),                 # near-equatorial prograde (not degenerate)
+            ("i", np.pi - 1e-7),         # near-equatorial retrograde
+        ],
+    )
+    def test_angle_recovered_at_arccos_singular_values(self, field, value):
+        elem0 = KeplerianElements(**{**self.BASE, field: value}, mu=MU_EARTH)
+        elem1 = state_to_elements(elements_to_state(elem0))
+        err = _wrapped_angle_error(getattr(elem0, field), getattr(elem1, field))
+        assert err < 1e-11, f"{field}={value}: error {err:.3e} rad"
+
+    @pytest.mark.parametrize("nu", [0.0, np.pi, 1e-300, -0.0])
+    def test_angles_stay_in_canonical_range(self, nu):
+        """atan2 returns (-π, π]; results must still land in [0, 2π) — never 2π itself."""
+        elem = state_to_elements(elements_to_state(
+            KeplerianElements(**{**self.BASE, "nu": nu}, mu=MU_EARTH)))
+        for name in ("raan", "argp", "nu"):
+            ang = getattr(elem, name)
+            assert 0.0 <= ang < 2.0 * np.pi, f"{name}={ang!r} outside [0, 2π)"
+        assert 0.0 <= elem.i <= np.pi

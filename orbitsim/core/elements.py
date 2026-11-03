@@ -82,6 +82,16 @@ class KeplerianElements:
         return self.a * (1.0 - self.e**2)
 
 
+def _wrap_2pi(angle_rad: float) -> float:
+    """Map an atan2 result in (-π, π] onto [0, 2π).
+
+    A tiny negative angle (-1e-17) mod 2π rounds to exactly 2π in float64; fold that
+    back to 0 so the range stays half-open.
+    """
+    wrapped = angle_rad % (2.0 * np.pi)
+    return 0.0 if wrapped >= 2.0 * np.pi else float(wrapped)
+
+
 def state_to_elements(state: StateVector) -> KeplerianElements:
     """Convert state vector to Keplerian elements (Curtis Algorithm 4.1).
 
@@ -115,8 +125,16 @@ def state_to_elements(state: StateVector) -> KeplerianElements:
     h = np.cross(r, v)
     h_mag = np.linalg.norm(h)
 
-    # Inclination i = arccos(h_z / |h|)
-    i = np.arccos(np.clip(h[2] / h_mag, -1.0, 1.0))
+    # Every angle below is atan2(sin, cos), never arccos(cos) + a quadrant flip.
+    # arccos has infinite slope at ±1, so at 0/π (periapsis, apoapsis, Ω or ω of 0/π,
+    # near-equatorial i) a 1-ulp error in cos becomes a ~1.5e-8 rad error in the
+    # angle, and the separate sign test can pick the wrong side of the wrap.
+    # atan2 is well-conditioned everywhere. Signs match Curtis Alg. 4.1's flips:
+    # the in-plane sine is taken along ĥ, i.e. in the direction of motion.
+    h_hat = h / h_mag
+
+    # Inclination i ∈ [0, π]: angle between ĥ and k̂
+    i = np.arctan2(np.hypot(h[0], h[1]), h[2])
 
     # Node line N = k × h
     N = np.cross([0.0, 0.0, 1.0], h)
@@ -127,9 +145,7 @@ def state_to_elements(state: StateVector) -> KeplerianElements:
         # Equatorial orbit: Ω = 0
         raan = 0.0
     else:
-        raan = np.arccos(np.clip(N[0] / N_mag, -1.0, 1.0))
-        if N[1] < 0:
-            raan = 2.0 * np.pi - raan
+        raan = _wrap_2pi(np.arctan2(N[1], N[0]))
 
     # Eccentricity vector: evec = (1/μ) * ((v² − μ/r)*r − r*vr*v)
     evec = (1.0 / mu) * ((v_sq - mu / r_mag) * r - r_mag * vr * v)
@@ -139,33 +155,25 @@ def state_to_elements(state: StateVector) -> KeplerianElements:
     if e < 1e-11:
         # Circular orbit: ω = 0
         argp = 0.0
+    elif N_mag < 1e-11:
+        # Equatorial: longitude of periapsis, measured from the x-axis
+        argp = _wrap_2pi(np.arctan2(evec[1], evec[0]))
     else:
-        if N_mag < 1e-11:
-            # Circular equatorial: measure from x-axis
-            argp = np.arccos(np.clip(evec[0] / e, -1.0, 1.0))
-            if evec[1] < 0:
-                argp = 2.0 * np.pi - argp
-        else:
-            argp = np.arccos(np.clip(np.dot(N, evec) / (N_mag * e), -1.0, 1.0))
-            if evec[2] < 0:
-                argp = 2.0 * np.pi - argp
+        # In-plane angle from N to evec, positive in the direction of motion
+        argp = _wrap_2pi(np.arctan2(np.dot(np.cross(N, evec), h_hat), np.dot(N, evec)))
 
     # True anomaly ν
     if e < 1e-11:
         # Circular orbit: measure ν from node line or x-axis
         if N_mag < 1e-11:
-            # Circular equatorial: measure from x-axis
-            nu = np.arccos(np.clip(r[0] / r_mag, -1.0, 1.0))
-            if r[1] < 0:
-                nu = 2.0 * np.pi - nu
+            # Circular equatorial: true longitude, from the x-axis
+            nu = _wrap_2pi(np.arctan2(r[1], r[0]))
         else:
-            nu = np.arccos(np.clip(np.dot(N, r) / (N_mag * r_mag), -1.0, 1.0))
-            if r[2] < 0:
-                nu = 2.0 * np.pi - nu
+            # Argument of latitude, from the node line
+            nu = _wrap_2pi(np.arctan2(np.dot(np.cross(N, r), h_hat), np.dot(N, r)))
     else:
-        nu = np.arccos(np.clip(np.dot(evec, r) / (e * r_mag), -1.0, 1.0))
-        if vr < 0:
-            nu = 2.0 * np.pi - nu
+        # In-plane angle from evec to r, positive in the direction of motion
+        nu = _wrap_2pi(np.arctan2(np.dot(np.cross(evec, r), h_hat), np.dot(evec, r)))
 
     # Semi-major axis a = 1 / (2/r − v²/μ)
     a = 1.0 / (2.0 / r_mag - v_sq / mu)
