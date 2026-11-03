@@ -277,7 +277,7 @@ _ephemeris_context = threading.local()
 try:
     from orbitsim.core.ephemeris import body_state as _ephem_body_state
     _EPHEMERIS_AVAILABLE = True
-except Exception:
+except ImportError:
     # skyfield itself is missing; keep the attribute defined so callers (and
     # tests) can always reference/patch nbody._ephem_body_state.
     _ephem_body_state = None
@@ -304,7 +304,11 @@ def refresh_ephemeris_cache(t_s: float) -> bool:
             cache[name] = _ephem_body_state(name, t_s, center="EARTH")
         _ephemeris_cache = cache
         return True
-    except Exception:
+    except ValueError:
+        # Expected ephemeris failures are ValueErrors: EphemerisUnavailableError
+        # (kernel missing/offline) and Skyfield's EphemerisRangeError (date outside
+        # DE440's 1849-2150). Anything else is a bug and must not be masked by the
+        # circular fallback.
         _ephemeris_cache = {}
         return False
 
@@ -341,7 +345,7 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
             if _EPHEMERIS_AVAILABLE:
                 try:
                     cache[key] = _ephem_body_state(name, epoch, center="EARTH")
-                except Exception:
+                except ValueError:   # offline / out of DE440 range (see refresh)
                     cache[key] = fallback_fn(epoch)
             else:
                 cache[key] = fallback_fn(epoch)
