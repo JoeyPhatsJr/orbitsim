@@ -136,3 +136,49 @@ def test_intercept_connects_orbits():
     v1, v2 = lambert(rc, target_future.r, tof, MU_EARTH)
     arrived = propagate_kepler(StateVector(r=rc, v=v1, mu=MU_EARTH), tof)
     assert np.linalg.norm(arrived.r - target_future.r) < 1000.0
+
+
+# ---------------------------------------------------------------------------
+# Solver-failure contract: every way izzo2015 can fail surfaces as LambertError
+# (a ValueError), so callers can skip infeasible cells without also swallowing
+# genuine bugs (TypeError, AttributeError, ...).
+# ---------------------------------------------------------------------------
+import pytest
+
+from orbitsim.core import transfers as _transfers
+
+
+def test_lambert_error_is_a_value_error():
+    assert issubclass(_transfers.LambertError, ValueError)
+
+
+def test_lambert_180_degree_geometry_raises_lambert_error():
+    # Exactly-opposed position vectors: the transfer plane is undefined.
+    r1 = np.array([7.0e6, 0.0, 0.0])
+    with pytest.raises(_transfers.LambertError):
+        lambert(r1, -r1, 3000.0, MU_EARTH)
+
+
+def test_lambert_convergence_failure_raises_lambert_error(monkeypatch):
+    def _no_converge(*args, **kwargs):
+        raise RuntimeError("Failed to converge")
+
+    monkeypatch.setattr(_transfers, "izzo2015", _no_converge)
+    with pytest.raises(_transfers.LambertError):
+        lambert(np.array([7.0e6, 0.0, 0.0]), np.array([0.0, 8.0e6, 0.0]), 3000.0, MU_EARTH)
+
+
+def test_lambert_non_finite_solution_raises_lambert_error(monkeypatch):
+    nan3 = np.full(3, np.nan)
+    monkeypatch.setattr(_transfers, "izzo2015", lambda *a, **k: (nan3, nan3))
+    with pytest.raises(_transfers.LambertError):
+        lambert(np.array([7.0e6, 0.0, 0.0]), np.array([0.0, 8.0e6, 0.0]), 3000.0, MU_EARTH)
+
+
+def test_lambert_does_not_mask_programming_errors(monkeypatch):
+    def _bug(*args, **kwargs):
+        raise TypeError("unexpected keyword")
+
+    monkeypatch.setattr(_transfers, "izzo2015", _bug)
+    with pytest.raises(TypeError):
+        lambert(np.array([7.0e6, 0.0, 0.0]), np.array([0.0, 8.0e6, 0.0]), 3000.0, MU_EARTH)

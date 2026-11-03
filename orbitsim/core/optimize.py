@@ -16,7 +16,7 @@ from scipy.optimize import minimize, brentq
 
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
-from orbitsim.core.transfers import lambert, intercept, TransferSolution
+from orbitsim.core.transfers import lambert, intercept, LambertError, TransferSolution
 from orbitsim.core.maneuvers import ManeuverNode
 from orbitsim.core.constants import MU_EARTH, MU_SUN
 
@@ -49,7 +49,7 @@ def _porkchop_row(state_dep, state_arr, mu, tof_grid_s, t_dep):
         arr_state = propagate_kepler(state_arr, float(t_dep + tof))
         try:
             v1, v2 = lambert(dep_state.r, arr_state.r, float(tof), mu)
-        except Exception:
+        except LambertError:
             continue
         row[j] = np.linalg.norm(v1 - dep_state.v) + np.linalg.norm(arr_state.v - v2)
     return row
@@ -119,7 +119,7 @@ def optimize_transfer(
         arr_state = propagate_kepler(state_arr, t_dep + tof)
         try:
             v1, v2 = lambert(dep_state.r, arr_state.r, tof, mu)
-        except Exception:
+        except LambertError:
             return 1e12
         return float(np.linalg.norm(v1 - dep_state.v) + np.linalg.norm(arr_state.v - v2))
 
@@ -145,7 +145,7 @@ def _interplanetary_porkchop_row(dep_name, arr_name, tof_grid_s, t_dep):
         arr_planet = body_state(arr_name, float(t_dep + tof), center="SUN")
         try:
             v1, v2 = lambert(dep_planet.r, arr_planet.r, float(tof), MU_SUN)
-        except Exception:
+        except LambertError:
             continue
         row[j] = np.linalg.norm(v1 - dep_planet.v) + np.linalg.norm(v2 - arr_planet.v)
     return row
@@ -219,7 +219,7 @@ def porkchop_callable(
             arr = target_state_fn(t0 + float(t_dep) + float(tof))
             try:
                 v1, v2 = lambert(dep.r, arr.r, float(tof), mu)
-            except Exception:
+            except LambertError:
                 continue
             dv_dep = np.linalg.norm(v1 - dep.v)
             dv_arr = np.linalg.norm(arr.v - v2)
@@ -237,7 +237,7 @@ def _dep_cost(ship_state, target_state_now, mu, t_dep, tof):
     arr = propagate_kepler(target_state_now, float(t_dep + tof))
     try:
         v1, _ = lambert(dep.r, arr.r, float(tof), mu)
-    except Exception:
+    except LambertError:
         return np.inf, None, None
     return float(np.linalg.norm(v1 - dep.v)), dep, v1
 
@@ -389,7 +389,7 @@ def _departure_row(ship_state, target_state_fn, sun_state_fn, tof_grid_s, t_dep)
         target_helio_r = target.r - sun_arr.r   # geocentric -> heliocentric
         try:
             transfer_v, _ = lambert(earth_helio_r, target_helio_r, float(tof), MU_SUN)
-        except Exception:
+        except LambertError:
             continue
         v_inf = transfer_v - earth_helio_v
         cost = float(np.linalg.norm(v_inf))
@@ -481,7 +481,7 @@ def _dep_cost_callable(ship_state, target_state_fn, mu, t_dep, tof):
     arr = target_state_fn(ship_state.epoch_s + float(t_dep) + float(tof))
     try:
         v1, _ = lambert(dep.r, arr.r, float(tof), mu)
-    except Exception:
+    except LambertError:
         return np.inf, None, None
     return float(np.linalg.norm(v1 - dep.v)), dep, v1
 

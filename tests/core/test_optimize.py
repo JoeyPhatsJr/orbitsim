@@ -419,3 +419,54 @@ def test_interplanetary_departure_by_name_executor_matches_serial():
     assert node_serial.dv_prograde_mps == node_par.dv_prograde_mps
     assert node_serial.dv_normal_mps == node_par.dv_normal_mps
     assert node_serial.dv_radial_mps == node_par.dv_radial_mps
+
+
+# ---------------------------------------------------------------------------
+# Grid/search cells skip *infeasible* Lambert cells (LambertError) but must not
+# swallow genuine bugs: a TypeError inside a cell has to surface, not silently
+# become an inf/1e12 cell that quietly corrupts the porkchop.
+# ---------------------------------------------------------------------------
+import pytest
+
+from orbitsim.core import optimize as _opt
+from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.transfers import LambertError
+from orbitsim.core.planets import sun_state_at, mars_state_at
+
+_DEP = _circular(7000e3)
+_ARR = _circular(14000e3)
+_TOFS = np.array([2000.0, 4000.0])
+_DEPS = np.array([0.0, 100.0])
+
+
+def _arr_fn(t):
+    return propagate_kepler(_ARR, t)
+
+
+_CELL_CALLERS = {
+    "porkchop_row": lambda: _opt._porkchop_row(_DEP, _ARR, MU_EARTH, _TOFS, 0.0),
+    "porkchop_callable": lambda: _opt.porkchop_callable(_DEP, _arr_fn, MU_EARTH, _DEPS, _TOFS)[0],
+    "dep_cost": lambda: _opt._dep_cost(_DEP, _ARR, MU_EARTH, 0.0, 3000.0)[0],
+    "dep_cost_callable": lambda: _opt._dep_cost_callable(_DEP, _arr_fn, MU_EARTH, 0.0, 3000.0)[0],
+    "departure_row": lambda: _opt._departure_row(_DEP, mars_state_at, sun_state_at, _TOFS, 0.0)[0],
+}
+
+
+@pytest.mark.parametrize("caller", sorted(_CELL_CALLERS))
+def test_cells_skip_infeasible_lambert(monkeypatch, caller):
+    def _infeasible(*args, **kwargs):
+        raise LambertError("no feasible solution")
+
+    monkeypatch.setattr(_opt, "lambert", _infeasible)
+    result = np.asarray(_CELL_CALLERS[caller](), dtype=np.float64)
+    assert np.all(np.isinf(result))
+
+
+@pytest.mark.parametrize("caller", sorted(_CELL_CALLERS))
+def test_cells_surface_programming_errors(monkeypatch, caller):
+    def _bug(*args, **kwargs):
+        raise TypeError("bug, not an infeasible transfer")
+
+    monkeypatch.setattr(_opt, "lambert", _bug)
+    with pytest.raises(TypeError):
+        _CELL_CALLERS[caller]()

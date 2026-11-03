@@ -8,6 +8,16 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
 
 
+class LambertError(ValueError):
+    """Lambert's problem has no usable solution for this geometry/time of flight.
+
+    Raised for every way the solver can fail (degenerate 0/180 deg geometry, no
+    feasible multi-rev solution, non-convergence, non-finite result). Grid and
+    search callers catch exactly this to skip an infeasible cell, so unrelated
+    exceptions (genuine bugs) still propagate.
+    """
+
+
 @dataclass(frozen=True)
 class TransferSolution:
     """A transfer described by its burns, total cost, and flight time.
@@ -151,8 +161,17 @@ def lambert(
         raise ValueError(f"tof_s must be positive, got {tof_s}")
     r1 = np.asarray(r1_m, dtype=np.float64)
     r2 = np.asarray(r2_m, dtype=np.float64)
-    v1, v2 = izzo2015(mu, r1, r2, tof_s, M=revs, prograde=prograde)
-    return np.asarray(v1, dtype=np.float64), np.asarray(v2, dtype=np.float64)
+    try:
+        v1, v2 = izzo2015(mu, r1, r2, tof_s, M=revs, prograde=prograde)
+    except (ValueError, RuntimeError) as exc:
+        # lamberthub signals bad geometry / infeasibility with ValueError and
+        # non-convergence with RuntimeError; anything else is a real bug.
+        raise LambertError(str(exc)) from exc
+    v1 = np.asarray(v1, dtype=np.float64)
+    v2 = np.asarray(v2, dtype=np.float64)
+    if not (np.all(np.isfinite(v1)) and np.all(np.isfinite(v2))):
+        raise LambertError("Lambert solver returned a non-finite velocity")
+    return v1, v2
 
 
 def intercept(
