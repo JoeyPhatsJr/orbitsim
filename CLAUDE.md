@@ -200,6 +200,13 @@ don't batch many changes into one late commit. Stage specific files by **explici
   `core.propagate.KeplerOrbit` (elements + rotation derived once; `state_at` is bit-identical to
   `propagate_kepler`); `_norm3`/`_cross3` in the substep hot loop (bit-identical to numpy's, minus
   the n-d overhead). Prefer bit-identical speedups — then the physics goldens stay exact.
+- **Stutter that isn't in the render thread's profile is GIL contention.** A background
+  Python thread doing CPU work steals the render thread's time in 5 ms slices, so a cheap
+  call (0.06 ms) shows up as 50–200 ms. Sample `sys._current_frames()` from a side thread
+  to see who holds it. The big one was lamberthub's numba JIT: plain `@jit` with no cache,
+  so every process re-compiled the Lambert solver on first use (~2.4 s per process) on the
+  first intercept/porkchop plan. `core/jit_cache.py` turns numba's disk cache on at
+  `core/transfers.py` import. That call must stay *before* the first Lambert call.
 - **Trajectory lines are the main per-frame cost — throttle, don't naively cache.** Fix is a
   **real-time throttle** (`PREVIEW_THROTTLE_S`, 5 Hz), not a cache. Keep the live line cheap
   (1 orbit, 256 pts); the preview draws 2 orbits at 512 pts.

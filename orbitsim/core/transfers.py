@@ -4,8 +4,12 @@ import numpy as np
 
 from orbitsim.core.maneuvers import ManeuverNode
 from lamberthub import izzo2015
+from orbitsim.core.jit_cache import enable_jit_disk_cache, package_modules
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
+
+# Must run before the first Lambert call compiles anything (see core/jit_cache.py).
+enable_jit_disk_cache(package_modules("lamberthub"))
 
 
 class LambertError(ValueError):
