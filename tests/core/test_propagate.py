@@ -178,3 +178,71 @@ class TestJ2Perturbation:
         np.testing.assert_allclose(
             actual_raan, expected_raan_change, rtol=0.15,
         )
+
+
+# ---------------------------------------------------------------------------
+# KeplerOrbit: one state's orbit set up once (elements, mean motion, rotation).
+# state_at() must reproduce the original propagate_kepler algorithm bit for bit;
+# positions() is the vectorized fast path for scans (closest approach).
+# ---------------------------------------------------------------------------
+from orbitsim.core.elements import KeplerianElements as _KE, elements_to_state as _e2s, state_to_elements as _s2e
+from orbitsim.core.kepler import (
+    true_to_eccentric_anomaly as _t2E, eccentric_to_mean_anomaly as _E2M, mean_to_true_anomaly as _M2t,
+    true_to_hyperbolic_anomaly as _t2F, hyperbolic_to_mean_anomaly as _F2M,
+    mean_to_true_anomaly_hyperbolic as _M2tH,
+)
+
+
+def _oracle_propagate(state, dt):
+    """The original propagate_kepler algorithm, spelled out (independent reference)."""
+    el = _s2e(state)
+    if el.e < 1.0:
+        M0 = _E2M(_t2E(el.nu, el.e), el.e)
+        n = np.sqrt(el.mu / abs(el.a) ** 3)
+        nu = _M2t((M0 + n * dt) % (2.0 * np.pi), el.e)
+    else:
+        M0 = _F2M(_t2F(el.nu, el.e), el.e)
+        n = np.sqrt(el.mu / abs(el.a) ** 3)
+        nu = _M2tH(M0 + n * dt, el.e)
+    return _e2s(_KE(a=el.a, e=el.e, i=el.i, raan=el.raan, argp=el.argp, nu=nu,
+                    mu=el.mu, epoch_s=el.epoch_s + dt))
+
+
+_ORBIT_STATES = {
+    "leo": StateVector(r=np.array([7.0e6, 1.0e5, 2.0e5]), v=np.array([-50.0, 7.5e3, 900.0]), mu=MU_EARTH, epoch_s=12.0),
+    "eccentric": StateVector(r=np.array([6.8e6, 0.0, 0.0]), v=np.array([0.0, 9.6e3, 2.5e3]), mu=MU_EARTH, epoch_s=0.0),
+    "hyperbolic": StateVector(r=np.array([7.0e6, 0.0, 1.0e6]), v=np.array([0.0, 1.25e4, 1.0e3]), mu=MU_EARTH, epoch_s=5.0),
+}
+_DTS = [0.0, 1.0, 137.5, 2500.0, 86400.0 * 3.3]
+
+
+@pytest.mark.parametrize("name", sorted(_ORBIT_STATES))
+def test_kepler_orbit_state_at_is_bit_identical_to_original(name):
+    from orbitsim.core.propagate import KeplerOrbit
+    state = _ORBIT_STATES[name]
+    orbit = KeplerOrbit(state)
+    for dt in _DTS:
+        got, want = orbit.state_at(dt), _oracle_propagate(state, dt)
+        np.testing.assert_array_equal(got.r, want.r)
+        np.testing.assert_array_equal(got.v, want.v)
+        assert got.epoch_s == want.epoch_s and got.mu == want.mu
+
+
+@pytest.mark.parametrize("name", sorted(_ORBIT_STATES))
+def test_propagate_kepler_still_matches_original(name):
+    state = _ORBIT_STATES[name]
+    for dt in _DTS:
+        got, want = propagate_kepler(state, dt), _oracle_propagate(state, dt)
+        np.testing.assert_array_equal(got.r, want.r)
+        np.testing.assert_array_equal(got.v, want.v)
+
+
+@pytest.mark.parametrize("name", sorted(_ORBIT_STATES))
+def test_kepler_orbit_positions_match_state_at(name):
+    from orbitsim.core.propagate import KeplerOrbit
+    orbit = KeplerOrbit(_ORBIT_STATES[name])
+    dts = np.linspace(0.0, 86400.0 * 2.0, 721)
+    pos = orbit.positions(dts)
+    assert pos.shape == (721, 3) and pos.dtype == np.float64
+    want = np.array([orbit.state_at(float(t)).r for t in dts])
+    np.testing.assert_allclose(pos, want, rtol=1e-12, atol=1e-6)

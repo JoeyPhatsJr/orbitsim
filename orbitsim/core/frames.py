@@ -56,6 +56,14 @@ def rotation_matrix_1(theta: float) -> np.ndarray:
     )
 
 
+def perifocal_rotation(raan: float, inclination: float, argp: float) -> np.ndarray:
+    """Perifocal → inertial rotation Q = R3(Ω) @ R1(i) @ R3(ω) (active rotation), shape (3, 3).
+
+    Constant for an orbit, so propagating many epochs of one orbit can build it once.
+    """
+    return rotation_matrix_3(raan) @ rotation_matrix_1(inclination) @ rotation_matrix_3(argp)
+
+
 def perifocal_to_inertial(
     r_pqw: np.ndarray,
     v_pqw: np.ndarray,
@@ -89,8 +97,7 @@ def perifocal_to_inertial(
     -----
     Rotation matrix: Q = R3(Ω) @ R1(i) @ R3(ω) (active rotation)
     """
-    # Q = R3(Ω) @ R1(i) @ R3(ω) (active rotation, perifocal → inertial)
-    Q = rotation_matrix_3(raan) @ rotation_matrix_1(inclination) @ rotation_matrix_3(argp)
+    Q = perifocal_rotation(raan, inclination, argp)
 
     r_inertial = Q @ r_pqw
     v_inertial = Q @ v_pqw
