@@ -13,6 +13,7 @@ matter which module ends up constructing executors or reading the wall clock):
 import concurrent.futures
 import json
 import os
+import pickle
 import re
 import sys
 import tempfile
@@ -50,6 +51,24 @@ class InlineExecutor:
         return False
 
 
+class InlineProcessExecutor(InlineExecutor):
+    """Inline stand-in for ProcessPoolExecutor that keeps the real pool's pickling rule.
+
+    A real process pool pickles every job; a bound OrbitApp/controller method would drag
+    Panda3D across that pickle. Pickling here (result discarded) makes such a submission
+    fail every golden scenario that reaches it. Only our own objects are pickled.
+    """
+
+    def submit(self, fn, *args, **kwargs):
+        pickle.dumps((fn, args, kwargs))
+        return super().submit(fn, *args, **kwargs)
+
+    def map(self, fn, *iterables, timeout=None, chunksize=1):
+        items = list(zip(*iterables))
+        pickle.dumps((fn, items))
+        return iter([fn(*args) for args in items])
+
+
 class FakeMonotonic:
     """Stand-in for time.monotonic: advances only when the harness steps a frame."""
 
@@ -73,7 +92,7 @@ def install_determinism(win_size: str = "960 600") -> None:
         return
     _installed = True
     concurrent.futures.ThreadPoolExecutor = InlineExecutor
-    concurrent.futures.ProcessPoolExecutor = InlineExecutor
+    concurrent.futures.ProcessPoolExecutor = InlineProcessExecutor
     time.monotonic = _fake_monotonic
     from panda3d.core import ClockObject, loadPrcFileData
     loadPrcFileData("", f"window-type offscreen\nwin-size {win_size}\naudio-library-name null")

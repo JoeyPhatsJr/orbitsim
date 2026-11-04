@@ -27,7 +27,7 @@ class FlightInput:
         self.app.accept("period", self.app.warp_controls._warp_up_guarded)  # ">" key (blocked while thrusting)
         self.app.accept("comma", self.app.clock.warp_down)  # "<" key
         self.app.accept("0", self.app.warp_controls._max_warp_guarded)
-        self.app.accept("p", self.app._toggle_porkchop)  # porkchop delta-V plot
+        self.app.accept("p", self.app.porkchop_modal._toggle_porkchop)  # porkchop delta-V plot
         self.app.accept("f1", self.app.keybind_overlay.toggle)  # keybind help overlay
         self.app.accept("escape", self._handle_escape)
 
@@ -37,7 +37,7 @@ class FlightInput:
                 self.app.accept(k, self._set_key, [k, True])
                 self.app.accept(f"{k}-up", self._set_key, [k, False])
             self.app._mouse1_down_px = None
-            self.app.accept("mouse1", self.app._on_mouse1_down)   # tap (no drag) picks a target
+            self.app.accept("mouse1", self.app.targeting._on_mouse1_down)   # tap (no drag) picks a target
             self.app.accept("z", self._throttle_full)
             self.app.accept("x", self._throttle_cut)
             self.app.accept("u", self.app._toggle_unlimited_dv)
@@ -47,7 +47,7 @@ class FlightInput:
                         "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET", "MANEUVER"]
             for i, mode in enumerate(sas_keys, start=1):
                 self.app.accept(str(i), self._set_sas, [mode])
-            self.app.accept("i", self.app._plan_intercept)
+            self.app.accept("i", self.app.targeting._plan_intercept)
             self.app.accept("f5", self.app.quicksave._quicksave)
             self.app.accept("f9", self.app.quicksave._quickload)
 

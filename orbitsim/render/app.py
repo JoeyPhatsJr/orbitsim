@@ -13,16 +13,12 @@ from panda3d.core import (
     Filename,
     Vec4,
     TextNode,
-    CardMaker,
 )
 
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.core.moon import moon_state_at
-from orbitsim.core.rendezvous import closest_approach
 from orbitsim.core.state import StateVector
-from orbitsim.core.optimize import porkchop
-from orbitsim.render.porkchop import render_porkchop_png
 from orbitsim.render.trajectory_sampling import (
     sample_trajectory, sample_preview,
     trajectory_horizon_s as _trajectory_horizon_s,
@@ -32,10 +28,14 @@ from orbitsim.render.geometry import make_uv_sphere, make_ring
 from orbitsim.core.nbody import MOON_SOI_M
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.planets import (
-    EARTH_SOI_M, MERCURY_SOI_M, VENUS_SOI_M, MARS_SOI_M,
-    JUPITER_SOI_M, SATURN_SOI_M, URANUS_SOI_M, NEPTUNE_SOI_M,
-    A_MERCURY, A_VENUS, A_EARTH, A_MARS,
-    A_JUPITER, A_SATURN, A_URANUS, A_NEPTUNE,
+    EARTH_SOI_M,
+    MERCURY_SOI_M,
+    VENUS_SOI_M,
+    MARS_SOI_M,
+    JUPITER_SOI_M,
+    SATURN_SOI_M,
+    URANUS_SOI_M,
+    NEPTUNE_SOI_M,
 )
 from orbitsim.render.world_markers import distance_fade
 from orbitsim.render.orbit_lines import (
@@ -52,7 +52,7 @@ from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SO
 from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.render.skybox import build_starfield
 from orbitsim.render.process_pool import build_process_pool
-from orbitsim.render.hud.format import fmt_dist, fmt_countdown
+from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.trajectory_helpers import (
     coast_chunks, localize_polyline, maneuver_preview_key,
 )
@@ -66,6 +66,10 @@ from orbitsim.render.controllers.warp_controls import WarpControls
 from orbitsim.render.controllers.flight_input import FlightInput
 
 from orbitsim.render.controllers.quicksave import Quicksave
+
+from orbitsim.render.controllers.targeting import Targeting
+
+from orbitsim.render.controllers.porkchop_modal import PorkchopModal
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -89,6 +93,8 @@ class OrbitApp(ShowBase):
         self.operation = OperationController()
         from orbitsim.render.ui.performance import FrameMeter
         self.frame_meter = FrameMeter()
+        self.porkchop_modal = PorkchopModal(self)
+        self.targeting = Targeting(self)
         self.quicksave = Quicksave(self)
         self.flight_input = FlightInput(self)
         self.warp_controls = WarpControls(self)
@@ -145,7 +151,7 @@ class OrbitApp(ShowBase):
             self.solar_view._build_planets()
         else:
             self._build_sandbox_controls()
-            self._build_targeting()
+            self.targeting._build_targeting()
             self._build_apsis_and_encounter_markers()
             self._build_moon_and_lagrange()
             self._build_sandbox_planets()
@@ -296,51 +302,6 @@ class OrbitApp(ShowBase):
             ("MANEUVER", self._toggle_maneuver_drawer),
         ])
         self._maneuver_frame.hide()  # clean-flight default; MNV dock button opens it
-
-    def _build_targeting(self):
-        """Targetable bodies, CA labels, target label."""
-        # Targetable bodies. Click a marker to select.
-        from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
-        from orbitsim.core.nbody import (
-            _csun, _cmercury, _cvenus, _cmars,
-            _cjupiter, _csaturn, _curanus, _cneptune,
-        )
-        self._targets = [MoonTarget()] + [
-            LagrangePointTarget(n, n) for n in ("L1", "L2", "L3", "L4", "L5")
-        ] + [
-            PlanetTarget("Sun", _csun, "SUN"),
-            PlanetTarget("Mercury", _cmercury, "MERCURY"),
-            PlanetTarget("Venus", _cvenus, "VENUS"),
-            PlanetTarget("Mars", _cmars, "MARS"),
-            PlanetTarget("Jupiter", _cjupiter, "JUPITER"),
-            PlanetTarget("Saturn", _csaturn, "SATURN"),
-            PlanetTarget("Uranus", _curanus, "URANUS"),
-            PlanetTarget("Neptune", _cneptune, "NEPTUNE"),
-        ]
-        self._target = None     # current Target or None
-        self._ca_recompute_t = 0.0
-        self._ca = None
-        self._ca_traj = None
-        self._ca_abs_epoch = 0.0
-        self._ca_marker_ship = None
-        self._ca_marker_moon = None
-        self._ca_label_positions = {"ship": None, "target": None}
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
-        self._ca_labels = {
-            "ship": build_world_label(
-                self.render, "CA: SHIP", color=(1.0, 0.55, 0.25, 1.0), scale=11.0
-            ),
-            "target": build_world_label(
-                self.render, "CA: TARGET", color=(1.0, 0.82, 0.30, 1.0), scale=11.0
-            ),
-        }
-        for label in self._ca_labels.values():
-            label.hide()
-        self._target_label = build_world_label(
-            self.render, "TARGET", color=(1.0, 0.35, 0.95, 1.0), scale=12.0
-        )
-        self._target_label.hide()
-        self._target_label_position = None
 
     def _build_apsis_and_encounter_markers(self):
         """PE/AP markers + encounter periapsis cues."""
@@ -653,8 +614,8 @@ class OrbitApp(ShowBase):
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
-            ("Clear Tgt", self._clear_target),
-            ("Intercept", self._plan_intercept),
+            ("Clear Tgt", self.targeting._clear_target),
+            ("Intercept", self.targeting._plan_intercept),
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
@@ -727,75 +688,11 @@ class OrbitApp(ShowBase):
         """Spring all jog thumbs back to center so the value stops changing on release.
 
         Also attempt a target pick: a left-click that didn't drag is a tap on a body."""
-        self._try_pick_target()
+        self.targeting._try_pick_target()
         for slider in self._jog.values():
             slider["value"] = 0.0
         if hasattr(self, "_node_time_jog"):
             self._node_time_jog["value"] = 0.0
-
-    def _on_mouse1_down(self):
-        mw = self.mouseWatcherNode
-        self._mouse1_down_px = self._mouse_px() if (mw and mw.has_mouse()) else None
-
-    def _mouse_px(self):
-        """Current mouse position in pixels, or None if off-window."""
-        mw = self.mouseWatcherNode
-        if mw is None or not mw.has_mouse():
-            return None
-        w, h = self.win.get_x_size(), self.win.get_y_size()
-        return ((mw.get_mouse_x() * 0.5 + 0.5) * w, (mw.get_mouse_y() * 0.5 + 0.5) * h)
-
-    def _marker_px(self, world_r):
-        """Project an inertial position to pixels, or None if behind the camera/off-lens."""
-        from panda3d.core import Point2
-        rp = self.transform.to_render(world_r)
-        p = self.cam.get_relative_point(self.render, rp)
-        proj = Point2()
-        if not self.camLens.project(p, proj):
-            return None
-        w, h = self.win.get_x_size(), self.win.get_y_size()
-        return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
-
-    def _try_pick_target(self):
-        """On a left-click tap, select a body or coast to a future trajectory point."""
-        from orbitsim.render.picking import nearest_future_point, nearest_marker
-        down = getattr(self, "_mouse1_down_px", None)
-        self._mouse1_down_px = None
-        if down is None:
-            return
-        click = self._mouse_px()
-        if click is None:
-            return
-        if abs(click[0] - down[0]) > 6.0 or abs(click[1] - down[1]) > 6.0:
-            return  # was a drag, not a tap
-        now = self.clock.sim_time_s
-        proj = [self._marker_px(t.state_at(now).r) for t in self._targets]
-        idxs = [i for i, p in enumerate(proj) if p is not None]
-        hit = nearest_marker(click, [proj[i] for i in idxs], tol_px=22.0)
-        if hit is not None:
-            self._clear_target()   # tear down any prior target's CA markers before switching
-            self._target = self._targets[idxs[hit]]
-            return
-
-        points = self._traj_world_cache[0] if self._traj_world_cache else None
-        epochs = self._traj_epoch_cache[0] if self._traj_epoch_cache else None
-        if points is None or epochs is None or self.world.any_thrusting():
-            return
-        trajectory_px = [self._marker_px(point) for point in points]
-        point_idx = nearest_future_point(click, trajectory_px, epochs, now, tol_px=16.0)
-        if point_idx is None:
-            return
-        duration_s = float(epochs[point_idx] - now)
-        vessel = self.world.vessels[0]
-        self.clock.warp = 1.0
-        self._operation_rollback = (
-            vessel, vessel.state, vessel.orientation.copy(), self.clock.sim_time_s
-        )
-        self.operation.start(
-            f"Coasting {fmt_countdown(duration_s)} along trajectory",
-            self._trajectory_coast_operation(duration_s),
-        )
-        self.operation_overlay.update(self.operation.status)
 
     def _current_node(self) -> ManeuverNode:
         """Build the node from the current dV values at the scheduled epoch (or now if none)."""
@@ -846,139 +743,6 @@ class OrbitApp(ShowBase):
         if hasattr(self, "_node_time_text"):
             self._node_time_text.setText("T+0s")
 
-    def _plan_intercept(self):
-        """Auto-plan an intercept/departure of the current target.
-
-        The Lambert grid search is the expensive part, so it runs on the planning
-        thread (fanning cells across the process pool) instead of freezing the
-        render thread. This method only builds the grids and submits the job;
-        ``_poll_planning`` applies the resulting node when it completes.
-        """
-        import numpy as np
-        from orbitsim.core.elements import state_to_elements
-        from orbitsim.render.targets import PlanetTarget
-        if self._target is None:
-            self._flash_message("No target selected")
-            return
-        if self._planning_future is not None and not self._planning_future.done():
-            self._flash_message("Planning already in progress...")
-            return
-        v0 = self.world.vessels[0]
-        now = self.clock.sim_time_s
-        grid_executor = self._grid_executor
-        if isinstance(self._target, PlanetTarget):
-            from orbitsim.core.optimize import interplanetary_departure_node_by_name
-            from orbitsim.core.planets import A_EARTH, _N_EARTH
-            from orbitsim.core.constants import MU_SUN
-            target_a = {
-                "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
-                "Jupiter": A_JUPITER, "Saturn": A_SATURN,
-                "Uranus": A_URANUS, "Neptune": A_NEPTUNE,
-            }.get(self._target.name)
-            if target_a is None:
-                self._flash_message(f"Can't plan a transfer to {self._target.name}")
-                return
-            sun_target = next((t for t in self._targets
-                               if isinstance(t, PlanetTarget) and t.name == "Sun"), None)
-            if sun_target is None:
-                self._flash_message("No intercept found")
-                return
-            # Sweep a full synodic period for departure; time-of-flight brackets the
-            # Hohmann transfer time to Earth's neighbour.
-            w_target = np.sqrt(MU_SUN / target_a**3)
-            synodic = 2.0 * np.pi / abs(_N_EARTH - w_target)
-            dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 24)
-            hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
-            tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 32)
-            ship_state = v0.state
-            target_name = self._target._ephemeris_name
-            sun_name = sun_target._ephemeris_name
-
-            def job():
-                return interplanetary_departure_node_by_name(
-                    ship_state, target_name, sun_name, dep, tof, executor=grid_executor)
-        else:
-            from orbitsim.core.optimize import intercept_node
-            try:
-                period = state_to_elements(v0.state).period_s
-            except ValueError:
-                self._flash_message("Unbound orbit — can't plan intercept")
-                return
-            dep = np.linspace(0.0, period, 24)
-            tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
-            ship_state = v0.state
-            target_now = self._target.state_at(now)
-            mu = self.world.central.mu
-
-            def job():
-                return intercept_node(
-                    ship_state, target_now, mu, dep, tof, executor=grid_executor)
-
-        self._flash_message(f"Planning {self._target.name} intercept...")
-        self._planning_future = self._planning_executor.submit(job)
-
-    def _apply_planned_node(self, node) -> None:
-        """Install a freshly-planned maneuver node into the editor (render thread only)."""
-        self._node_epoch_s = node.epoch_s
-        self._auto_execute_node = False
-        self._dv["pro"] = node.dv_prograde_mps
-        self._dv["nrm"] = node.dv_normal_mps
-        self._dv["rad"] = node.dv_radial_mps
-        for axis in ("pro", "nrm", "rad"):
-            self._dv_value_text[axis].setText(f"{self._dv[axis]:+.0f}")
-        self._refresh_readout()
-        self._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
-
-    def _poll_planning(self) -> None:
-        """Apply an intercept plan once its background job finishes."""
-        future = getattr(self, "_planning_future", None)
-        if future is None or not future.done():
-            return
-        self._planning_future = None
-        try:
-            node = future.result()
-        except ValueError:
-            self._flash_message("No intercept found")
-            return
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            self._flash_message("Planning failed")
-            return
-        self._apply_planned_node(node)
-
-    def _clear_target(self):
-        """Deselect the current target; remove its closest-approach markers + readout."""
-        self._target = None
-        for attr in ("_ca_marker_ship", "_ca_marker_moon"):
-            np_ = getattr(self, attr, None)
-            if np_ is not None:
-                np_.remove_node()
-                setattr(self, attr, None)
-        self._ca = None
-        self._target_label_position = None
-        self._target_label.hide()
-        for key, label in self._ca_labels.items():
-            self._ca_label_positions[key] = None
-            label.hide()
-        self._target_line = ""
-        self._sync_maneuver_hud()
-
-    def _ca_marker(self, attr, color):
-        """Lazily create/reuse a closest-approach marker NodePath."""
-        np_ = getattr(self, attr, None)
-        if np_ is None:
-            np_ = make_uv_sphere(1.0, 8, 12)
-            np_.reparent_to(self.render)
-            np_.set_color(*color)
-            np_.set_light_off()
-            np_.set_scale(5.0)
-            from panda3d.core import TransparencyAttrib
-            np_.set_transparency(TransparencyAttrib.M_alpha)
-            np_.set_depth_write(False)
-            setattr(self, attr, np_)
-        return np_
-
     def _place_apsis_markers(self) -> None:
         """Place cached Pe/Ap cues in the current floating-origin frame."""
         for name in ("PE", "AP"):
@@ -1019,7 +783,7 @@ class OrbitApp(ShowBase):
         ):
             add(label, marker, self._lagrange_positions.get(name), 20)
 
-        points_px = [self._marker_px(item[2]) for item in candidates]
+        points_px = [self.targeting._marker_px(item[2]) for item in candidates]
         visible = declutter_indices(
             points_px, [item[3] for item in candidates], min_separation_px=52.0
         )
@@ -1230,141 +994,6 @@ class OrbitApp(ShowBase):
         """Transient on-screen user feedback (toast)."""
         self.hud.flash(text)
 
-    def _toggle_porkchop(self) -> None:
-        """Build a porkchop plot and overlay it. Uses the current target if one
-        is selected (planet or Moon); otherwise falls back to a generic higher-orbit
-        demo. Pressing 'p' again removes it.
-        """
-        existing = getattr(self, "_porkchop_card", None)
-        if existing is not None:
-            existing.remove_node()
-            self._porkchop_card = None
-            modal = getattr(self, "_porkchop_modal", None)
-            if modal is not None:
-                modal.destroy()
-                self._porkchop_modal = None
-            return
-
-        if self._porkchop_future is not None and not self._porkchop_future.done():
-            self._flash_message("Computing porkchop...")
-            return
-
-        mu = self.world.central.mu
-        ship = self.world.vessels[0].state
-        grid_executor = self._grid_executor
-
-        from orbitsim.render.targets import PlanetTarget
-        if self._target is not None and isinstance(self._target, PlanetTarget):
-            from orbitsim.core.optimize import interplanetary_porkchop
-            from orbitsim.core.constants import MU_SUN
-            from orbitsim.core.planets import A_EARTH
-            target_a = {
-                "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
-                "Jupiter": A_JUPITER, "Saturn": A_SATURN,
-                "Uranus": A_URANUS, "Neptune": A_NEPTUNE,
-            }.get(self._target.name)
-            if target_a is not None:
-                from orbitsim.core.planets import _N_EARTH
-                w_target = np.sqrt(MU_SUN / target_a**3)
-                synodic = 2.0 * np.pi / abs(_N_EARTH - w_target)
-                hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
-            else:
-                synodic = 365.25 * 86400.0
-                hohmann_tof = 180.0 * 86400.0
-            dep_times = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 36)
-            tof_grid = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 36)
-            label = self._target.name
-            target_name = self._target.name.upper()
-            abs_dep = ship.epoch_s + dep_times
-
-            def job():
-                dv, _ = interplanetary_porkchop(
-                    "EARTH", target_name, abs_dep, tof_grid, executor=grid_executor)
-                return dv
-        elif self._target is not None:
-            now = self.clock.sim_time_s
-            from orbitsim.core.elements import state_to_elements
-            try:
-                period = state_to_elements(ship).period_s
-            except ValueError:
-                self._flash_message("Unbound orbit — can't compute porkchop")
-                return
-            dep_times = np.linspace(0.0, period, 24)
-            tof_grid = np.linspace(3.0e3, 14.0 * 86400.0, 36)
-            target_state = self._target.state_at(now)
-            label = self._target.name
-
-            def job():
-                dv, _ = porkchop(
-                    ship, target_state, dep_times, tof_grid, mu, executor=grid_executor)
-                return dv
-        else:
-            r1 = ship.r_mag
-            r2 = r1 * 2.0
-            v2 = np.sqrt(mu / r2)
-            arr = StateVector(r=np.array([r2, 0.0, 0.0]), v=np.array([0.0, v2, 0.0]), mu=mu)
-            w1 = np.sqrt(mu / r1**3)
-            w2 = np.sqrt(mu / r2**3)
-            t_syn = 2.0 * np.pi / abs(w1 - w2)
-            t_hohmann = np.pi * np.sqrt(((r1 + r2) / 2.0) ** 3 / mu)
-            dep_times = np.linspace(0.0, t_syn, 24)
-            tof_grid = np.linspace(0.4 * t_hohmann, 1.6 * t_hohmann, 36)
-            label = "transfer"
-
-            def job():
-                dv, _ = porkchop(ship, arr, dep_times, tof_grid, mu, executor=grid_executor)
-                return dv
-
-        self._flash_message(f"Computing {label} porkchop...")
-        self._porkchop_render = (dep_times, tof_grid)
-        self._porkchop_future = self._planning_executor.submit(job)
-
-    def _poll_porkchop(self) -> None:
-        """Draw the porkchop overlay once its background grid finishes."""
-        future = getattr(self, "_porkchop_future", None)
-        if future is None or not future.done():
-            return
-        self._porkchop_future = None
-        try:
-            dv = future.result()
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            self._flash_message("Porkchop failed")
-            self._porkchop_render = None
-            return
-        dep_times, tof_grid = self._porkchop_render
-        self._porkchop_render = None
-        self._build_porkchop_modal(dv, dep_times, tof_grid)
-
-    def _build_porkchop_modal(self, dv, dep_times, tof_grid) -> None:
-        """Render the porkchop PNG and build its overlay modal (render thread only)."""
-        png = render_porkchop_png(dv, dep_times, tof_grid, "porkchop.png")
-        from orbitsim.render.ui.theme import THEME, button_options
-        self._porkchop_modal = DirectFrame(
-            frameColor=THEME.panel_alt,
-            frameSize=(-0.92, 0.92, -0.72, 0.72),
-            parent=self.aspect2d,
-        )
-        OnscreenText(
-            text="TRANSFER WINDOW ANALYSIS", pos=(0, 0.64), scale=0.052,
-            fg=THEME.cyan, parent=self._porkchop_modal,
-        )
-        tex = self.loader.load_texture(png)
-        cm = CardMaker("porkchop")
-        cm.set_frame(-0.78, 0.78, -0.48, 0.50)
-        card = self._porkchop_modal.attach_new_node(cm.generate())
-        card.set_texture(tex)
-        self._porkchop_card = card
-        DirectButton(
-            text="CREATE MANEUVER", scale=0.048, pos=(0.38, 0, -0.61),
-            command=self._plan_intercept, parent=self._porkchop_modal, **button_options(),
-        )
-        DirectButton(
-            text="CLOSE", scale=0.048, pos=(-0.38, 0, -0.61),
-            command=self._toggle_porkchop, parent=self._porkchop_modal, **button_options(),
-        )
-
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
         preview_key = maneuver_preview_key(node, self._node_epoch_s)
@@ -1548,8 +1177,8 @@ class OrbitApp(ShowBase):
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
-        self._poll_planning()
-        self._poll_porkchop()
+        self.targeting._poll_planning()
+        self.porkchop_modal._poll_porkchop()
 
         target_pos, maneuver_dir = self._frame_flight(real_dt)
 
@@ -1563,10 +1192,10 @@ class OrbitApp(ShowBase):
         self._frame_ship_view()
         node = self._frame_maneuver_node()
         self._frame_moon()
-        self._frame_target_label()
+        self.targeting._frame_target_label()
         self._frame_lagrange()
         self._frame_planets(scale)
-        self._frame_closest_approach(node)
+        self.targeting._frame_closest_approach(node)
 
         self.flight_input._apply_mouse_orbit()
         self._update_starfield()
@@ -1817,18 +1446,6 @@ class OrbitApp(ShowBase):
         self._soi_np.set_alpha_scale(fade)
         self._soi_np.show()
 
-    def _frame_target_label(self):
-        """Billboard label on the selected target."""
-        if self._target is not None:
-            target_now = self._target.state_at(self.clock.sim_time_s).r
-            self._target_label_position = np.asarray(target_now).copy()
-            tx, ty, tz = self.transform.to_render(target_now)
-            self._target_label.node().set_text(f"TARGET: {self._target.name.upper()}")
-            self._target_label.set_pos(tx, ty, tz + 9.0)
-        else:
-            self._target_label_position = None
-            self._target_label.hide()
-
     def _frame_lagrange(self):
         """Lagrange-point markers (bucketed recompute)."""
         # Lagrange points (rotate with the Moon). Each recompute runs three
@@ -1964,78 +1581,6 @@ class OrbitApp(ShowBase):
                 orbit_np = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
                 orbit_np.reparent_to(self._sun_orbit_frame)
                 self._planet_orbit_nps[oname] = orbit_np
-
-    def _frame_closest_approach(self, node):
-        """Closest-approach markers + target readout."""
-        v0 = self.world.vessels[0]
-        # Closest approach to the current target (throttled recompute). Both the ship
-        # trajectory and the target are referenced to the same base epoch (the node epoch
-        # when a burn is planned, else now) so they are compared at matching absolute times;
-        # the absolute CA epoch is cached so the markers hold steady between recomputes (warp).
-        if self._target is not None and not self._target.supports_closest_approach:
-            # Lagrange-point target: live distance + relative speed, no closest-approach
-            # prediction (an L-point is not Keplerian — you fly to it and null relative velocity).
-            self._ca = None
-            for key, label in self._ca_labels.items():
-                self._ca_label_positions[key] = None
-                label.hide()
-            L = self._target.state_at(self.clock.sim_time_s)
-            dist = float(np.linalg.norm(v0.state.r - L.r))
-            relsp = float(np.linalg.norm(v0.state.v - L.v))
-            self._target_line = (
-                f"Target: {self._target.name}   dist {fmt_dist(dist)}"
-                f"   rel {relsp:,.0f} m/s"
-            )
-            self._sync_maneuver_hud()
-        elif self._target is not None:
-            import time as _time
-            now_real = _time.monotonic()
-            if self._ca is None or now_real - self._ca_recompute_t > 0.5:
-                self._ca_recompute_t = now_real
-                if self._node_epoch_s is not None and node.magnitude_mps > 0.0:
-                    base_epoch = self._node_epoch_s
-                    traj = apply_maneuver(v0.state, node)
-                else:
-                    base_epoch = self.clock.sim_time_s
-                    traj = v0.state
-                try:
-                    period = state_to_elements(traj).period_s
-                except ValueError:
-                    period = 14.0 * 86400.0
-                window = min(period, 14.0 * 86400.0)
-                # CA stays Keplerian. The target is the on-rails Moon — propagating it under
-                # earth_moon_accel is singular (it sits at its own gravity source) — and a
-                # per-sample N-body re-integration over a multi-day window is O(samples x window),
-                # which would freeze the loop. The live N-body trajectory line already shows the
-                # true perturbed path; this readout is an approximate planning aid, consistent
-                # with the (also Keplerian) intercept/porkchop seeds.
-                self._ca = closest_approach(
-                    traj, self._target.state_at(base_epoch), window_s=window, coarse_samples=720)
-                self._ca_traj = traj
-                self._ca_abs_epoch = base_epoch + self._ca.t_ca_s
-            ca = self._ca
-            from orbitsim.core.propagate import propagate_kepler
-            ship_at = propagate_kepler(self._ca_traj, ca.t_ca_s).r
-            tgt_at = self._target.state_at(self._ca_abs_epoch).r
-            self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
-                *self.transform.to_render(ship_at))
-            self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
-                *self.transform.to_render(tgt_at))
-            self._ca_label_positions["ship"] = np.asarray(ship_at).copy()
-            self._ca_label_positions["target"] = np.asarray(tgt_at).copy()
-            for key, world_pos in self._ca_label_positions.items():
-                rx, ry, rz = self.transform.to_render(world_pos)
-                label = self._ca_labels[key]
-                label.node().set_text(
-                    "CA: SHIP" if key == "ship" else f"CA: {self._target.name.upper()}"
-                )
-                label.set_pos(rx, ry, rz + 8.0)
-            countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
-            self._target_line = (
-                f"Target: {self._target.name}   CA T-{fmt_countdown(countdown)}"
-                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
-            )
-            self._sync_maneuver_hud()
 
     def _frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""
