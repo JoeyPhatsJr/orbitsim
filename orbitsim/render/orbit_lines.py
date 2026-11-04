@@ -1,7 +1,8 @@
 """Sample an orbit into a polyline and (Task 8) build a Panda3D LineSegs node."""
 import numpy as np
 
-from orbitsim.core.elements import KeplerianElements, elements_to_state
+from orbitsim.core.elements import KeplerianElements, elements_to_state  # noqa: F401 (tests patch it)
+from orbitsim.core.frames import rotation_matrix_1, rotation_matrix_3
 
 
 TRAJECTORY_COLOR = (0.20, 0.78, 1.0, 1.0)
@@ -77,13 +78,20 @@ def sample_orbit_points(elements: KeplerianElements, n: int = 256) -> np.ndarray
         limit = 0.99 * nu_max
         nus = np.linspace(-limit, limit, n)
 
-    pts = np.empty((n, 3), dtype=np.float64)
-    for idx, nu in enumerate(nus):
-        sampled = KeplerianElements(
-            a=elements.a, e=elements.e, i=elements.i, raan=elements.raan,
-            argp=elements.argp, nu=float(nu), mu=elements.mu, epoch_s=elements.epoch_s,
-        )
-        pts[idx] = elements_to_state(sampled).r
+    # One vectorized pass (Curtis Alg. 4.2 position, as in elements_to_state): perifocal
+    # radius r = p / (1 + e cos nu), rotated by Q = R3(raan) R1(i) R3(argp). Building a
+    # StateVector per point cost ~45 ms/frame while zooming (9 lines x 256 points).
+    p = elements.semi_latus_rectum
+    if not (np.isfinite(p) and p > 0.0):
+        # e.g. zero angular momentum (purely radial / zero relative velocity)
+        raise ValueError(f"degenerate orbit: semi-latus rectum must be positive, got {p}")
+    radius = p / (1.0 + e * np.cos(nus))
+    r_pqw = np.stack([radius * np.cos(nus), radius * np.sin(nus), np.zeros_like(nus)], axis=1)
+    q = (rotation_matrix_3(elements.raan) @ rotation_matrix_1(elements.i)
+         @ rotation_matrix_3(elements.argp))
+    pts = np.ascontiguousarray(r_pqw @ q.T, dtype=np.float64)
+    if not np.all(np.isfinite(pts)):
+        raise ValueError("orbit sampling produced non-finite positions")
     return pts
 
 

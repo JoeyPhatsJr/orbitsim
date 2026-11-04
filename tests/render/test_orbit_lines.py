@@ -124,3 +124,57 @@ def test_relative_orbit_points_degenerate_state_falls_back_to_circle():
     pts = sample_relative_orbit_points(body, center, MU_SUN, n=32)
     assert pts.shape == (32, 3)
     assert np.allclose(np.linalg.norm(pts, axis=1), 1.5e11, rtol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Vectorized sampling: same points as converting each true anomaly separately,
+# without one elements_to_state call per point (it rebuilt 9 orbit lines x 256
+# points every frame of a zoom: ~45 ms/frame).
+# ---------------------------------------------------------------------------
+import pytest
+
+from orbitsim.core.elements import KeplerianElements, elements_to_state
+from orbitsim.render import orbit_lines as _ol
+
+
+def _reference_points(el, nus):
+    out = []
+    for nu in nus:
+        k = KeplerianElements(a=el.a, e=el.e, i=el.i, raan=el.raan, argp=el.argp,
+                              nu=float(nu), mu=el.mu, epoch_s=el.epoch_s)
+        out.append(elements_to_state(k).r)
+    return np.array(out)
+
+
+_CASES = [
+    KeplerianElements(a=7.0e6, e=0.0, i=0.0, raan=0.0, argp=0.0, nu=0.0, mu=3.986e14),
+    KeplerianElements(a=2.4e7, e=0.73, i=0.9, raan=2.1, argp=4.0, nu=1.0, mu=3.986e14),
+    KeplerianElements(a=2.279e11, e=0.0934, i=0.0323, raan=0.865, argp=5.0, nu=3.0, mu=1.327e20),
+    KeplerianElements(a=-1.2e7, e=1.8, i=0.4, raan=5.5, argp=0.3, nu=0.2, mu=3.986e14),
+]
+
+
+@pytest.mark.parametrize("el", _CASES, ids=["circular", "eccentric-inclined", "mars-like", "hyperbola"])
+def test_sample_orbit_points_matches_per_point_conversion(el):
+    n = 64
+    if el.e < 1.0:
+        nus = np.linspace(0.0, 2.0 * np.pi, n)
+    else:
+        limit = 0.99 * np.arccos(-1.0 / el.e)
+        nus = np.linspace(-limit, limit, n)
+    got = _ol.sample_orbit_points(el, n=n)
+    assert got.shape == (n, 3) and got.dtype == np.float64
+    np.testing.assert_allclose(got, _reference_points(el, nus), rtol=1e-12, atol=1e-6)
+
+
+def test_sample_orbit_points_does_not_convert_point_by_point(monkeypatch):
+    calls = []
+    real = _ol.elements_to_state
+
+    def counting(el):
+        calls.append(1)
+        return real(el)
+
+    monkeypatch.setattr(_ol, "elements_to_state", counting)
+    _ol.sample_orbit_points(_CASES[1], n=256)
+    assert len(calls) <= 1
