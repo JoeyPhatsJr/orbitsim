@@ -155,8 +155,16 @@ def snapshot(app) -> dict:
         for np_ in app.aspect2d.find_all_matches("**/+TextNode")
         if np_.node().get_text().strip()
     )
+    # Billboard labels in the 3D scene (TARGET, CA, L1-L5, planets, encounter cues, node dV)
+    # with their visibility: pins world-space placement logic the HUD text never shows.
+    world_labels = sorted(
+        [np_.node().get_text(), bool(np_.is_hidden())]
+        for np_ in app.render.find_all_matches("**/+TextNode")
+        if np_.node().get_text().strip()
+    )
     return {
         "sim_time_s": float(app.clock.sim_time_s),
+        "world_labels": world_labels,
         "warp": float(app.clock.warp),
         "vessel": vessel,
         "target": hooks.current_target_name(app),

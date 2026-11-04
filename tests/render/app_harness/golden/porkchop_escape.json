@@ -145,5 +145,79 @@
    1118.5566849429965
   ]
  },
- "warp": 100.0
+ "warp": 100.0,
+ "world_labels": [
+  [
+   "AP",
+   false
+  ],
+  [
+   "CA: MOON",
+   true
+  ],
+  [
+   "CA: SHIP",
+   false
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "L1",
+   true
+  ],
+  [
+   "L2",
+   true
+  ],
+  [
+   "L3",
+   true
+  ],
+  [
+   "L4",
+   true
+  ],
+  [
+   "L5",
+   true
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "PE",
+   false
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "TARGET: MOON",
+   true
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ]
+ ]
 }

@@ -150,5 +150,87 @@
    1104.2601080003778
   ]
  },
- "warp": 100.0
+ "warp": 100.0,
+ "world_labels": [
+  [
+   "AP",
+   false
+  ],
+  [
+   "CA: MOON",
+   true
+  ],
+  [
+   "CA: SHIP",
+   true
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "L1",
+   true
+  ],
+  [
+   "L2",
+   true
+  ],
+  [
+   "L3",
+   true
+  ],
+  [
+   "L4",
+   true
+  ],
+  [
+   "L5",
+   true
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Moon Pe 4,319 km  T-12d 13h",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "PE",
+   true
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "TARGET: MOON",
+   true
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ],
+  [
+   "dV 3,130 m/s  T-57:16",
+   false
+  ]
+ ]
 }

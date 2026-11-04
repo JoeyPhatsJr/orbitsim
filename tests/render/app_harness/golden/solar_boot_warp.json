@@ -35,5 +35,43 @@
   "T+ 11,090.6 DAYS     WARP  x1,000,000"
  ],
  "vessel": null,
- "warp": 1000000.0
+ "warp": 1000000.0,
+ "world_labels": [
+  [
+   "Earth",
+   false
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ]
+ ]
 }
