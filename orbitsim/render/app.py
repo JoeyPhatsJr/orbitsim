@@ -140,6 +140,10 @@ class OrbitApp(ShowBase):
         self._preview_estimate_np = None       # faint two-body line while editing
         self._preview_estimate_points = None
         self._preview_estimate_scale = None
+        self._preview_estimate_start = None    # post-burn state the estimate was built from
+        self._preview_exact_start = None       # post-burn state the drawn exact line used
+        self._preview_inflight_start = None    # post-burn state of the job in flight
+        self._preview_submit_t = 0.0           # real time of the last exact submit
         if not self.solar_system:
             from concurrent.futures import ThreadPoolExecutor
             # One persistent process pool does all heavy CPU work: the planning grid

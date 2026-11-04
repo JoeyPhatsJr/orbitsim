@@ -43,3 +43,37 @@ def test_no_resubmit_when_exact_is_current():
 
 def test_no_submit_while_a_job_is_in_flight():
     assert not should_submit_exact(K2, K1, K1, last_change_t=0.0, now=99.0, settle_s=0.25)
+
+
+# The exact preview must follow the ship, not just the burn: a burn-now node's start
+# moves with the vessel, and a manual burn / quickload changes a scheduled node's start.
+from orbitsim.render.trajectory_helpers import (  # noqa: E402
+    PREVIEW_DRIFT_TOL_M, PREVIEW_DRIFT_TOL_MPS, preview_start_drifted, should_refresh_exact,
+)
+
+S0 = StateVector(r=np.array([7.0e6, 0.0, 0.0]), v=np.array([0.0, 7.5e3, 0.0]), mu=MU_EARTH)
+
+
+def test_start_not_drifted_within_tolerance():
+    near = StateVector(r=S0.r + [0.5 * PREVIEW_DRIFT_TOL_M, 0, 0],
+                       v=S0.v + [0, 0.5 * PREVIEW_DRIFT_TOL_MPS, 0], mu=MU_EARTH)
+    assert not preview_start_drifted(S0, near)
+
+
+def test_start_drifted_by_position_or_velocity():
+    moved = StateVector(r=S0.r + [10_000.0, 0, 0], v=S0.v, mu=MU_EARTH)    # ship moved on
+    kicked = StateVector(r=S0.r, v=S0.v + [0, 5.0, 0], mu=MU_EARTH)       # manual burn
+    assert preview_start_drifted(S0, moved) and preview_start_drifted(S0, kicked)
+
+
+def test_start_drifted_when_nothing_drawn_yet():
+    assert preview_start_drifted(None, S0)
+
+
+def test_refresh_only_for_the_drawn_burn_when_idle_and_paced():
+    k = (100.0, 0.0, 0.0, None)
+    assert should_refresh_exact(k, k, None, drifted=True, now=1.0, last_submit_t=0.7, refresh_s=0.2)
+    assert not should_refresh_exact(k, k, None, drifted=False, now=1.0, last_submit_t=0.0, refresh_s=0.2)
+    assert not should_refresh_exact(k, k, None, drifted=True, now=1.0, last_submit_t=0.9, refresh_s=0.2)
+    assert not should_refresh_exact(k, k, k, drifted=True, now=1.0, last_submit_t=0.0, refresh_s=0.2)
+    assert not should_refresh_exact(k, None, None, drifted=True, now=1.0, last_submit_t=0.0, refresh_s=0.2)

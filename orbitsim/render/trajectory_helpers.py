@@ -54,3 +54,29 @@ def should_submit_exact(current_key, exact_key, inflight_key, last_change_t, now
     if current_key == exact_key or inflight_key is not None:
         return False
     return now - last_change_t >= settle_s
+
+
+# How far the burn's start state may move from the one the drawn exact preview was
+# computed from before it is recomputed. Physical, not pixels: a 10 km departure error can
+# move a Moon flyby by thousands of km. A burn-now node's start moves with the ship.
+PREVIEW_DRIFT_TOL_M = 1_000.0
+PREVIEW_DRIFT_TOL_MPS = 0.1
+
+
+def preview_start_drifted(drawn_start, current_start) -> bool:
+    """Whether the burn would now start from a state too far from the drawn preview's."""
+    if drawn_start is None:
+        return True
+    return (float(np.linalg.norm(current_start.r - drawn_start.r)) > PREVIEW_DRIFT_TOL_M
+            or float(np.linalg.norm(current_start.v - drawn_start.v)) > PREVIEW_DRIFT_TOL_MPS)
+
+
+def should_refresh_exact(current_key, exact_key, inflight_key, drifted, now, last_submit_t,
+                         refresh_s):
+    """Whether to recompute the exact preview for the burn that is already drawn.
+
+    Only for the drawn burn (edits go through should_submit_exact), when its start has
+    drifted, nothing is in flight, and at most every ``refresh_s`` real seconds.
+    """
+    return (current_key == exact_key and inflight_key is None and drifted
+            and now - last_submit_t >= refresh_s)

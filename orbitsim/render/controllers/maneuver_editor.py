@@ -11,7 +11,8 @@ from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.line_style import ESTIMATE_STYLE, PLAN_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
-    kepler_estimate_points, localize_polyline, maneuver_preview_key, should_submit_exact,
+    kepler_estimate_points, localize_polyline, maneuver_preview_key, preview_start_drifted,
+    should_refresh_exact, should_submit_exact,
 )
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
@@ -28,6 +29,7 @@ class ManeuverEditor:
     NODE_JOG_CURVE = 4.0
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     PREVIEW_SETTLE_S = 0.25       # burn must be still this long before the exact preview runs
+    PREVIEW_REFRESH_S = 0.5       # min real-seconds between drift refreshes of the same burn
 
     def __init__(self, app) -> None:
         self.app = app
@@ -360,6 +362,7 @@ class ManeuverEditor:
                 app._preview_points = points
                 app._preview_encounters = encounters
                 app._preview_exact_key = completed_key
+                app._preview_exact_start = app._preview_inflight_start
                 self._draw_preview_exact()
                 self._remove_preview_estimate()
 
@@ -371,18 +374,24 @@ class ManeuverEditor:
             self._remove_preview_exact()
             self._remove_preview_estimate()
             app._preview_exact_key = None
+            app._preview_exact_start = None
             app._preview_last_key = None
             return
 
+        # Where the burn would start right now (cheap two-body): a burn-now node's start
+        # moves with the ship; a manual burn or quickload moves a scheduled node's.
+        post_burn = apply_maneuver(vessel.state, node)
         if preview_key != app._preview_last_key:
             app._preview_last_key = preview_key
             app._preview_key_changed_t = now_real
             if preview_key != app._preview_exact_key:
                 self._remove_preview_exact()      # stale: it shows a different burn
                 app._preview_exact_key = None
-                app._preview_estimate_points = kepler_estimate_points(
-                    apply_maneuver(vessel.state, node))
-                self._draw_preview_estimate()
+                app._preview_exact_start = None
+                self._set_preview_estimate(post_burn)
+        elif (app._preview_estimate_np is not None
+              and preview_start_drifted(app._preview_estimate_start, post_burn)):
+            self._set_preview_estimate(post_burn)
 
         scale = app.transform.scale_m_per_unit
         if app._preview_np is not None and app._preview_built_scale != scale:
@@ -395,14 +404,28 @@ class ManeuverEditor:
         # A job whose burn was cleared mid-flight still occupies the worker: count it.
         inflight_key = (None if app._preview_future is None
                         else (app._preview_future_key or ("cancelled",)))
-        if should_submit_exact(preview_key, app._preview_exact_key, inflight_key,
-                               app._preview_key_changed_t, now_real, self.PREVIEW_SETTLE_S):
-            post_burn = apply_maneuver(vessel.state, node)
+        settled = should_submit_exact(preview_key, app._preview_exact_key, inflight_key,
+                                      app._preview_key_changed_t, now_real,
+                                      self.PREVIEW_SETTLE_S)
+        # The drawn burn's start moved without an edit: recompute, keeping the line shown.
+        refresh = should_refresh_exact(
+            preview_key, app._preview_exact_key, inflight_key,
+            preview_start_drifted(app._preview_exact_start, post_burn),
+            now_real, app._preview_submit_t, self.PREVIEW_REFRESH_S)
+        if settled or refresh:
             app._preview_future_key = preview_key
+            app._preview_inflight_start = post_burn
+            app._preview_submit_t = now_real
             app._preview_future = app._compute_executor.submit(
                 sample_preview, post_burn,
                 app.world.solar_system, app.PREDICTION_MIN_SUBSTEP_S,
             )
+
+    def _set_preview_estimate(self, post_burn) -> None:
+        """Recompute and redraw the two-body estimate from this post-burn state."""
+        self.app._preview_estimate_start = post_burn
+        self.app._preview_estimate_points = kepler_estimate_points(post_burn)
+        self._draw_preview_estimate()
 
     def _draw_preview_exact(self) -> None:
         """(Re)build the exact preview line + encounter patches from cached points."""
