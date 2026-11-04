@@ -112,6 +112,16 @@ def solar_boot_warp(h):
     h.step(30)
 
 
+def solar_porkchop_key(h):
+    # Regression: 'p' is bound in both modes, but the porkchop state only exists in
+    # the sandbox, so pressing it in the solar viewer raised AttributeError
+    # ('_porkchop_future') out of run().
+    h.press("OPEN SOLAR VIEWER")
+    h.step(10)
+    h.send("p")
+    h.step(10)
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -123,4 +133,5 @@ SCENARIOS = {
     "quicksave_roundtrip": ("sandbox", quicksave_roundtrip),
     "zoom_with_target_node": ("sandbox", zoom_with_target_node),
     "solar_boot_warp": ("solar", solar_boot_warp),
+    "solar_porkchop_key": ("solar", solar_porkchop_key),
 }

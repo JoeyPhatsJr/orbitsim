@@ -30,6 +30,8 @@ class PorkchopModal:
         is selected (planet or Moon); otherwise falls back to a generic higher-orbit
         demo. Pressing 'p' again removes it.
         """
+        if self.app.solar_system:
+            return  # transfer planning needs a vessel; the solar viewer has none
         existing = getattr(self.app, "_porkchop_card", None)
         if existing is not None:
             existing.remove_node()
