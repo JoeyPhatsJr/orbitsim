@@ -1,5 +1,4 @@
 """Panda3D ShowBase bootstrap and per-frame loop."""
-import os
 from contextlib import nullcontext
 
 import numpy as np
@@ -58,96 +57,13 @@ from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SO
 from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
+from orbitsim.render.process_pool import build_process_pool
+from orbitsim.render.hud.format import fmt_dist, fmt_countdown
+from orbitsim.render.trajectory_helpers import (
+    coast_chunks, localize_polyline, maneuver_preview_key,
+)
 
 _global_clock = ClockObject.get_global_clock()
-
-
-def _fmt_dist(meters: float) -> str:
-    AU = 1.496e11
-    if meters >= 0.01 * AU:
-        return f"{meters / AU:.2f} AU"
-    km = meters / 1000.0
-    if km >= 1e6:
-        return f"{km / 1e6:.2f} M km"
-    return f"{km:,.0f} km"
-
-
-def _fmt_countdown(seconds: float) -> str:
-    t = int(seconds)
-    if t >= 86400:
-        d, rem = divmod(t, 86400)
-        h = rem // 3600
-        return f"{d}d {h:02d}h"
-    if t >= 3600:
-        h, rem = divmod(t, 3600)
-        m = rem // 60
-        return f"{h}h {m:02d}m"
-    m, s = divmod(t, 60)
-    return f"{m:02d}:{s:02d}"
-
-
-def _maneuver_preview_key(node, scheduled_epoch_s):
-    """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
-    return (
-        node.dv_prograde_mps,
-        node.dv_normal_mps,
-        node.dv_radial_mps,
-        scheduled_epoch_s,
-    )
-
-
-def _pool_warmup():
-    """Trivial picklable task used to prove a spawned worker actually starts."""
-    return True
-
-
-def _build_process_pool():
-    """Create a spawn-based ``ProcessPoolExecutor`` and confirm a worker starts.
-
-    All heavy CPU work (the planning grid search and the flight-time trajectory
-    sampling) is submitted here so it runs across cores instead of GIL-serialising
-    on one Python thread. Uses the ``spawn`` context explicitly so a worker never
-    inherits the parent's OpenGL/Panda3D state (a fork-after-GL hazard on Linux).
-
-    Returns the pool, or ``None`` if the environment cannot spawn workers (spawn
-    blocked, no picklable entry point, sandboxed CI) — the caller then falls back
-    to threads. Never raises: honours the project's degrade-don't-crash rule.
-    """
-    import multiprocessing
-    from concurrent.futures import ProcessPoolExecutor
-
-    pool = None
-    try:
-        workers = max(1, min((os.cpu_count() or 2) - 1, 16))
-        ctx = multiprocessing.get_context("spawn")
-        pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
-        # Warm one worker now so a spawn failure surfaces deterministically here
-        # (clean fallback) rather than on the first preview, and the first real
-        # sample doesn't pay the whole cold-start cost.
-        pool.submit(_pool_warmup).result(timeout=30)
-        return pool
-    except Exception:
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
-        return None
-
-
-def _coast_chunks(duration_s: float, max_chunk_s: float = 86400.0) -> list[float]:
-    """Split a teleport coast into bounded positive steps that land exactly on its end."""
-    if duration_s <= 0.0:
-        return []
-    count = max(1, int(np.ceil(duration_s / max_chunk_s)))
-    chunk = duration_s / count
-    return [chunk] * count
-
-
-def _localize_polyline(points):
-    """Return (local points, origin) with float64 subtraction before rendering."""
-    pts = np.asarray(points, dtype=np.float64)
-    if pts.ndim != 2 or pts.shape[1] != 3 or len(pts) == 0:
-        raise ValueError("polyline points must have shape (n, 3) with n > 0")
-    origin = pts[0].copy()
-    return pts - origin, origin
 
 
 class OrbitApp(ShowBase):
@@ -388,7 +304,7 @@ class OrbitApp(ShowBase):
             # sampling (so the live line and the maneuver preview run in separate
             # processes instead of GIL-serialising against each other and the render
             # thread). Falls back to threads where spawning workers isn't possible.
-            self._pool = _build_process_pool()
+            self._pool = build_process_pool()
             # The planning search always runs on a 1-worker *thread* so it never blocks
             # the render thread; inside that thread it fans grid cells across the pool.
             self._planning_executor = ThreadPoolExecutor(
@@ -943,7 +859,7 @@ class OrbitApp(ShowBase):
             vessel, vessel.state, vessel.orientation.copy(), self.clock.sim_time_s
         )
         self.operation.start(
-            f"Coasting {_fmt_countdown(duration_s)} along trajectory",
+            f"Coasting {fmt_countdown(duration_s)} along trajectory",
             self._trajectory_coast_operation(duration_s),
         )
         self.operation_overlay.update(self.operation.status)
@@ -1221,7 +1137,7 @@ class OrbitApp(ShowBase):
                     from direct.gui import DirectGuiGlobals as DGG
                     self._exec_btn["state"] = DGG.NORMAL
                     self._action_status.setText(
-                        f"NODE T-{_fmt_countdown(ttn)}  /  {node.magnitude_mps:,.0f} m/s"
+                        f"NODE T-{fmt_countdown(ttn)}  /  {node.magnitude_mps:,.0f} m/s"
                     )
                 else:
                     from direct.gui import DirectGuiGlobals as DGG
@@ -1336,7 +1252,7 @@ class OrbitApp(ShowBase):
         """Frame-budgeted coast generator; one ephemeris-aware day per rendered frame."""
         from orbitsim.core.nbody import refresh_ephemeris_cache
 
-        chunks = _coast_chunks(duration_s)
+        chunks = coast_chunks(duration_s)
         total = len(chunks)
         for index, dt_s in enumerate(chunks):
             refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
@@ -1350,7 +1266,7 @@ class OrbitApp(ShowBase):
         """Frame-budgeted coast to a clicked future trajectory sample."""
         from orbitsim.core.nbody import refresh_ephemeris_cache
 
-        chunks = _coast_chunks(duration_s)
+        chunks = coast_chunks(duration_s)
         total = len(chunks)
         for index, dt_s in enumerate(chunks):
             refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
@@ -1769,7 +1685,7 @@ class OrbitApp(ShowBase):
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
-        preview_key = _maneuver_preview_key(node, self._node_epoch_s)
+        preview_key = maneuver_preview_key(node, self._node_epoch_s)
         future = self._preview_future
         if future is not None and future.done():
             points, encounters = future.result()
@@ -1779,7 +1695,7 @@ class OrbitApp(ShowBase):
             if preview_key == completed_key and node.magnitude_mps > 0.0:
                 if self._preview_np is not None:
                     self._preview_np.remove_node()
-                local_points, self._preview_origin = _localize_polyline(points)
+                local_points, self._preview_origin = localize_polyline(points)
                 scale = self.transform.scale_m_per_unit
                 render_points = [tuple(point / scale) for point in local_points]
                 self._preview_np = build_orbit_node(
@@ -1842,7 +1758,7 @@ class OrbitApp(ShowBase):
 
     def _install_trajectory(self, idx, world_pts, scale, state) -> None:
         """Swap cached prediction points into Panda3D; called only on the render thread."""
-        local_pts, origin = _localize_polyline(world_pts)
+        local_pts, origin = localize_polyline(world_pts)
         pts = [tuple(p / scale) for p in local_pts]
         if self.orbit_nps[idx] is not None:
             self.orbit_nps[idx].remove_node()   # removes any child encounter patches too
@@ -2130,7 +2046,7 @@ class OrbitApp(ShowBase):
                     self.render, "", color=(0.3, 1.0, 1.0, 1.0), scale=11.0)
             dv_text = f"dV {node.magnitude_mps:,.0f} m/s"
             if ttn > 0:
-                dv_text += f"  T-{_fmt_countdown(ttn)}"
+                dv_text += f"  T-{fmt_countdown(ttn)}"
             self._node_dv_label.node().set_text(dv_text)
             self._node_dv_label.set_pos(mx, my, mz + 8.0)
             self._node_dv_label.show()
@@ -2148,7 +2064,7 @@ class OrbitApp(ShowBase):
             if ttn <= self.EXECUTE_TOLERANCE_S:
                 label = "DUE — press Execute"
             else:
-                label = f"in T-{_fmt_countdown(ttn)}"
+                label = f"in T-{fmt_countdown(ttn)}"
             self._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
         else:
             self._node_line = ""
@@ -2328,7 +2244,7 @@ class OrbitApp(ShowBase):
             dist = float(np.linalg.norm(v0.state.r - L.r))
             relsp = float(np.linalg.norm(v0.state.v - L.v))
             self._target_line = (
-                f"Target: {self._target.name}   dist {_fmt_dist(dist)}"
+                f"Target: {self._target.name}   dist {fmt_dist(dist)}"
                 f"   rel {relsp:,.0f} m/s"
             )
             self._sync_maneuver_hud()
@@ -2377,7 +2293,7 @@ class OrbitApp(ShowBase):
                 label.set_pos(rx, ry, rz + 8.0)
             countdown = max(0.0, self._ca_abs_epoch - self.clock.sim_time_s)
             self._target_line = (
-                f"Target: {self._target.name}   CA T-{_fmt_countdown(countdown)}"
+                f"Target: {self._target.name}   CA T-{fmt_countdown(countdown)}"
                 f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
             )
             self._sync_maneuver_hud()
@@ -2484,7 +2400,7 @@ class OrbitApp(ShowBase):
             pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
             tag = "IMPACT" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
             countdown = max(0.0, enc.periapsis_epoch_s - now)
-            label.node().set_text(f"{enc.body_name} {tag}  T-{_fmt_countdown(countdown)}")
+            label.node().set_text(f"{enc.body_name} {tag}  T-{fmt_countdown(countdown)}")
             label.set_pos(rx, ry, rz + 8.0)
             label.show()
         # Predicted approach line — only when not already inside an SOI.
@@ -2496,7 +2412,7 @@ class OrbitApp(ShowBase):
             v_inf = enc.v_inf_mps / 1000.0 if np.isfinite(enc.v_inf_mps) else 0.0
             self._encounter_line = (
                 f"Approach {enc.body_name}: {tag}  "
-                f"T-{_fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
+                f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
             )
             self._sync_maneuver_hud()
 

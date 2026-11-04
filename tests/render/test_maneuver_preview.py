@@ -4,12 +4,12 @@ import numpy as np
 
 from orbitsim.core.constants import MU_EARTH
 from orbitsim.core.state import StateVector
-from orbitsim.render.app import (
-    _coast_chunks,
-    _localize_polyline,
-    _maneuver_preview_key,
-    _trajectory_horizon_s,
+from orbitsim.render.trajectory_helpers import (
+    coast_chunks as _coast_chunks,
+    localize_polyline as _localize_polyline,
+    maneuver_preview_key as _maneuver_preview_key,
 )
+from orbitsim.render.trajectory_sampling import trajectory_horizon_s as _trajectory_horizon_s
 
 
 def _node(epoch_s, prograde=120.0):
