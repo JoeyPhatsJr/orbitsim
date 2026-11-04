@@ -3,11 +3,7 @@ import numpy as np
 
 from orbitsim.core.elements import KeplerianElements, elements_to_state  # noqa: F401 (tests patch it)
 from orbitsim.core.frames import rotation_matrix_1, rotation_matrix_3
-
-
-TRAJECTORY_COLOR = (0.20, 0.78, 1.0, 1.0)
-MANEUVER_COLOR = (1.0, 0.25, 0.90, 1.0)
-REFERENCE_ORBIT_COLOR = (0.48, 0.52, 0.62, 0.82)
+from orbitsim.render.line_style import ORBIT_STYLE, LineStyle
 
 
 def path_fade_alphas(points, minimum: float = 0.28) -> np.ndarray:
@@ -129,45 +125,73 @@ def sample_relative_orbit_points(body_state, center_state, mu: float, n: int = 2
 from panda3d.core import LineSegs, NodePath
 
 
+HALO_COLOR = (0.0, 0.01, 0.03, 0.72)
+
+
+def _dash_runs(n_points: int, dash) -> list:
+    """Index ranges [start, end) of the drawn runs of an n-point polyline.
+
+    Solid (one run) when ``dash`` is None or the polyline is too short to show a
+    single full dash, so a short fragment never vanishes.
+    """
+    if dash is None or n_points < dash[0] + 1:
+        return [(0, n_points)]
+    on, off = dash
+    period = on + off
+    runs = []
+    for start in range(0, n_points, period):
+        end = min(start + on, n_points)
+        if end - start >= 2:          # a run needs two points to draw a segment
+            runs.append((start, end))
+    return runs
+
+
 def build_orbit_node(
     points_render: list[tuple[float, float, float]],
-    color: tuple[float, float, float, float] = TRAJECTORY_COLOR,
-    thickness: float = 2.25,
-    fade_minimum: float = 0.28,
+    style: LineStyle = ORBIT_STYLE,
+    px_scale: float = 1.0,
 ) -> NodePath:
-    """Build an outlined, depth-tested trajectory polyline.
+    """Build a depth-tested trajectory polyline drawn in ``style``.
 
-    A dark, wider under-stroke keeps the line legible over Earth, stars, and the
-    bright limb without making it look like a foreground HUD overlay.
+    Widths are framebuffer pixels (constant on screen at any zoom) times ``px_scale``
+    (see ``line_style.px_scale``). A dark, wider under-stroke (when the style has one)
+    keeps the line legible over Earth, stars, and the bright limb.
 
     Parameters
     ----------
     points_render : list of (x, y, z)
         Render-space points (already passed through RenderTransform.to_render).
-    color : (r, g, b, a)
+    style : LineStyle
+    px_scale : float
 
     Returns
     -------
     NodePath
-        A NodePath holding the line strip.
+        Root holding a ``trajectory_halo`` stroke (if any) then ``trajectory_color``.
     """
     from panda3d.core import AntialiasAttrib, TransparencyAttrib
 
     root = NodePath("trajectory_line")
-    fade = path_fade_alphas(points_render, fade_minimum)
+    # Lines have no normals: scene lighting would render them at a fraction of
+    # their colour (the old "can't see the orbit" bug). Always draw them unlit.
+    root.set_light_off(1)
+    fade = path_fade_alphas(points_render, style.fade_minimum)
+    runs = _dash_runs(len(points_render), style.dash)
 
     def stroke(name, stroke_color, stroke_thickness, sort):
         segs = LineSegs(name)
         segs.set_thickness(stroke_thickness)
-        for idx, (x, y, z) in enumerate(points_render):
-            segs.set_color(
-                stroke_color[0], stroke_color[1], stroke_color[2],
-                stroke_color[3] * float(fade[idx]),
-            )
-            if idx == 0:
-                segs.move_to(x, y, z)
-            else:
-                segs.draw_to(x, y, z)
+        for start, end in runs:
+            for idx in range(start, end):
+                x, y, z = points_render[idx]
+                segs.set_color(
+                    stroke_color[0], stroke_color[1], stroke_color[2],
+                    stroke_color[3] * float(fade[idx]),
+                )
+                if idx == start:
+                    segs.move_to(x, y, z)
+                else:
+                    segs.draw_to(x, y, z)
         node = root.attach_new_node(segs.create())
         node.set_bin("fixed", sort)
         node.set_depth_test(True)
@@ -175,6 +199,8 @@ def build_orbit_node(
         node.set_transparency(TransparencyAttrib.M_alpha)
         node.set_antialias(AntialiasAttrib.M_line)
 
-    stroke("trajectory_halo", (0.0, 0.01, 0.03, 0.72), thickness + 3.0, 10)
-    stroke("trajectory_color", color, thickness, 11)
+    width = style.width_px * px_scale
+    if style.halo_px > 0.0:
+        stroke("trajectory_halo", HALO_COLOR, width + style.halo_px * px_scale, 10)
+    stroke("trajectory_color", style.color, width, 11)
     return root

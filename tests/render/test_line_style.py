@@ -41,3 +41,10 @@ def test_px_scale_is_one_at_reference_and_grows_with_height():
 
 def test_px_scale_never_below_one():
     assert px_scale(600) == 1.0 and px_scale(0) == 1.0
+
+
+def test_planet_orbits_hidden_at_earth_moon_zoom_shown_at_planetary_zoom():
+    from orbitsim.render.line_style import PLANET_ORBITS_MIN_DISTANCE_M, planet_orbits_visible
+    assert not planet_orbits_visible(1.3e9)          # whole Earth-Moon system in view
+    assert planet_orbits_visible(PLANET_ORBITS_MIN_DISTANCE_M)
+    assert planet_orbits_visible(3.0e11)             # ~2 AU

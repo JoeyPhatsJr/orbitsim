@@ -1,5 +1,7 @@
 """Central body, lighting, Sun direction, Moon (ring, body, SOI), Lagrange points, planets, starfield."""
 
+from dataclasses import replace
+
 import numpy as np
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
@@ -18,8 +20,8 @@ from orbitsim.core.planets import (
 from orbitsim.core.state import StateVector
 from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.geometry import make_ring, make_uv_sphere
+from orbitsim.render.line_style import planet_orbits_visible, reference_style
 from orbitsim.render.orbit_lines import (
-    REFERENCE_ORBIT_COLOR,
     build_orbit_node,
     sample_orbit_points,
     sample_relative_orbit_points,
@@ -31,6 +33,11 @@ from panda3d.core import AmbientLight, DirectionalLight, Filename, Vec4
 
 class BodiesView:
     """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    def _target_name(self):
+        """Name of the current target body (None if nothing / solar viewer)."""
+        target = getattr(self.app, "_target", None)
+        return getattr(target, "name", None) if target is not None else None
 
     MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
     LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
@@ -100,6 +107,7 @@ class BodiesView:
         self.app._moon_np.set_scale(7.0)
         self.app._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
         self.app._moon_orbit_scale = None
+        self.app._moon_orbit_target = None  # target name the ring was styled for
         self.app._moon_orbit_epoch_s = None  # sim time of the osculating ellipse drawn
         # Moon sphere-of-influence: faint true-scale translucent tinted shell.
         from panda3d.core import TransparencyAttrib
@@ -234,6 +242,7 @@ class BodiesView:
         # geocentric position each frame). Built lazily on first zoom like the Moon line.
         self.app._planet_orbit_nps = {}
         self.app._planet_orbit_scale = None
+        self.app._planet_orbit_target = None  # target name the orbits were styled for
         self.app._planet_orbit_epoch_bucket = None
         self.app._sun_orbit_frame = self.app.render.attach_new_node("sun_orbit_frame")
 
@@ -253,16 +262,19 @@ class BodiesView:
         # The real Moon's orbit is eccentric and perturbed, so the ring is its *osculating*
         # ellipse (always passes through the Moon); rebuilt on zoom or every 6 sim-hours.
         t_now = self.app.clock.sim_time_s
+        target = self._target_name()
         if (self.app._moon_orbit_scale != scale or self.app._moon_orbit_epoch_s is None
+                or self.app._moon_orbit_target != target
                 or abs(t_now - self.app._moon_orbit_epoch_s) > self.MOON_RING_REFRESH_S):
             self.app._moon_orbit_scale = scale
+            self.app._moon_orbit_target = target
             self.app._moon_orbit_epoch_s = t_now
             if self.app._moon_orbit_np is not None:
                 self.app._moon_orbit_np.remove_node()
             moon_elements = state_to_elements(moon_state_at(t_now))
             moon_pts = [tuple(p / scale) for p in sample_orbit_points(moon_elements, n=256)]
             self.app._moon_orbit_np = build_orbit_node(
-                moon_pts, color=REFERENCE_ORBIT_COLOR, thickness=1.4, fade_minimum=1.0
+                moon_pts, reference_style(target == "Moon"), px_scale=self.app.line_px_scale()
             )
             self.app._moon_orbit_np.reparent_to(self.app._orbit_frame)
 
@@ -396,13 +408,20 @@ class BodiesView:
         sun_geo = _csun(t_now).r
         sx, sy, sz = self.app.transform.to_render(sun_geo)
         self.app._sun_orbit_frame.set_pos(sx, sy, sz)
+        if self.app.solar_system or planet_orbits_visible(self.app.rig.distance_m):
+            self.app._sun_orbit_frame.show()
+        else:
+            self.app._sun_orbit_frame.hide()
         # Refresh monthly in simulation time.  DE440 positions are in tilted ICRF
         # axes and the real orbits are eccentric, so flat mean-radius circles do
         # not describe the paths followed by the rendered planet markers.
         orbit_epoch_bucket = int(np.floor(t_now / (30.0 * 86400.0)))
+        target = self._target_name()
         if (self.app._planet_orbit_scale != scale
+                or self.app._planet_orbit_target != target
                 or self.app._planet_orbit_epoch_bucket != orbit_epoch_bucket):
             self.app._planet_orbit_scale = scale
+            self.app._planet_orbit_target = target
             self.app._planet_orbit_epoch_bucket = orbit_epoch_bucket
             _orbit_colors = {
                 "Mercury": (0.5, 0.5, 0.5, 0.5),
@@ -438,6 +457,8 @@ class BodiesView:
                 pts = [tuple(point / scale) for point in orbit_points]
                 color = _orbit_colors[oname]
                 # Not `node`: that name is the maneuver node, read later this frame.
-                orbit_np = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
+                style = reference_style(target == oname)
+                style = replace(style, color=tuple(color[:3]) + (style.color[3],))
+                orbit_np = build_orbit_node(pts, style, px_scale=self.app.line_px_scale())
                 orbit_np.reparent_to(self.app._sun_orbit_frame)
                 self.app._planet_orbit_nps[oname] = orbit_np

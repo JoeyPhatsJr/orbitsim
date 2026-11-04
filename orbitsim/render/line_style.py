@@ -43,6 +43,17 @@ def reference_style(targeted: bool) -> LineStyle:
     return TARGET_REFERENCE_STYLE if targeted else REFERENCE_STYLE
 
 
+# Below this camera distance the planets' heliocentric orbits are just stray straight
+# lines across the Earth-Moon view (Earth's own passes through the ship), so the sandbox
+# hides them until you zoom out to planetary scale (~0.13 AU).
+PLANET_ORBITS_MIN_DISTANCE_M = 2.0e10
+
+
+def planet_orbits_visible(camera_distance_m: float) -> bool:
+    """Whether the sandbox shows the planets' reference orbits at this zoom."""
+    return camera_distance_m >= PLANET_ORBITS_MIN_DISTANCE_M
+
+
 def px_scale(framebuffer_height_px: int) -> float:
     """Line-width multiplier for a framebuffer of this height (never below 1)."""
     return max(1.0, framebuffer_height_px / REFERENCE_HEIGHT_PX)

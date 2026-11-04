@@ -10,6 +10,7 @@ from orbitsim.render.hud import Hud
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
 from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.render.process_pool import build_process_pool
+from orbitsim.render.line_style import ENCOUNTER_STYLE, px_scale
 
 from orbitsim.render.controllers.title_screen import TitleScreen
 from orbitsim.render.controllers.solar_view import SolarView
@@ -37,7 +38,7 @@ class OrbitApp(ShowBase):
     QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
     # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
     # trajectory and magenta maneuver preview.
-    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
+    ENCOUNTER_COLOR = ENCOUNTER_STYLE.color
 
     def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
@@ -159,6 +160,12 @@ class OrbitApp(ShowBase):
             self._porkchop_render = None      # (dep_times, tof_grid, label) for on-poll draw
             self._porkchop_request = 0
         self._porkchop_card = None
+
+    def line_px_scale(self) -> float:
+        """Line-width multiplier for the current framebuffer (Retina-aware; 1.0 headless)."""
+        if self.win is None:
+            return 1.0
+        return px_scale(self.win.get_fb_y_size())
 
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""

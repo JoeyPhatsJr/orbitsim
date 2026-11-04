@@ -178,3 +178,64 @@ def test_sample_orbit_points_does_not_convert_point_by_point(monkeypatch):
     monkeypatch.setattr(_ol, "elements_to_state", counting)
     _ol.sample_orbit_points(_CASES[1], n=256)
     assert len(calls) <= 1
+
+
+# ---------------------------------------------------------------------------
+# Styled lines (map readability plan 1, Task 2)
+# ---------------------------------------------------------------------------
+from panda3d.core import RenderModeAttrib  # noqa: E402
+
+from orbitsim.render.line_style import ORBIT_STYLE, PLAN_STYLE, REFERENCE_STYLE  # noqa: E402
+
+
+def _strokes(node):
+    return list(node.get_children())
+
+
+def _thickness(np_):
+    return np_.node().get_geom_state(0).get_attrib(RenderModeAttrib).get_thickness()
+
+
+def _strip_count(np_):
+    return np_.node().get_geom(0).get_primitive(0).get_num_primitives()
+
+
+STYLED_POINTS = [(float(i), 0.0, 0.0) for i in range(40)]
+
+
+def test_width_scales_with_px_scale():
+    node = build_orbit_node(STYLED_POINTS, ORBIT_STYLE, px_scale=2.0)
+    color_stroke = _strokes(node)[-1]
+    assert _thickness(color_stroke) == ORBIT_STYLE.width_px * 2.0
+
+
+def test_halo_only_when_style_has_one():
+    assert len(_strokes(build_orbit_node(STYLED_POINTS, ORBIT_STYLE))) == 2
+    assert len(_strokes(build_orbit_node(STYLED_POINTS, REFERENCE_STYLE))) == 1
+
+
+def test_dashed_plan_breaks_into_dash_strips():
+    solid = _strokes(build_orbit_node(STYLED_POINTS, ORBIT_STYLE))[-1]
+    dashed = _strokes(build_orbit_node(STYLED_POINTS, PLAN_STYLE))[-1]
+    assert _strip_count(solid) == 1
+    assert _strip_count(dashed) == 4        # 40 pts, (6 on, 4 off)
+
+
+def test_dashed_two_points_still_draws():
+    node = build_orbit_node([(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], PLAN_STYLE)
+    assert _strip_count(_strokes(node)[-1]) == 1
+
+
+def test_lines_ignore_scene_lighting():
+    # Lines have no normals; scene lights (ambient + sun) rendered them at ~10% of
+    # their colour, which is why orbits were nearly invisible. They must be unlit.
+    from panda3d.core import AmbientLight, NodePath
+    scene = NodePath("render")
+    amb = scene.attach_new_node(AmbientLight("amb"))
+    scene.set_light(amb)
+    node = build_orbit_node(STYLED_POINTS, ORBIT_STYLE)
+    node.reparent_to(scene)
+    from panda3d.core import LightAttrib
+    for stroke in _strokes(node):
+        lights = stroke.get_net_state().get_attrib(LightAttrib)
+        assert lights is None or lights.get_num_on_lights() == 0
