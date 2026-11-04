@@ -21,7 +21,14 @@ def random_star_dirs(n: int, seed: int = 0):
     return [tuple(float(c) for c in row) for row in v]
 
 
+# The star map is a backdrop, not content: at full brightness thousands of white dots
+# compete with orbit lines and markers. Scale it down so the map reads first.
+STARFIELD_BRIGHTNESS = 0.35
+
+
 def _background(node: NodePath) -> NodePath:
+    b = STARFIELD_BRIGHTNESS
+    node.set_color_scale(b, b, b, 1.0)
     node.set_bin("background", 0)
     node.set_depth_write(False)
     node.set_depth_test(False)
