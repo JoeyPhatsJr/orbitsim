@@ -66,6 +66,8 @@ from orbitsim.render.trajectory_helpers import (
 
 from orbitsim.render.controllers.title_screen import TitleScreen
 
+from orbitsim.render.controllers.solar_view import SolarView
+
 _global_clock = ClockObject.get_global_clock()
 
 
@@ -88,6 +90,7 @@ class OrbitApp(ShowBase):
         self.operation = OperationController()
         from orbitsim.render.ui.performance import FrameMeter
         self.frame_meter = FrameMeter()
+        self.solar_view = SolarView(self)
         self.title_screen = TitleScreen(self)
         self.title_screen._build_title_screen()
 
@@ -137,7 +140,7 @@ class OrbitApp(ShowBase):
         self._build_orbit_frame()
         self._build_background_work()
         if self.solar_system:
-            self._build_planets()
+            self.solar_view._build_planets()
         else:
             self._build_sandbox_controls()
             self._build_targeting()
@@ -538,36 +541,6 @@ class OrbitApp(ShowBase):
         "Uranus": (0.6, 0.85, 0.9, 1.0),
         "Neptune": (0.3, 0.4, 0.9, 1.0),
     }
-
-    def _build_planets(self) -> None:
-        """Create constant-size markers + labels for the Sun and 8 planets."""
-        from orbitsim.core.bodies import PLANETS, SUN
-
-        self._planet_bodies = [SUN] + list(PLANETS)
-        self._planet_nps = []
-        self._planet_labels = []
-        for body in self._planet_bodies:
-            is_earth = body.name == "Earth"
-            marker = make_uv_sphere(1.0, 12, 16, with_uv=is_earth)
-            marker.reparent_to(self.render)
-            marker.set_color(*self._PLANET_COLORS.get(body.name, (0.8, 0.8, 0.8, 1.0)))
-            marker.set_light_off()
-            marker.set_scale(8.0 if body.name == "Sun" else 4.0)
-            if is_earth:
-                from panda3d.core import Filename
-                from orbitsim.render.textures import texture_path
-
-                p = texture_path("earth_day")
-                if p is not None:
-                    marker.set_texture(self.loader.load_texture(Filename.from_os_specific(p)))
-                    marker.set_color(1, 1, 1, 1)
-            self._planet_nps.append(marker)
-            # 3D billboard label on render (tracks the marker, faces the camera).
-            from orbitsim.render.world_labels import build_world_label
-            label = build_world_label(
-                self.render, body.name, color=(0.8, 0.85, 1.0, 1.0), scale=15.0
-            )
-            self._planet_labels.append(label)
 
     # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
     JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
@@ -1820,7 +1793,7 @@ class OrbitApp(ShowBase):
 
         if self.solar_system:
             self.clock.advance(real_dt)
-            self._update_solar_system()
+            self.solar_view._update_solar_system()
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
@@ -2426,52 +2399,6 @@ class OrbitApp(ShowBase):
                 f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
             )
             self._sync_maneuver_hud()
-
-    def _helio_body_pos(self, name: str, t_s: float) -> np.ndarray:
-        """Heliocentric position [m]: DE440 when available, circular fallback offline."""
-        from orbitsim.core.ephemeris import body_state, EphemerisUnavailableError
-        try:
-            return body_state(name.upper(), t_s, center="SUN").r
-        except EphemerisUnavailableError:
-            from orbitsim.core import planets as pl
-            # planets.py states are geocentric; helio = geocentric - sun_geocentric.
-            if name == "Earth":
-                return -pl.sun_state_at(t_s).r
-            geo_fns = {
-                "Mercury": pl.mercury_state_at, "Venus": pl.venus_state_at,
-                "Mars": pl.mars_state_at, "Jupiter": pl.jupiter_state_at,
-                "Saturn": pl.saturn_state_at, "Uranus": pl.uranus_state_at,
-                "Neptune": pl.neptune_state_at,
-            }
-            return geo_fns[name](t_s).r - pl.sun_state_at(t_s).r
-
-    def _update_solar_system(self) -> None:
-        """Place the Sun + planets for the current sim time (DE440 or fallback)."""
-        from datetime import datetime, timedelta
-        from orbitsim.core.ephemeris import available as ephemeris_available
-
-        t = self.clock.sim_time_s
-        self.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
-
-        for body, marker, label in zip(self._planet_bodies, self._planet_nps, self._planet_labels):
-            pos_m = np.zeros(3) if body.name == "Sun" else self._helio_body_pos(body.name, t)
-            rx, ry, rz = self.transform.to_render(pos_m)
-            marker.set_pos(rx, ry, rz)
-            label.set_pos(rx, ry, rz + 6.0)
-
-        self.central_np.set_pos(*self.transform.to_render(np.zeros(3)))
-        self._apply_mouse_orbit()
-        self._update_starfield()
-        self.rig.apply()
-
-        self._update_warp_readout()
-        source = "JPL DE440" if ephemeris_available() else "circular approx (offline)"
-        date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
-        self.hud.text.setText(
-            f"Solar system ({source})\n"
-            f"Date: {date:%Y-%m-%d}\n"
-            f"',' / '.' or the buttons change warp"
-        )
 
     def run_app(self) -> None:
         self.run()
