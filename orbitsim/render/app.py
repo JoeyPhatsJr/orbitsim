@@ -4,42 +4,15 @@ import numpy as np
 from direct.showbase.ShowBase import ShowBase
 from panda3d.core import (
     ClockObject,
-    AmbientLight,
-    DirectionalLight,
-    Filename,
-    Vec4,
 )
 
-from orbitsim.core.elements import state_to_elements
 from orbitsim.core.moon import moon_state_at
-from orbitsim.core.state import StateVector
 from orbitsim.render.floating_origin import RenderTransform
-from orbitsim.render.geometry import make_uv_sphere, make_ring
-from orbitsim.core.nbody import MOON_SOI_M
-from orbitsim.core.constants import MU_SUN
-from orbitsim.core.planets import (
-    EARTH_SOI_M,
-    MERCURY_SOI_M,
-    VENUS_SOI_M,
-    MARS_SOI_M,
-    JUPITER_SOI_M,
-    SATURN_SOI_M,
-    URANUS_SOI_M,
-    NEPTUNE_SOI_M,
-)
 from orbitsim.render.world_markers import distance_fade
-from orbitsim.render.orbit_lines import (
-    REFERENCE_ORBIT_COLOR,
-    build_orbit_node,
-    sample_orbit_points,
-    sample_relative_orbit_points,
-)
 from orbitsim.render.camera_rig import CameraRig
 from orbitsim.render.hud import Hud
-from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
 from orbitsim.render.settings_panel import SettingsPanel
-from orbitsim.render.skybox import build_starfield
 from orbitsim.render.process_pool import build_process_pool
 
 from orbitsim.render.controllers.title_screen import TitleScreen
@@ -59,6 +32,10 @@ from orbitsim.render.controllers.porkchop_modal import PorkchopModal
 from orbitsim.render.controllers.trajectory_view import TrajectoryView
 
 from orbitsim.render.controllers.maneuver_editor import ManeuverEditor
+
+from orbitsim.render.controllers.bodies_view import BodiesView
+
+from orbitsim.render.controllers.vessel_view import VesselView
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -82,6 +59,8 @@ class OrbitApp(ShowBase):
         self.operation = OperationController()
         from orbitsim.render.ui.performance import FrameMeter
         self.frame_meter = FrameMeter()
+        self.vessel_view = VesselView(self)
+        self.bodies_view = BodiesView(self)
         self.maneuver_editor = ManeuverEditor(self)
         self.trajectory_view = TrajectoryView(self)
         self.porkchop_modal = PorkchopModal(self)
@@ -132,11 +111,11 @@ class OrbitApp(ShowBase):
             enable_unlimited=not self.solar_system)
         self.warp_controls._build_warp_controls()
 
-        self._build_central_body()
-        self._build_lighting()
-        self._build_vessel_markers()
-        self._build_ship_view()
-        self._build_orbit_frame()
+        self.bodies_view._build_central_body()
+        self.bodies_view._build_lighting()
+        self.vessel_view._build_vessel_markers()
+        self.vessel_view._build_ship_view()
+        self.bodies_view._build_orbit_frame()
         self._build_background_work()
         if self.solar_system:
             self.solar_view._build_planets()
@@ -144,95 +123,12 @@ class OrbitApp(ShowBase):
             self._build_sandbox_controls()
             self.targeting._build_targeting()
             self._build_apsis_and_encounter_markers()
-            self._build_moon_and_lagrange()
-            self._build_sandbox_planets()
-        self._build_starfield()
+            self.bodies_view._build_moon_and_lagrange()
+            self.bodies_view._build_sandbox_planets()
+        self.bodies_view._build_starfield()
 
         self.flight_input._setup_input()
         self.task_mgr.add(self._update, "update")
-
-    def _build_central_body(self):
-        """Sun marker (solar) or shaded Earth + atmosphere (sandbox)."""
-        # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
-        # day/night-shaded Earth (with an atmosphere shell), or a flat-blue fallback.
-        self._atmo_np = None
-        if self.solar_system:
-            self.central_np = make_uv_sphere(1.0, 24, 48)
-            self.central_np.reparent_to(self.render)
-            self.central_np.set_color(1.0, 0.85, 0.2, 1.0)
-            self.central_np.set_light_off()
-            self.central_np.set_scale(10.0)
-        else:
-            self.central_np, self._atmo_np = build_earth(self)
-            self.central_np.reparent_to(self.render)
-            if self._atmo_np is not None:
-                self._atmo_np.reparent_to(self.central_np)
-
-    def _build_lighting(self):
-        """Ambient + directional sun light."""
-        # Lighting: low ambient + a sun directional light (aimed at the real Sun each
-        # frame in the sandbox). The shadered Earth lights itself; the light is for the
-        # flat fallback and any other lit geometry.
-        amb = AmbientLight("amb")
-        amb.set_color(Vec4(0.3, 0.3, 0.3, 1) if self.solar_system else Vec4(0.12, 0.12, 0.15, 1))
-        self.render.set_light(self.render.attach_new_node(amb))
-        sun = DirectionalLight("sun")
-        sun.set_color(Vec4(1.0, 1.0, 0.95, 1))
-        self._sun_light_np = self.render.attach_new_node(sun)
-        self._sun_light_np.set_hpr(45, -45, 0)
-        self.render.set_light(self._sun_light_np)
-
-    def _build_vessel_markers(self):
-        """Constant-size vessel markers."""
-        world = self.world
-        # Vessel markers + orbit lines.
-        self.vessel_nps = []
-        self.orbit_nps = []
-        for _ in world.vessels:
-            m = make_uv_sphere(1.0, 8, 12)
-            m.reparent_to(self.render)
-            m.set_color(1.0, 0.9, 0.2, 1.0)
-            m.set_light_off()  # fullbright marker so it is always visible
-            # The camera always sits RENDER_UNITS_ACROSS_VIEW (1000) units from the
-            # focus, so a fixed render-size marker keeps a constant on-screen size
-            # at every zoom level.
-            m.set_scale(8.0)
-            self.vessel_nps.append(m)
-            self.orbit_nps.append(None)
-
-    def _build_ship_view(self):
-        """True-scale ship model + plume for vessel 0."""
-        # Ship view: a true-scale, lit, oriented model of vessel 0 that cross-fades
-        # in from the constant-size marker as the camera zooms close. (ship_model.py)
-        self._ship_model_np = None
-        if not self.solar_system and self.world.vessels:
-            from orbitsim.render.ship_model import build_ship_model
-            from panda3d.core import TransparencyAttrib
-            self._ship_model_np = build_ship_model()
-            self._ship_model_np.reparent_to(self.render)
-            self._ship_model_np.hide()  # shown only when model_alpha > 0
-            # Marker fades via alpha; enable transparency on vessel 0's marker.
-            self.vessel_nps[0].set_transparency(TransparencyAttrib.M_alpha)
-            # Exhaust plume (parented to the model: inherits its orient + scale).
-            from orbitsim.render.ship_model import build_plume
-            self._plume_np = build_plume()
-            self._plume_np.reparent_to(self._ship_model_np)
-            self._plume_np.hide()
-
-    def _build_orbit_frame(self):
-        """Orbit frame node + per-vessel trajectory caches."""
-        world = self.world
-        # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
-        # rescaled once per frame so they track the floating origin without per-vertex rebuilds.
-        self._orbit_frame = self.render.attach_new_node("orbit_frame")
-        self._traj_world_cache = [None for _ in world.vessels]
-        self._traj_epoch_cache = [None for _ in world.vessels]
-        self._traj_future = [None for _ in world.vessels]
-        self._traj_last_submit_t = [float("-inf") for _ in world.vessels]
-        self._traj_last_complete_t = [float("-inf") for _ in world.vessels]
-        self._traj_render_scale = [None for _ in world.vessels]
-        self._traj_render_origin = [None for _ in world.vessels]
-        self._traj_encounters = [None for _ in world.vessels]
 
     def _build_background_work(self):
         """Preview state, process pool and planning executors."""
@@ -324,164 +220,6 @@ class OrbitApp(ShowBase):
             lbl.hide()
             self._encounter_marker_nps.append(mk)
             self._encounter_labels.append(lbl)
-
-    def _build_moon_and_lagrange(self):
-        """Moon marker, SOI shell, Lagrange markers."""
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
-        self._moon_np = make_uv_sphere(1.0, 12, 16)
-        self._moon_np.reparent_to(self.render)
-        self._moon_np.set_color(0.7, 0.7, 0.72, 1.0)
-        self._moon_np.set_light_off()
-        self._moon_np.set_scale(7.0)
-        self._moon_orbit_np = None      # built lazily in the update loop (scale-dependent)
-        self._moon_orbit_scale = None
-        self._moon_orbit_epoch_s = None  # sim time of the osculating ellipse drawn
-        # Moon sphere-of-influence: faint true-scale translucent tinted shell.
-        from panda3d.core import TransparencyAttrib
-        self._soi_np = make_uv_sphere(1.0, 24, 32)
-        self._soi_np.reparent_to(self.render)
-        self._soi_np.set_light_off()                       # flat, unlit tint
-        self._soi_np.set_transparency(TransparencyAttrib.M_alpha)
-        self._soi_np.set_depth_write(False)                # don't occlude the scene behind it
-        self._soi_np.set_two_sided(True)                   # visible from inside too
-        self._soi_np.hide()  # shown + placed each frame in _update
-        # Lagrange-point markers (constant on-screen size) + billboard labels.
-        self._lagrange_nps = []
-        self._lagrange_labels = []
-        self._lagrange_positions = {}
-        for name in ("L1", "L2", "L3", "L4", "L5"):
-            mk = make_uv_sphere(1.0, 8, 12)
-            mk.reparent_to(self.render)
-            mk.set_color(0.3, 0.9, 0.8, 1.0)   # teal — distinct from Moon/CA/node
-            mk.set_light_off()
-            mk.set_scale(4.0)
-            self._lagrange_nps.append(mk)
-            lbl = build_world_label(
-                self.render, name, color=(0.5, 1.0, 0.9, 1.0), scale=12.0
-            )
-            self._lagrange_labels.append(lbl)
-
-    def _build_sandbox_planets(self):
-        """Sandbox planets/Sun, Saturn ring, Moon body, Earth SOI, orbit lines."""
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
-        from panda3d.core import TransparencyAttrib
-        # Inner planets + Sun: markers, true-scale bodies, SOI spheres, orbit lines.
-        from orbitsim.core.constants import (
-            R_SUN, R_MERCURY, R_VENUS, R_MARS, R_MOON,
-            R_JUPITER, R_SATURN, R_URANUS, R_NEPTUNE,
-        )
-        from orbitsim.render.textures import texture_path
-        self._planet_sandbox_nps = {}    # name -> marker NodePath (constant on-screen size)
-        self._planet_sandbox_labels = {}
-        self._planet_body_nps = {}       # name -> true-scale textured body NodePath
-        self._planet_body_radii = {}     # name -> physical radius [m]
-        self._planet_soi_nps = {}        # name -> SOI sphere NodePath
-        self._planet_soi_radii = {}      # name -> SOI radius [m]
-        _planet_defs = [
-            ("Sun", (1.0, 0.85, 0.2, 1.0), 10.0, float("inf"), R_SUN, "sun"),
-            ("Mercury", (0.6, 0.6, 0.6, 1.0), 4.0, MERCURY_SOI_M, R_MERCURY, "mercury"),
-            ("Venus", (0.9, 0.8, 0.5, 1.0), 5.0, VENUS_SOI_M, R_VENUS, "venus_surface"),
-            ("Mars", (0.9, 0.4, 0.2, 1.0), 5.0, MARS_SOI_M, R_MARS, "mars"),
-            ("Jupiter", (0.8, 0.7, 0.5, 1.0), 7.0, JUPITER_SOI_M, R_JUPITER, "jupiter"),
-            ("Saturn", (0.9, 0.8, 0.6, 1.0), 6.5, SATURN_SOI_M, R_SATURN, "saturn"),
-            ("Uranus", (0.6, 0.85, 0.9, 1.0), 5.5, URANUS_SOI_M, R_URANUS, "uranus"),
-            ("Neptune", (0.3, 0.4, 0.9, 1.0), 5.5, NEPTUNE_SOI_M, R_NEPTUNE, "neptune"),
-        ]
-        _soi_colors = {
-            "Mercury": (0.6, 0.6, 0.6, 1.0),
-            "Venus": (0.9, 0.8, 0.5, 1.0),
-            "Mars": (0.9, 0.5, 0.3, 1.0),
-            "Jupiter": (0.8, 0.7, 0.5, 1.0),
-            "Saturn": (0.9, 0.8, 0.6, 1.0),
-            "Uranus": (0.6, 0.85, 0.9, 1.0),
-            "Neptune": (0.3, 0.4, 0.9, 1.0),
-        }
-        for pname, color, sz, soi_r, radius_m, tex_name in _planet_defs:
-            mk = make_uv_sphere(1.0, 12, 16)
-            mk.reparent_to(self.render)
-            mk.set_color(*color)
-            mk.set_light_off()
-            mk.set_scale(sz)
-            self._planet_sandbox_nps[pname] = mk
-            lbl = build_world_label(
-                self.render, pname, color=(0.8, 0.85, 1.0, 1.0), scale=12.0
-            )
-            self._planet_sandbox_labels[pname] = lbl
-            self._planet_soi_radii[pname] = soi_r
-            self._planet_body_radii[pname] = radius_m
-            body = make_uv_sphere(1.0, 32, 64, with_uv=True)
-            body.reparent_to(self.render)
-            body.set_color(*color)
-            tp = texture_path(tex_name)
-            if tp is not None:
-                body.set_texture(
-                    self.loader.load_texture(Filename.from_os_specific(tp)))
-                body.set_color(1, 1, 1, 1)
-            if pname == "Sun":
-                body.set_light_off()
-            body.hide()
-            self._planet_body_nps[pname] = body
-            if pname != "Sun" and np.isfinite(soi_r):
-                soi = make_uv_sphere(1.0, 24, 32)
-                soi.reparent_to(self.render)
-                soi.set_light_off()
-                soi.set_transparency(TransparencyAttrib.M_alpha)
-                soi.set_depth_write(False)
-                soi.set_two_sided(True)
-                sc = _soi_colors.get(pname, (0.5, 0.5, 0.5, 1.0))
-                soi.set_color(sc[0], sc[1], sc[2], self.SOI_BASE_ALPHA)
-                soi.hide()
-                self._planet_soi_nps[pname] = soi
-        # Saturn ring (true-scale annular disk, inner ~1.11× R, outer ~2.33× R).
-        self._saturn_ring_np = make_ring(inner_radius=1.11, outer_radius=2.33, num_segments=64)
-        self._saturn_ring_np.reparent_to(self.render)
-        self._saturn_ring_np.set_two_sided(True)
-        self._saturn_ring_np.set_transparency(TransparencyAttrib.M_alpha)
-        self._saturn_ring_np.set_color(0.85, 0.75, 0.6, 0.8)
-        ring_tp = texture_path("saturn_ring")
-        if ring_tp is not None:
-            self._saturn_ring_np.set_texture(
-                self.loader.load_texture(Filename.from_os_specific(ring_tp)))
-            self._saturn_ring_np.set_color(1, 1, 1, 0.8)
-        self._saturn_ring_np.hide()
-        # True-scale Moon body (textured).
-        self._moon_body_np = make_uv_sphere(1.0, 32, 64, with_uv=True)
-        self._moon_body_np.reparent_to(self.render)
-        moon_tp = texture_path("moon")
-        if moon_tp is not None:
-            self._moon_body_np.set_texture(
-                self.loader.load_texture(Filename.from_os_specific(moon_tp)))
-            self._moon_body_np.set_color(1, 1, 1, 1)
-        else:
-            self._moon_body_np.set_color(0.7, 0.7, 0.72, 1.0)
-        self._moon_body_np.hide()
-        # Earth SOI sphere (visible once the vessel gets far from Earth).
-        earth_soi = make_uv_sphere(1.0, 24, 32)
-        earth_soi.reparent_to(self.render)
-        earth_soi.set_light_off()
-        earth_soi.set_transparency(TransparencyAttrib.M_alpha)
-        earth_soi.set_depth_write(False)
-        earth_soi.set_two_sided(True)
-        earth_soi.set_color(0.3, 0.5, 1.0, self.SOI_BASE_ALPHA)
-        earth_soi.hide()
-        self._earth_soi_np = earth_soi
-        # Planet orbit reference lines (heliocentric circles, positioned at the Sun's
-        # geocentric position each frame). Built lazily on first zoom like the Moon line.
-        self._planet_orbit_nps = {}
-        self._planet_orbit_scale = None
-        self._planet_orbit_epoch_bucket = None
-        self._sun_orbit_frame = self.render.attach_new_node("sun_orbit_frame")
-
-    def _build_starfield(self):
-        """Inertial camera-centered star background (both modes)."""
-        # Star background (both modes): inertial, camera-centered, behind everything.
-        self.starfield = build_starfield(self)
-        self.starfield.reparent_to(self.render)
-
-    def _update_starfield(self) -> None:
-        """Keep the sky centered on the camera so stars sit at infinity (no parallax)."""
-        if getattr(self, "starfield", None) is not None:
-            self.starfield.set_pos(self.camera.get_pos(self.render))
 
     # Distinct colours for the Sun + 8 planets (constant on-screen marker size).
     _PLANET_COLORS = {
@@ -680,19 +418,19 @@ class OrbitApp(ShowBase):
         self.maneuver_editor._apply_jogs(real_dt)
 
         focus, scale = self._frame_origin()
-        self._frame_moon_ring(scale)
-        self._frame_sun()
-        self._frame_vessels()
-        self._frame_ship_view()
+        self.bodies_view._frame_moon_ring(scale)
+        self.bodies_view._frame_sun()
+        self.vessel_view._frame_vessels()
+        self.vessel_view._frame_ship_view()
         node = self.maneuver_editor._frame_maneuver_node()
-        self._frame_moon()
+        self.bodies_view._frame_moon()
         self.targeting._frame_target_label()
-        self._frame_lagrange()
-        self._frame_planets(scale)
+        self.bodies_view._frame_lagrange()
+        self.bodies_view._frame_planets(scale)
         self.targeting._frame_closest_approach(node)
 
         self.flight_input._apply_mouse_orbit()
-        self._update_starfield()
+        self.bodies_view._update_starfield()
         self.rig.apply()
         self._update_marker_readability(focus)
 
@@ -776,244 +514,6 @@ class OrbitApp(ShowBase):
         self._orbit_frame.set_pos(cx, cy, cz)  # = to_render(0)
         scale = self.transform.scale_m_per_unit
         return focus, scale
-
-    def _frame_moon_ring(self, scale):
-        """Rebuild the Moon's osculating orbit ring on zoom / every few sim-hours."""
-        # The real Moon's orbit is eccentric and perturbed, so the ring is its *osculating*
-        # ellipse (always passes through the Moon); rebuilt on zoom or every 6 sim-hours.
-        t_now = self.clock.sim_time_s
-        if (self._moon_orbit_scale != scale or self._moon_orbit_epoch_s is None
-                or abs(t_now - self._moon_orbit_epoch_s) > self.MOON_RING_REFRESH_S):
-            self._moon_orbit_scale = scale
-            self._moon_orbit_epoch_s = t_now
-            if self._moon_orbit_np is not None:
-                self._moon_orbit_np.remove_node()
-            moon_elements = state_to_elements(moon_state_at(t_now))
-            moon_pts = [tuple(p / scale) for p in sample_orbit_points(moon_elements, n=256)]
-            self._moon_orbit_np = build_orbit_node(
-                moon_pts, color=REFERENCE_ORBIT_COLOR, thickness=1.4, fade_minimum=1.0
-            )
-            self._moon_orbit_np.reparent_to(self._orbit_frame)
-
-    def _frame_sun(self):
-        """Aim the terminator and sun light at the real Sun."""
-        # Real Sun direction (Earth->Sun) drives the day/night terminator + sun
-        # light. The cached wrapper serves DE440 positions when available and
-        # falls back to the circular approximation offline — never raises.
-        from orbitsim.core.nbody import _csun as _cached_sun
-        sun_dir = np.asarray(_cached_sun(self.clock.sim_time_s).r, dtype=float)
-        n = np.linalg.norm(sun_dir)
-        if n > 0:
-            sun_dir = sun_dir / n
-            set_sun_dir(self.central_np, tuple(sun_dir))
-            self._sun_light_np.set_pos(float(sun_dir[0]) * 1000.0,
-                                       float(sun_dir[1]) * 1000.0,
-                                       float(sun_dir[2]) * 1000.0)
-            self._sun_light_np.look_at(0, 0, 0)
-
-    def _frame_vessels(self):
-        """Place vessel markers, refresh trajectory lines, apsis markers."""
-        import time as _time
-        now_real = _time.monotonic()
-        for idx, vessel in enumerate(self.world.vessels):
-            vx, vy, vz = self.transform.to_render(vessel.state.r)
-            self.vessel_nps[idx].set_pos(vx, vy, vz)
-            self.trajectory_view._rebuild_trajectory(idx, vessel, now_real)
-        if self._preview_np is not None and self._preview_origin is not None:
-            self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
-        self._place_apsis_markers()
-
-    def _frame_ship_view(self):
-        """Cross-fade vessel 0 marker <-> true-scale model + plume."""
-        # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
-        if self._ship_model_np is not None:
-            from orbitsim.render.ship_model import view_blend, model_node_scale
-            v0 = self.world.vessels[0]
-            marker_a, model_a = view_blend(self.rig.distance_m)
-            if marker_a > 0.0:
-                self.vessel_nps[0].show()
-                self.vessel_nps[0].set_alpha_scale(marker_a)
-            else:
-                self.vessel_nps[0].hide()
-            if model_a > 0.0:
-                from panda3d.core import LQuaternion
-                self._ship_model_np.show()
-                self._ship_model_np.set_pos(*self.transform.to_render(v0.state.r))
-                self._ship_model_np.set_scale(model_node_scale(self.transform.scale_m_per_unit))
-                q = v0.orientation  # [w, x, y, z]
-                self._ship_model_np.set_quat(LQuaternion(float(q[0]), float(q[1]),
-                                                         float(q[2]), float(q[3])))
-                self._ship_model_np.set_alpha_scale(model_a)
-                thr = getattr(v0, "throttle", 0.0)
-                if thr > 0.0:
-                    self._plume_np.show()
-                    self._plume_np.set_sz(0.5 + thr)
-                    self._plume_np.set_alpha_scale(model_a * thr)
-                else:
-                    self._plume_np.hide()
-            else:
-                self._ship_model_np.hide()
-                self._plume_np.hide()
-
-    def _frame_moon(self):
-        """Moon marker, true-scale body and SOI shell."""
-        # Moon position this frame.
-        moon_now = moon_state_at(self.clock.sim_time_s)
-        self._moon_np.set_pos(*self.transform.to_render(moon_now.r))
-        # True-scale Moon body.
-        from orbitsim.core.constants import R_MOON
-        moon_render_pos = self.transform.to_render(moon_now.r)
-        moon_body_scale = R_MOON / self.transform.scale_m_per_unit
-        self._moon_body_np.set_pos(*moon_render_pos)
-        self._moon_body_np.set_scale(max(moon_body_scale, 1e-3))
-        self._moon_body_np.show()
-        # Moon SOI wireframe: true-scale, brighter when the vessel is inside, camera-distance fade.
-        soi_scale = MOON_SOI_M / self.transform.scale_m_per_unit
-        self._soi_np.set_pos(*self.transform.to_render(moon_now.r))
-        self._soi_np.set_scale(soi_scale)
-        inside = float(np.linalg.norm(self.world.vessels[0].state.r - moon_now.r)) < MOON_SOI_M
-        color = self.SOI_INSIDE_COLOR if inside else self.SOI_COLOR
-        base_alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
-        self._soi_np.set_color(color[0], color[1], color[2], base_alpha)
-        fade = distance_fade(self.rig.distance_m, self.SOI_FADE_NEAR_M, self.SOI_FADE_FAR_M, minimum=0.0)
-        self._soi_np.set_alpha_scale(fade)
-        self._soi_np.show()
-
-    def _frame_lagrange(self):
-        """Lagrange-point markers (bucketed recompute)."""
-        # Lagrange points (rotate with the Moon). Each recompute runs three
-        # brentq root-solves, so refresh by sim-time bucket instead of every
-        # frame: the L-points move ~1 km/s, so a 10 s bucket is at most ~10 km
-        # stale (invisible at map zoom) while cutting the per-frame cost to
-        # zero at low warp. At high warp the bucket changes every frame and
-        # the recompute cadence follows automatically.
-        from orbitsim.core.nbody import earth_fixed_lagrange_points
-        lag_bucket = int(self.clock.sim_time_s // self.LAGRANGE_REFRESH_S)
-        if getattr(self, "_lagrange_bucket", None) != lag_bucket:
-            self._lagrange_bucket = lag_bucket
-            self._lagrange_cache = earth_fixed_lagrange_points(self.clock.sim_time_s)
-        lps = self._lagrange_cache
-        for name, mk, lbl in zip(("L1", "L2", "L3", "L4", "L5"),
-                                 self._lagrange_nps, self._lagrange_labels):
-            rx, ry, rz = self.transform.to_render(lps[name])
-            mk.set_pos(rx, ry, rz)
-            lbl.set_pos(rx, ry, rz + 6.0)
-            self._lagrange_positions[name] = np.asarray(lps[name]).copy()
-
-    def _frame_planets(self, scale):
-        """Planet/Sun markers, bodies, SOI shells, Earth SOI, orbit lines."""
-        # Planets + Sun: position markers, SOI spheres, and orbit reference lines.
-        from orbitsim.core.nbody import (
-            _csun, _cmercury, _cvenus, _cmars,
-            _cjupiter, _csaturn, _curanus, _cneptune,
-        )
-        _planet_state_fns = {
-            "Sun": _csun,
-            "Mercury": _cmercury,
-            "Venus": _cvenus,
-            "Mars": _cmars,
-            "Jupiter": _cjupiter,
-            "Saturn": _csaturn,
-            "Uranus": _curanus,
-            "Neptune": _cneptune,
-        }
-        t_now = self.clock.sim_time_s
-        vessel_r = self.world.vessels[0].state.r if self.world.vessels else np.zeros(3)
-        for pname, state_fn in _planet_state_fns.items():
-            pstate = state_fn(t_now)
-            px, py, pz = self.transform.to_render(pstate.r)
-            self._planet_sandbox_nps[pname].set_pos(px, py, pz)
-            self._planet_sandbox_labels[pname].set_pos(px, py, pz + 8.0)
-            if pname in self._planet_body_nps:
-                body_np = self._planet_body_nps[pname]
-                body_r = self._planet_body_radii[pname]
-                body_scale = body_r / self.transform.scale_m_per_unit
-                body_np.set_pos(px, py, pz)
-                body_np.set_scale(max(body_scale, 1e-3))
-                body_np.show()
-            if pname in self._planet_soi_nps:
-                soi_np = self._planet_soi_nps[pname]
-                soi_r = self._planet_soi_radii[pname]
-                soi_scale = soi_r / self.transform.scale_m_per_unit
-                soi_np.set_pos(px, py, pz)
-                soi_np.set_scale(soi_scale)
-                dist_to = float(np.linalg.norm(vessel_r - pstate.r))
-                inside = dist_to < soi_r
-                alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
-                soi_np.set_alpha_scale(
-                    distance_fade(self.rig.distance_m, soi_r * 1.5, soi_r * 15, minimum=0.0)
-                )
-                soi_np.set_color_scale(1, 1, 1, alpha)
-                soi_np.show()
-            if pname == "Saturn" and hasattr(self, "_saturn_ring_np"):
-                from orbitsim.core.constants import R_SATURN
-                ring_scale = R_SATURN / self.transform.scale_m_per_unit
-                self._saturn_ring_np.set_pos(px, py, pz)
-                self._saturn_ring_np.set_scale(max(ring_scale, 1e-3))
-                self._saturn_ring_np.show()
-        # Earth SOI sphere (centered at origin, visible when far from Earth).
-        earth_soi_scale = EARTH_SOI_M / self.transform.scale_m_per_unit
-        ex, ey, ez = self.transform.to_render(np.zeros(3))
-        self._earth_soi_np.set_pos(ex, ey, ez)
-        self._earth_soi_np.set_scale(earth_soi_scale)
-        earth_dist = float(np.linalg.norm(vessel_r))
-        earth_inside = earth_dist < EARTH_SOI_M
-        earth_alpha = self.SOI_INSIDE_ALPHA if earth_inside else self.SOI_BASE_ALPHA
-        self._earth_soi_np.set_alpha_scale(
-            distance_fade(self.rig.distance_m, EARTH_SOI_M * 1.5, EARTH_SOI_M * 15, minimum=0.0)
-        )
-        self._earth_soi_np.set_color_scale(1, 1, 1, earth_alpha)
-        self._earth_soi_np.show()
-        # Planet orbit reference lines (heliocentric circles, offset by -Earth(t)).
-        from orbitsim.core.nbody import _csun
-        sun_geo = _csun(t_now).r
-        sx, sy, sz = self.transform.to_render(sun_geo)
-        self._sun_orbit_frame.set_pos(sx, sy, sz)
-        # Refresh monthly in simulation time.  DE440 positions are in tilted ICRF
-        # axes and the real orbits are eccentric, so flat mean-radius circles do
-        # not describe the paths followed by the rendered planet markers.
-        orbit_epoch_bucket = int(np.floor(t_now / (30.0 * 86400.0)))
-        if (self._planet_orbit_scale != scale
-                or self._planet_orbit_epoch_bucket != orbit_epoch_bucket):
-            self._planet_orbit_scale = scale
-            self._planet_orbit_epoch_bucket = orbit_epoch_bucket
-            _orbit_colors = {
-                "Mercury": (0.5, 0.5, 0.5, 0.5),
-                "Venus": (0.85, 0.75, 0.45, 0.5),
-                "Earth": (0.3, 0.5, 1.0, 0.5),
-                "Mars": (0.85, 0.4, 0.2, 0.5),
-                "Jupiter": (0.8, 0.7, 0.5, 0.4),
-                "Saturn": (0.9, 0.8, 0.6, 0.4),
-                "Uranus": (0.6, 0.85, 0.9, 0.4),
-                "Neptune": (0.3, 0.4, 0.9, 0.4),
-            }
-            earth_state = StateVector(
-                r=np.zeros(3), v=np.zeros(3), mu=0.0, epoch_s=t_now
-            )
-            orbit_states = {
-                "Mercury": _cmercury(t_now),
-                "Venus": _cvenus(t_now),
-                "Earth": earth_state,
-                "Mars": _cmars(t_now),
-                "Jupiter": _cjupiter(t_now),
-                "Saturn": _csaturn(t_now),
-                "Uranus": _curanus(t_now),
-                "Neptune": _cneptune(t_now),
-            }
-            sun_state = _csun(t_now)
-            for oname in ("Mercury", "Venus", "Earth", "Mars",
-                          "Jupiter", "Saturn", "Uranus", "Neptune"):
-                if oname in self._planet_orbit_nps:
-                    self._planet_orbit_nps[oname].remove_node()
-                orbit_points = sample_relative_orbit_points(
-                    orbit_states[oname], sun_state, MU_SUN, n=256
-                )
-                pts = [tuple(point / scale) for point in orbit_points]
-                color = _orbit_colors[oname]
-                # Not `node`: that name is the maneuver node, read later this frame.
-                orbit_np = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
-                orbit_np.reparent_to(self._sun_orbit_frame)
-                self._planet_orbit_nps[oname] = orbit_np
 
     def _frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""

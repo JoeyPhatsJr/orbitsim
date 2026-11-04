@@ -74,7 +74,7 @@ class SolarView:
 
         self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
         self.app.flight_input._apply_mouse_orbit()
-        self.app._update_starfield()
+        self.app.bodies_view._update_starfield()
         self.app.rig.apply()
 
         self.app.warp_controls._update_warp_readout()
