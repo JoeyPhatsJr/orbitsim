@@ -1,26 +1,29 @@
 """Transfer-window (porkchop) analysis overlay, computed off the render thread."""
+
+import numpy as np
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.optimize import porkchop
-from orbitsim.core.planets import A_EARTH
-from orbitsim.core.planets import A_JUPITER
-from orbitsim.core.planets import A_MARS
-from orbitsim.core.planets import A_MERCURY
-from orbitsim.core.planets import A_NEPTUNE
-from orbitsim.core.planets import A_SATURN
-from orbitsim.core.planets import A_URANUS
-from orbitsim.core.planets import A_VENUS
+from orbitsim.core.planets import (
+    A_EARTH,
+    A_JUPITER,
+    A_MARS,
+    A_MERCURY,
+    A_NEPTUNE,
+    A_SATURN,
+    A_URANUS,
+    A_VENUS,
+)
 from orbitsim.core.state import StateVector
 from orbitsim.render.porkchop import render_porkchop_png
 from panda3d.core import CardMaker
-import numpy as np
 
 
 class PorkchopModal:
-    """Transfer-window (porkchop) analysis overlay, computed off the render thread. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app

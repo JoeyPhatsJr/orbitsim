@@ -1,9 +1,10 @@
 """Vessel markers and the cross-fading true-scale ship model + plume."""
+
 from orbitsim.render.geometry import make_uv_sphere
 
 
 class VesselView:
-    """Vessel markers and the cross-fading true-scale ship model + plume. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app

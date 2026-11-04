@@ -1,36 +1,45 @@
 """Central body, lighting, Sun direction, Moon (ring, body, SOI), Lagrange points, planets, starfield."""
+
+import numpy as np
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.nbody import MOON_SOI_M
-from orbitsim.core.planets import EARTH_SOI_M
-from orbitsim.core.planets import JUPITER_SOI_M
-from orbitsim.core.planets import MARS_SOI_M
-from orbitsim.core.planets import MERCURY_SOI_M
-from orbitsim.core.planets import NEPTUNE_SOI_M
-from orbitsim.core.planets import SATURN_SOI_M
-from orbitsim.core.planets import URANUS_SOI_M
-from orbitsim.core.planets import VENUS_SOI_M
+from orbitsim.core.planets import (
+    EARTH_SOI_M,
+    JUPITER_SOI_M,
+    MARS_SOI_M,
+    MERCURY_SOI_M,
+    NEPTUNE_SOI_M,
+    SATURN_SOI_M,
+    URANUS_SOI_M,
+    VENUS_SOI_M,
+)
 from orbitsim.core.state import StateVector
-from orbitsim.render.earth import build_earth
-from orbitsim.render.earth import set_sun_dir
-from orbitsim.render.geometry import make_ring
-from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.orbit_lines import REFERENCE_ORBIT_COLOR
-from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.orbit_lines import sample_orbit_points
-from orbitsim.render.orbit_lines import sample_relative_orbit_points
+from orbitsim.render.earth import build_earth, set_sun_dir
+from orbitsim.render.geometry import make_ring, make_uv_sphere
+from orbitsim.render.orbit_lines import (
+    REFERENCE_ORBIT_COLOR,
+    build_orbit_node,
+    sample_orbit_points,
+    sample_relative_orbit_points,
+)
 from orbitsim.render.skybox import build_starfield
 from orbitsim.render.world_markers import distance_fade
-from panda3d.core import AmbientLight
-from panda3d.core import DirectionalLight
-from panda3d.core import Filename
-from panda3d.core import Vec4
-import numpy as np
+from panda3d.core import AmbientLight, DirectionalLight, Filename, Vec4
 
 
 class BodiesView:
-    """Central body, lighting, Sun direction, Moon (ring, body, SOI), Lagrange points, planets, starfield. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
+    LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
+    SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
+    SOI_INSIDE_COLOR = (0.45, 1.0, 0.65, 1.0)  # greenish "captured by the Moon"
+    SOI_BASE_ALPHA = 0.10                       # faint translucent shell
+    SOI_INSIDE_ALPHA = 0.18
+    SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
+    SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
 
     def __init__(self, app) -> None:
         self.app = app
@@ -185,7 +194,7 @@ class BodiesView:
                 soi.set_depth_write(False)
                 soi.set_two_sided(True)
                 sc = _soi_colors.get(pname, (0.5, 0.5, 0.5, 1.0))
-                soi.set_color(sc[0], sc[1], sc[2], self.app.SOI_BASE_ALPHA)
+                soi.set_color(sc[0], sc[1], sc[2], self.SOI_BASE_ALPHA)
                 soi.hide()
                 self.app._planet_soi_nps[pname] = soi
         # Saturn ring (true-scale annular disk, inner ~1.11× R, outer ~2.33× R).
@@ -218,7 +227,7 @@ class BodiesView:
         earth_soi.set_transparency(TransparencyAttrib.M_alpha)
         earth_soi.set_depth_write(False)
         earth_soi.set_two_sided(True)
-        earth_soi.set_color(0.3, 0.5, 1.0, self.app.SOI_BASE_ALPHA)
+        earth_soi.set_color(0.3, 0.5, 1.0, self.SOI_BASE_ALPHA)
         earth_soi.hide()
         self.app._earth_soi_np = earth_soi
         # Planet orbit reference lines (heliocentric circles, positioned at the Sun's
@@ -245,7 +254,7 @@ class BodiesView:
         # ellipse (always passes through the Moon); rebuilt on zoom or every 6 sim-hours.
         t_now = self.app.clock.sim_time_s
         if (self.app._moon_orbit_scale != scale or self.app._moon_orbit_epoch_s is None
-                or abs(t_now - self.app._moon_orbit_epoch_s) > self.app.MOON_RING_REFRESH_S):
+                or abs(t_now - self.app._moon_orbit_epoch_s) > self.MOON_RING_REFRESH_S):
             self.app._moon_orbit_scale = scale
             self.app._moon_orbit_epoch_s = t_now
             if self.app._moon_orbit_np is not None:
@@ -290,10 +299,10 @@ class BodiesView:
         self.app._soi_np.set_pos(*self.app.transform.to_render(moon_now.r))
         self.app._soi_np.set_scale(soi_scale)
         inside = float(np.linalg.norm(self.app.world.vessels[0].state.r - moon_now.r)) < MOON_SOI_M
-        color = self.app.SOI_INSIDE_COLOR if inside else self.app.SOI_COLOR
-        base_alpha = self.app.SOI_INSIDE_ALPHA if inside else self.app.SOI_BASE_ALPHA
+        color = self.SOI_INSIDE_COLOR if inside else self.SOI_COLOR
+        base_alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
         self.app._soi_np.set_color(color[0], color[1], color[2], base_alpha)
-        fade = distance_fade(self.app.rig.distance_m, self.app.SOI_FADE_NEAR_M, self.app.SOI_FADE_FAR_M, minimum=0.0)
+        fade = distance_fade(self.app.rig.distance_m, self.SOI_FADE_NEAR_M, self.SOI_FADE_FAR_M, minimum=0.0)
         self.app._soi_np.set_alpha_scale(fade)
         self.app._soi_np.show()
 
@@ -306,7 +315,7 @@ class BodiesView:
         # zero at low warp. At high warp the bucket changes every frame and
         # the recompute cadence follows automatically.
         from orbitsim.core.nbody import earth_fixed_lagrange_points
-        lag_bucket = int(self.app.clock.sim_time_s // self.app.LAGRANGE_REFRESH_S)
+        lag_bucket = int(self.app.clock.sim_time_s // self.LAGRANGE_REFRESH_S)
         if getattr(self.app, "_lagrange_bucket", None) != lag_bucket:
             self.app._lagrange_bucket = lag_bucket
             self.app._lagrange_cache = earth_fixed_lagrange_points(self.app.clock.sim_time_s)
@@ -357,7 +366,7 @@ class BodiesView:
                 soi_np.set_scale(soi_scale)
                 dist_to = float(np.linalg.norm(vessel_r - pstate.r))
                 inside = dist_to < soi_r
-                alpha = self.app.SOI_INSIDE_ALPHA if inside else self.app.SOI_BASE_ALPHA
+                alpha = self.SOI_INSIDE_ALPHA if inside else self.SOI_BASE_ALPHA
                 soi_np.set_alpha_scale(
                     distance_fade(self.app.rig.distance_m, soi_r * 1.5, soi_r * 15, minimum=0.0)
                 )
@@ -376,7 +385,7 @@ class BodiesView:
         self.app._earth_soi_np.set_scale(earth_soi_scale)
         earth_dist = float(np.linalg.norm(vessel_r))
         earth_inside = earth_dist < EARTH_SOI_M
-        earth_alpha = self.app.SOI_INSIDE_ALPHA if earth_inside else self.app.SOI_BASE_ALPHA
+        earth_alpha = self.SOI_INSIDE_ALPHA if earth_inside else self.SOI_BASE_ALPHA
         self.app._earth_soi_np.set_alpha_scale(
             distance_fade(self.app.rig.distance_m, EARTH_SOI_M * 1.5, EARTH_SOI_M * 15, minimum=0.0)
         )

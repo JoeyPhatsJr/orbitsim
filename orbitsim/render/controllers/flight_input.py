@@ -1,13 +1,21 @@
 """Keyboard/mouse bindings, throttle, SAS, camera orbit, ship-view toggle, escape."""
-from orbitsim.core.attitude import quat_from_axis_angle
-from orbitsim.core.attitude import quat_multiply
-from orbitsim.core.attitude import quat_normalize
-from orbitsim.core.attitude import quat_rotate_vector
+
 import numpy as np
+from orbitsim.core.attitude import (
+    quat_from_axis_angle,
+    quat_multiply,
+    quat_normalize,
+    quat_rotate_vector,
+)
 
 
 class FlightInput:
-    """Keyboard/mouse bindings, throttle, SAS, camera orbit, ship-view toggle, escape. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
+    ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
+    THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
+    SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
 
     def __init__(self, app) -> None:
         self.app = app
@@ -63,7 +71,7 @@ class FlightInput:
         else:
             self.app._map_distance_m = self.app.rig.target_distance_m  # remember map framing
             self.app.rig.move_to_distance(
-                getattr(self.app, "_ship_distance_m", self.app.SHIP_VIEW_DISTANCE_M)
+                getattr(self.app, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M)
             )
 
     def _rmb(self, down):
@@ -97,7 +105,7 @@ class FlightInput:
         if self.app._last_mouse is not None:
             dx = x - self.app._last_mouse[0]
             dy = y - self.app._last_mouse[1]
-            self.app.rig.orbit(dx * self.app.MOUSE_ORBIT_SENS, dy * self.app.MOUSE_ORBIT_SENS)
+            self.app.rig.orbit(dx * self.MOUSE_ORBIT_SENS, dy * self.MOUSE_ORBIT_SENS)
         self.app._last_mouse = (x, y)
 
     def _set_key(self, key, down):
@@ -126,9 +134,9 @@ class FlightInput:
         v = self.app.world.vessels[0]
         k = self.app._keys
         if k["shift"]:
-            v.throttle = min(1.0, v.throttle + self.app.THROTTLE_STEP * dt)
+            v.throttle = min(1.0, v.throttle + self.THROTTLE_STEP * dt)
         if k["control"]:
-            v.throttle = max(0.0, v.throttle - self.app.THROTTLE_STEP * dt)
+            v.throttle = max(0.0, v.throttle - self.THROTTLE_STEP * dt)
         ax = np.zeros(3)
         if k["w"]:
             ax = ax + np.array([1.0, 0.0, 0.0])    # pitch
@@ -145,5 +153,5 @@ class FlightInput:
         if np.linalg.norm(ax) > 0.0:
             v.sas_mode = "OFF"                      # taking manual control
             world_axis = quat_rotate_vector(v.orientation, ax)
-            dq = quat_from_axis_angle(world_axis, self.app.ROTATE_RATE_RADPS * dt)
+            dq = quat_from_axis_angle(world_axis, self.ROTATE_RATE_RADPS * dt)
             v.orientation = quat_normalize(quat_multiply(dq, v.orientation))

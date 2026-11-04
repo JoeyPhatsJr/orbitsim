@@ -1,10 +1,10 @@
 """F5/F9 quicksave and in-place quickload of the sandbox."""
-from orbitsim.sim.persistence import load_scenario
-from orbitsim.sim.persistence import save_scenario
+
+from orbitsim.sim.persistence import load_scenario, save_scenario
 
 
 class Quicksave:
-    """F5/F9 quicksave and in-place quickload of the sandbox. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app

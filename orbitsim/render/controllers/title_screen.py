@@ -1,4 +1,5 @@
 """Title screen: fuel-load slider, unlimited-dV toggle, launch button."""
+
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectCheckButton import DirectCheckButton
 from direct.gui.DirectFrame import DirectFrame
@@ -7,7 +8,7 @@ from direct.gui.OnscreenText import OnscreenText
 
 
 class TitleScreen:
-    """Title screen: fuel-load slider, unlimited-dV toggle, launch button. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app

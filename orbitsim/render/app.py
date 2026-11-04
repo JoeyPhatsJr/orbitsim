@@ -2,9 +2,7 @@
 
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import (
-    ClockObject,
-)
+from panda3d.core import ClockObject
 
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.camera_rig import CameraRig
@@ -14,27 +12,16 @@ from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.render.process_pool import build_process_pool
 
 from orbitsim.render.controllers.title_screen import TitleScreen
-
 from orbitsim.render.controllers.solar_view import SolarView
-
 from orbitsim.render.controllers.warp_controls import WarpControls
-
 from orbitsim.render.controllers.flight_input import FlightInput
-
 from orbitsim.render.controllers.quicksave import Quicksave
-
 from orbitsim.render.controllers.targeting import Targeting
-
 from orbitsim.render.controllers.porkchop_modal import PorkchopModal
-
 from orbitsim.render.controllers.trajectory_view import TrajectoryView
-
 from orbitsim.render.controllers.maneuver_editor import ManeuverEditor
-
 from orbitsim.render.controllers.bodies_view import BodiesView
-
 from orbitsim.render.controllers.vessel_view import VesselView
-
 from orbitsim.render.controllers.readouts import Readouts
 
 _global_clock = ClockObject.get_global_clock()
@@ -42,6 +29,15 @@ _global_clock = ClockObject.get_global_clock()
 
 class OrbitApp(ShowBase):
     """Renders one central body + vessels with orbit lines; time-warpable."""
+
+    # Constants shared by several controllers (single-user constants live on their controller).
+    EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
+    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
+                                      # (sim is untouched): escape climb-out 4.6s -> ~1.7s
+    QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
+    # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
+    # trajectory and magenta maneuver preview.
+    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
 
     def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
@@ -83,10 +79,6 @@ class OrbitApp(ShowBase):
                 executor.shutdown(wait=False, cancel_futures=True)
             setattr(self, attr, None)
         super().destroy()
-
-    # ------------------------------------------------------------------ title screen
-
-    # ------------------------------------------------------------------ sim scene
 
     def _start_sim(self) -> None:
         """Build the world scene (bodies, vessels, HUD, maneuver UI) and start updating."""
@@ -168,59 +160,9 @@ class OrbitApp(ShowBase):
             self._porkchop_request = 0
         self._porkchop_card = None
 
-    # Distinct colours for the Sun + 8 planets (constant on-screen marker size).
-    _PLANET_COLORS = {
-        "Sun": (1.0, 0.85, 0.2, 1.0),
-        "Mercury": (0.6, 0.6, 0.6, 1.0),
-        "Venus": (0.9, 0.8, 0.5, 1.0),
-        "Earth": (0.3, 0.5, 1.0, 1.0),
-        "Mars": (0.9, 0.4, 0.2, 1.0),
-        "Jupiter": (0.8, 0.7, 0.5, 1.0),
-        "Saturn": (0.9, 0.8, 0.6, 1.0),
-        "Uranus": (0.6, 0.85, 0.9, 1.0),
-        "Neptune": (0.3, 0.4, 0.9, 1.0),
-    }
-
-    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
-    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
-    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
-    JOG_DEADZONE = 0.02  # |value| below this contributes no change
-
-    # Scheduled maneuver node.
-    NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press (base step for buttons)
-    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
-    NODE_JOG_CURVE = 4.0
-    AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
-    EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
-    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
-    MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
-    TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
-    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
-                                      # (sim is untouched): escape climb-out 4.6s -> ~1.7s
-
-    MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
-
-    ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
-    LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
-    THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
-    SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
-    SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
-    SOI_INSIDE_COLOR = (0.45, 1.0, 0.65, 1.0)  # greenish "captured by the Moon"
-    SOI_BASE_ALPHA = 0.10                       # faint translucent shell
-    SOI_INSIDE_ALPHA = 0.18
-    SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
-    SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
-
-    QUICKSAVE_PATH = "saves/quicksave.json"
-
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""
         self.hud.flash(text)
-
-    # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
-    # trajectory and magenta maneuver preview.
-    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
-    MAX_ENCOUNTER_MARKERS = 4   # rarely more than 1-2 flybys visible on a path
 
     def _update_responsive_ui(self) -> None:
         """Apply breakpoint changes only when the viewport dimensions change."""

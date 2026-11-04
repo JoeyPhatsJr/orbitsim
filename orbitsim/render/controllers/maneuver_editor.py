@@ -1,23 +1,30 @@
 """Maneuver-node editor: jog sliders, node timing, preview, execute, unlimited dV."""
+
+import numpy as np
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.DirectSlider import DirectSlider
 from direct.gui.OnscreenText import OnscreenText
-from orbitsim.core.maneuvers import ManeuverNode
-from orbitsim.core.maneuvers import apply_maneuver
+from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.hud.format import fmt_countdown
-from orbitsim.render.orbit_lines import MANEUVER_COLOR
-from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.trajectory_helpers import localize_polyline
-from orbitsim.render.trajectory_helpers import maneuver_preview_key
+from orbitsim.render.orbit_lines import MANEUVER_COLOR, build_orbit_node
+from orbitsim.render.trajectory_helpers import localize_polyline, maneuver_preview_key
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
-import numpy as np
 
 
 class ManeuverEditor:
-    """Maneuver-node editor: jog sliders, node timing, preview, execute, unlimited dV. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
+    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
+    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
+    JOG_DEADZONE = 0.02  # |value| below this contributes no change
+    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
+    NODE_JOG_CURVE = 4.0
+    AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
+    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
 
     def __init__(self, app) -> None:
         self.app = app
@@ -137,10 +144,10 @@ class ManeuverEditor:
         so small displacements give fine control and large ones change quickly.
         """
         mag = abs(value)
-        if mag <= self.app.JOG_DEADZONE:
+        if mag <= self.JOG_DEADZONE:
             return 0.0
-        shaped = (np.exp(self.app.JOG_CURVE * mag) - 1.0) / (np.exp(self.app.JOG_CURVE) - 1.0)
-        return float(np.copysign(self.app.JOG_MAX_RATE_MPS * shaped, value))
+        shaped = (np.exp(self.JOG_CURVE * mag) - 1.0) / (np.exp(self.JOG_CURVE) - 1.0)
+        return float(np.copysign(self.JOG_MAX_RATE_MPS * shaped, value))
 
     def apply_jogs(self, real_dt_s: float) -> None:
         """Integrate each jog slider's rate into its delta-V component for this frame."""
@@ -156,9 +163,9 @@ class ManeuverEditor:
         if hasattr(self.app, "_node_time_jog"):
             tv = self.app._node_time_jog["value"]
             mag = abs(tv)
-            if mag > self.app.JOG_DEADZONE:
-                shaped = (np.exp(self.app.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.app.NODE_JOG_CURVE) - 1.0)
-                rate = float(np.copysign(self.app.NODE_JOG_MAX_RATE * shaped, tv))
+            if mag > self.JOG_DEADZONE:
+                shaped = (np.exp(self.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.NODE_JOG_CURVE) - 1.0)
+                rate = float(np.copysign(self.NODE_JOG_MAX_RATE * shaped, tv))
                 now = self.app.clock.sim_time_s
                 base = self.app._node_epoch_s if self.app._node_epoch_s is not None else now
                 self.app._node_epoch_s = max(now, base + rate * real_dt_s)
@@ -373,7 +380,7 @@ class ManeuverEditor:
             self.app._preview_future is None
             and (
                 self.app._preview_np is None
-                or now_real - self.app._preview_submit_t > self.app.PREVIEW_THROTTLE_S
+                or now_real - self.app._preview_submit_t > self.PREVIEW_THROTTLE_S
             )
         ):
             post_burn = apply_maneuver(vessel.state, node)
@@ -431,7 +438,7 @@ class ManeuverEditor:
                 self.app._node_dv_label.remove_node()
                 self.app._node_dv_label = None
         # Auto-warp-down as the node nears (never warps up).
-        if ttn is not None and 0.0 < ttn <= self.app.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
+        if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
             self.app.clock.warp_down()
         # Pending-node readout (single node); shows "DUE" once within the execute window.
         if ttn is not None and ttn >= -self.app.EXECUTE_TOLERANCE_S:

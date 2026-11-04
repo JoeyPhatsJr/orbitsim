@@ -1,11 +1,12 @@
 """Time-warp buttons, readout, and guarded warp-up/max (blocked while thrusting)."""
+
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 
 
 class WarpControls:
-    """Time-warp buttons, readout, and guarded warp-up/max (blocked while thrusting). Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app

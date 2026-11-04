@@ -1,16 +1,20 @@
 """Live trajectory lines, encounter patches/cues, and teleport-coast operations."""
+
+import numpy as np
 from orbitsim.core.elements import state_to_elements
 from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.trajectory_helpers import coast_chunks
-from orbitsim.render.trajectory_helpers import localize_polyline
-from orbitsim.render.trajectory_sampling import sample_trajectory
-from orbitsim.render.trajectory_sampling import trajectory_horizon_s as _trajectory_horizon_s
-import numpy as np
+from orbitsim.render.trajectory_helpers import coast_chunks, localize_polyline
+from orbitsim.render.trajectory_sampling import (
+    sample_trajectory,
+    trajectory_horizon_s as _trajectory_horizon_s,
+)
 
 
 class TrajectoryView:
-    """Live trajectory lines, encounter patches/cues, and teleport-coast operations. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
 
     def __init__(self, app) -> None:
         self.app = app
@@ -133,7 +137,7 @@ class TrajectoryView:
             self.app._traj_future[idx] is None
             and now_real - max(
                 self.app._traj_last_submit_t[idx], self.app._traj_last_complete_t[idx]
-            ) >= self.app.TRAJECTORY_REFRESH_S
+            ) >= self.TRAJECTORY_REFRESH_S
         ):
             horizon = _trajectory_horizon_s(vessel.state, self.app.world.solar_system)
             n_pts = 256

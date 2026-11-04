@@ -1,11 +1,14 @@
 """Sandbox HUD wiring: navball, SAS panel, velocity readout, panel dock, apsis/encounter markers, per-frame readouts."""
+
+import numpy as np
 from orbitsim.core.moon import moon_state_at
 from orbitsim.render.world_markers import distance_fade
-import numpy as np
 
 
 class Readouts:
-    """Sandbox HUD wiring: navball, SAS panel, velocity readout, panel dock, apsis/encounter markers, per-frame readouts. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    MAX_ENCOUNTER_MARKERS = 4   # rarely more than 1-2 flybys visible on a path
 
     def __init__(self, app) -> None:
         self.app = app
@@ -54,7 +57,7 @@ class Readouts:
         # labels, placed each frame at each upcoming SOI closest approach.
         self.app._encounter_marker_nps = []
         self.app._encounter_labels = []
-        for _ in range(self.app.MAX_ENCOUNTER_MARKERS):
+        for _ in range(self.MAX_ENCOUNTER_MARKERS):
             mk, lbl = build_labeled_marker(
                 self.app.render, "", color=self.app.ENCOUNTER_COLOR,
                 marker_scale=5.0, label_scale=10.5,

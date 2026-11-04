@@ -1,24 +1,26 @@
 """Target selection (click-pick), intercept planning, closest-approach markers and readout."""
+
+import numpy as np
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import apply_maneuver
-from orbitsim.core.planets import A_EARTH
-from orbitsim.core.planets import A_JUPITER
-from orbitsim.core.planets import A_MARS
-from orbitsim.core.planets import A_MERCURY
-from orbitsim.core.planets import A_NEPTUNE
-from orbitsim.core.planets import A_SATURN
-from orbitsim.core.planets import A_URANUS
-from orbitsim.core.planets import A_VENUS
+from orbitsim.core.planets import (
+    A_EARTH,
+    A_JUPITER,
+    A_MARS,
+    A_MERCURY,
+    A_NEPTUNE,
+    A_SATURN,
+    A_URANUS,
+    A_VENUS,
+)
 from orbitsim.core.rendezvous import closest_approach
 from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.hud.format import fmt_countdown
-from orbitsim.render.hud.format import fmt_dist
-import numpy as np
+from orbitsim.render.hud.format import fmt_countdown, fmt_dist
 
 
 class Targeting:
-    """Target selection (click-pick), intercept planning, closest-approach markers and readout. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app
