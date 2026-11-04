@@ -40,7 +40,7 @@ class FlightInput:
             self.app.accept("mouse1", self.app.targeting._on_mouse1_down)   # tap (no drag) picks a target
             self.app.accept("z", self._throttle_full)
             self.app.accept("x", self._throttle_cut)
-            self.app.accept("u", self.app._toggle_unlimited_dv)
+            self.app.accept("u", self.app.maneuver_editor._toggle_unlimited_dv)
             self.app.accept("t", self._toggle_sas)
             self.app.accept("m", self._toggle_ship_view)   # snap map <-> ship view
             sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
@@ -114,7 +114,7 @@ class FlightInput:
         v.sas_mode = "STABILITY" if v.sas_mode == "OFF" else "OFF"
 
     def _set_sas(self, mode):
-        if mode == "MANEUVER" and self.app._current_node().magnitude_mps <= 0.0:
+        if mode == "MANEUVER" and self.app.maneuver_editor._current_node().magnitude_mps <= 0.0:
             self.app._flash_message("Plan a maneuver first")
             return
         self.app.world.vessels[0].sas_mode = mode

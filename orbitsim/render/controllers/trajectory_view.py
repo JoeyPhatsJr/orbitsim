@@ -39,7 +39,7 @@ class TrajectoryView:
             self.app.clock.sim_time_s += dt_s
             yield (index + 1) / total
         self.app._operation_rollback = None
-        self.app._execute_burn()
+        self.app.maneuver_editor._execute_burn()
 
     def _trajectory_coast_operation(self, duration_s):
         """Frame-budgeted coast to a clicked future trajectory sample."""
@@ -195,4 +195,4 @@ class TrajectoryView:
                 f"Approach {enc.body_name}: {tag}  "
                 f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
             )
-            self.app._sync_maneuver_hud()
+            self.app.maneuver_editor._sync_maneuver_hud()

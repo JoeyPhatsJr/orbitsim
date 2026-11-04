@@ -212,7 +212,7 @@ class Targeting:
         self.app._dv["rad"] = node.dv_radial_mps
         for axis in ("pro", "nrm", "rad"):
             self.app._dv_value_text[axis].setText(f"{self.app._dv[axis]:+.0f}")
-        self.app._refresh_readout()
+        self.app.maneuver_editor._refresh_readout()
         self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
 
     def _poll_planning(self) -> None:
@@ -248,7 +248,7 @@ class Targeting:
             self.app._ca_label_positions[key] = None
             label.hide()
         self.app._target_line = ""
-        self.app._sync_maneuver_hud()
+        self.app.maneuver_editor._sync_maneuver_hud()
 
     def _ca_marker(self, attr, color):
         """Lazily create/reuse a closest-approach marker NodePath."""
@@ -298,7 +298,7 @@ class Targeting:
                 f"Target: {self.app._target.name}   dist {fmt_dist(dist)}"
                 f"   rel {relsp:,.0f} m/s"
             )
-            self.app._sync_maneuver_hud()
+            self.app.maneuver_editor._sync_maneuver_hud()
         elif self.app._target is not None:
             import time as _time
             now_real = _time.monotonic()
@@ -347,4 +347,4 @@ class Targeting:
                 f"Target: {self.app._target.name}   CA T-{fmt_countdown(countdown)}"
                 f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
             )
-            self.app._sync_maneuver_hud()
+            self.app.maneuver_editor._sync_maneuver_hud()

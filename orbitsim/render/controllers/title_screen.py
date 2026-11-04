@@ -104,4 +104,4 @@ class TitleScreen:
         self.app._title_nodes = []
         self.app._start_sim()                # builds the HUD + settings panel
         if want_unlimited:
-            self.app._set_unlimited_dv(True)  # now applies flag + syncs panel + readout
+            self.app.maneuver_editor._set_unlimited_dv(True)  # now applies flag + syncs panel + readout
