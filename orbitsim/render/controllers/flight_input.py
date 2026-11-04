@@ -73,7 +73,7 @@ class FlightInput:
     def _handle_escape(self):
         """Close the topmost transient surface before opening settings."""
         if self.app.operation.status.running:
-            self.app._cancel_operation()
+            self.app.trajectory_view._cancel_operation()
             return
         if getattr(self.app.keybind_overlay, "visible", False):
             self.app.keybind_overlay.hide()

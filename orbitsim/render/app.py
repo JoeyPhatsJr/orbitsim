@@ -20,8 +20,7 @@ from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.state import StateVector
 from orbitsim.render.trajectory_sampling import (
-    sample_trajectory, sample_preview,
-    trajectory_horizon_s as _trajectory_horizon_s,
+    sample_preview,
 )
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.geometry import make_uv_sphere, make_ring
@@ -54,7 +53,8 @@ from orbitsim.render.skybox import build_starfield
 from orbitsim.render.process_pool import build_process_pool
 from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.trajectory_helpers import (
-    coast_chunks, localize_polyline, maneuver_preview_key,
+    localize_polyline,
+    maneuver_preview_key,
 )
 
 from orbitsim.render.controllers.title_screen import TitleScreen
@@ -70,6 +70,8 @@ from orbitsim.render.controllers.quicksave import Quicksave
 from orbitsim.render.controllers.targeting import Targeting
 
 from orbitsim.render.controllers.porkchop_modal import PorkchopModal
+
+from orbitsim.render.controllers.trajectory_view import TrajectoryView
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -93,6 +95,7 @@ class OrbitApp(ShowBase):
         self.operation = OperationController()
         from orbitsim.render.ui.performance import FrameMeter
         self.frame_meter = FrameMeter()
+        self.trajectory_view = TrajectoryView(self)
         self.porkchop_modal = PorkchopModal(self)
         self.targeting = Targeting(self)
         self.quicksave = Quicksave(self)
@@ -132,7 +135,7 @@ class OrbitApp(ShowBase):
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
-        self.operation_overlay = OperationOverlay(self, self._cancel_operation)
+        self.operation_overlay = OperationOverlay(self, self.trajectory_view._cancel_operation)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self.settings_panel = SettingsPanel(
@@ -630,18 +633,6 @@ class OrbitApp(ShowBase):
         else:
             self._maneuver_frame.hide()
 
-    def _cancel_operation(self) -> None:
-        self.operation.cancel()
-        rollback = getattr(self, "_operation_rollback", None)
-        if rollback is not None:
-            vessel, state, orientation, clock_time = rollback
-            vessel.state = state
-            vessel.orientation = orientation
-            self.clock.sim_time_s = clock_time
-        self._operation_rollback = None
-        self.operation_overlay.update(self.operation.status)
-        self._flash_message("Operation cancelled")
-
     def _jog_rate_mps_per_s(self, value: float) -> float:
         """Map a jog displacement in [-1, 1] to a signed delta-V rate [m/s per s].
 
@@ -922,7 +913,7 @@ class OrbitApp(ShowBase):
             self._operation_rollback = (
                 vessel, vessel.state, vessel.orientation.copy(), self.clock.sim_time_s
             )
-            self.operation.start("Coasting to maneuver", self._jump_operation(ttn))
+            self.operation.start("Coasting to maneuver", self.trajectory_view._jump_operation(ttn))
             self.operation_overlay.update(self.operation.status)
             return
         if ttn is not None and ttn < -self.EXECUTE_TOLERANCE_S:
@@ -944,36 +935,6 @@ class OrbitApp(ShowBase):
             self._dv_value_text[axis].setText("+0")
         self._release_jogs()
         self._refresh_readout()
-
-    def _jump_operation(self, duration_s):
-        """Frame-budgeted coast generator; one ephemeris-aware day per rendered frame."""
-        from orbitsim.core.nbody import refresh_ephemeris_cache
-
-        chunks = coast_chunks(duration_s)
-        total = len(chunks)
-        for index, dt_s in enumerate(chunks):
-            refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
-            self.world.step(dt_s)
-            self.clock.sim_time_s += dt_s
-            yield (index + 1) / total
-        self._operation_rollback = None
-        self._execute_burn()
-
-    def _trajectory_coast_operation(self, duration_s):
-        """Frame-budgeted coast to a clicked future trajectory sample."""
-        from orbitsim.core.nbody import refresh_ephemeris_cache
-
-        chunks = coast_chunks(duration_s)
-        total = len(chunks)
-        for index, dt_s in enumerate(chunks):
-            refresh_ephemeris_cache(self.clock.sim_time_s + 0.5 * dt_s)
-            self.world.step(dt_s)
-            self.clock.sim_time_s += dt_s
-            yield (index + 1) / total
-        self._operation_rollback = None
-        self._traj_world_cache[0] = None
-        self._traj_epoch_cache[0] = None
-        self._flash_message("Arrived at trajectory point")
 
     MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
 
@@ -1016,7 +977,7 @@ class OrbitApp(ShowBase):
                 self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
                 # Encounter patches ride the preview node (same origin/scale).
                 self._preview_encounters = encounters
-                self._build_encounter_patches(
+                self.trajectory_view._build_encounter_patches(
                     self._preview_np, points, self._preview_origin, scale, encounters
                 )
 
@@ -1051,99 +1012,6 @@ class OrbitApp(ShowBase):
     # trajectory and magenta maneuver preview.
     ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
     MAX_ENCOUNTER_MARKERS = 4   # rarely more than 1-2 flybys visible on a path
-
-    def _build_encounter_patches(self, parent, world_pts, origin, scale, encounters):
-        """Draw each flyby SOI segment as a distinct-colored overlay parented to the
-        trajectory node (so it inherits the floating-origin transform for free)."""
-        for enc in encounters:
-            if enc.body_name in ("Earth", "Sun"):
-                continue   # primary / heliocentric-escape: no periapsis patch
-            seg = world_pts[enc.start_index:enc.end_index + 1]
-            if len(seg) < 2:
-                continue
-            pts = [tuple((p - origin) / scale) for p in seg]
-            node = build_orbit_node(
-                pts, color=self.ENCOUNTER_COLOR, thickness=3.0, fade_minimum=0.7
-            )
-            node.reparent_to(parent)   # local points already relative to origin/scale
-
-    def _install_trajectory(self, idx, world_pts, scale, state) -> None:
-        """Swap cached prediction points into Panda3D; called only on the render thread."""
-        local_pts, origin = localize_polyline(world_pts)
-        pts = [tuple(p / scale) for p in local_pts]
-        if self.orbit_nps[idx] is not None:
-            self.orbit_nps[idx].remove_node()   # removes any child encounter patches too
-        node = build_orbit_node(pts)
-        node.reparent_to(self.render)
-        node.set_pos(*self.transform.to_render(origin))
-        self.orbit_nps[idx] = node
-        self._traj_render_origin[idx] = origin
-        encounters = self._traj_encounters[idx] if idx < len(self._traj_encounters) else None
-        if encounters:
-            self._build_encounter_patches(node, world_pts, origin, scale, encounters)
-        if idx == 0:
-            try:
-                if self.world.solar_system:
-                    from orbitsim.core.nbody import osculating_elements_solar
-                    osc = osculating_elements_solar(state, state.epoch_s)
-                else:
-                    osc = state_to_elements(state)
-                if osc.e >= 1.0:
-                    raise ValueError("unbound trajectory has no apoapsis")
-                from orbitsim.render.world_markers import apsis_points_on_path
-                pe_point, ap_point = apsis_points_on_path(world_pts)
-                self._apsis_positions["PE"] = pe_point
-                self._apsis_positions["AP"] = ap_point
-            except ValueError:
-                self._apsis_positions["PE"] = None
-                self._apsis_positions["AP"] = None
-
-    def _rebuild_trajectory(self, idx, vessel, now_real) -> None:
-        """Poll/submit N-body prediction work without blocking the render thread."""
-        future = self._traj_future[idx]
-        if future is not None and future.done():
-            try:
-                points, epochs, encounters = future.result()
-                self._traj_world_cache[idx] = points
-                self._traj_epoch_cache[idx] = epochs
-                self._traj_encounters[idx] = encounters
-            except Exception:
-                self._traj_world_cache[idx] = None
-                self._traj_epoch_cache[idx] = None
-                self._traj_encounters[idx] = []
-            self._traj_future[idx] = None
-            self._traj_last_complete_t[idx] = now_real
-            self._traj_render_scale[idx] = None
-
-        scale = self.transform.scale_m_per_unit
-        cached = self._traj_world_cache[idx]
-        if cached is not None and self._traj_render_scale[idx] != scale:
-            self._install_trajectory(idx, cached, scale, vessel.state)
-            self._traj_render_scale[idx] = scale
-        origin = self._traj_render_origin[idx]
-        if origin is not None and self.orbit_nps[idx] is not None:
-            self.orbit_nps[idx].set_pos(*self.transform.to_render(origin))
-
-        if (
-            self._traj_future[idx] is None
-            and now_real - max(
-                self._traj_last_submit_t[idx], self._traj_last_complete_t[idx]
-            ) >= self.TRAJECTORY_REFRESH_S
-        ):
-            horizon = _trajectory_horizon_s(vessel.state, self.world.solar_system)
-            n_pts = 256
-            self._traj_last_submit_t[idx] = now_real
-            self._traj_future[idx] = self._compute_executor.submit(
-                sample_trajectory,
-                vessel.state,
-                self.world.solar_system,
-                self.PREDICTION_MIN_SUBSTEP_S,
-                n_pts,
-                horizon,
-                2,
-                True,   # with_times
-                True,   # with_encounters
-            )
 
     def _update_responsive_ui(self) -> None:
         """Apply breakpoint changes only when the viewport dimensions change."""
@@ -1324,7 +1192,7 @@ class OrbitApp(ShowBase):
         for idx, vessel in enumerate(self.world.vessels):
             vx, vy, vz = self.transform.to_render(vessel.state.r)
             self.vessel_nps[idx].set_pos(vx, vy, vz)
-            self._rebuild_trajectory(idx, vessel, now_real)
+            self.trajectory_view._rebuild_trajectory(idx, vessel, now_real)
         if self._preview_np is not None and self._preview_origin is not None:
             self._preview_np.set_pos(*self.transform.to_render(self._preview_origin))
         self._place_apsis_markers()
@@ -1646,55 +1514,8 @@ class OrbitApp(ShowBase):
             target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
         self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_encounter_info(v0, dom_body, dom_pos)
-        self._update_encounter_cues()
+        self.trajectory_view._update_encounter_cues()
         self.warp_controls._update_warp_readout()
-
-    def _update_encounter_cues(self) -> None:
-        """Place predicted-flyby periapsis markers and set the HUD approach line.
-
-        Shows the post-burn preview's encounters while a maneuver is planned,
-        otherwise the live trajectory's. The HUD line is only set when the vessel
-        is not already inside an SOI (the live flyby readout takes that slot)."""
-        if not hasattr(self, "_encounter_marker_nps"):
-            return
-        now = self.clock.sim_time_s
-        source = (self._preview_encounters
-                  if (self._preview_np is not None and self._preview_encounters)
-                  else (self._traj_encounters[0] or []))
-        flybys = sorted(
-            (e for e in source
-             if e.body_name not in ("Earth", "Sun")
-             and e.periapsis_epoch_s > now - self.EXECUTE_TOLERANCE_S),
-            key=lambda e: e.periapsis_epoch_s,
-        )
-        for i, marker in enumerate(self._encounter_marker_nps):
-            label = self._encounter_labels[i]
-            if i >= len(flybys):
-                marker.hide()
-                label.hide()
-                continue
-            enc = flybys[i]
-            rx, ry, rz = self.transform.to_render(enc.periapsis_point_m)
-            marker.set_pos(rx, ry, rz)
-            marker.show()
-            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
-            tag = "IMPACT" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
-            countdown = max(0.0, enc.periapsis_epoch_s - now)
-            label.node().set_text(f"{enc.body_name} {tag}  T-{fmt_countdown(countdown)}")
-            label.set_pos(rx, ry, rz + 8.0)
-            label.show()
-        # Predicted approach line — only when not already inside an SOI.
-        if flybys and not getattr(self, "_encounter_line", ""):
-            enc = flybys[0]
-            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
-            tag = "impact" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
-            countdown = max(0.0, enc.periapsis_epoch_s - now)
-            v_inf = enc.v_inf_mps / 1000.0 if np.isfinite(enc.v_inf_mps) else 0.0
-            self._encounter_line = (
-                f"Approach {enc.body_name}: {tag}  "
-                f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
-            )
-            self._sync_maneuver_hud()
 
     def run_app(self) -> None:
         self.run()

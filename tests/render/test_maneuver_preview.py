@@ -80,9 +80,10 @@ def test_build_encounter_patches_skips_primary_escape_and_short_runs():
     import numpy as np
     from panda3d.core import NodePath
     from orbitsim.render.app import OrbitApp
+    from orbitsim.render.controllers.trajectory_view import TrajectoryView
     from orbitsim.core.encounters import Encounter
 
-    class _FakeSelf:
+    class _FakeApp:
         ENCOUNTER_COLOR = OrbitApp.ENCOUNTER_COLOR
 
     def enc(name, start, end, radius):
@@ -103,7 +104,7 @@ def test_build_encounter_patches_skips_primary_escape_and_short_runs():
         enc("Sun", 45, 50, 7.0e8),     # skipped: heliocentric escape
         enc("Mars", 52, 52, 3.4e6),    # skipped: single-sample run (< 2 points)
     ]
-    OrbitApp._build_encounter_patches(
-        _FakeSelf(), parent, pts, pts[0].copy(), 2.0e4, encounters
+    TrajectoryView(_FakeApp())._build_encounter_patches(
+        parent, pts, pts[0].copy(), 2.0e4, encounters
     )
     assert parent.get_num_children() == 1

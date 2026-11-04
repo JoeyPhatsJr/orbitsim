@@ -128,7 +128,7 @@ class Targeting:
         )
         self.app.operation.start(
             f"Coasting {fmt_countdown(duration_s)} along trajectory",
-            self.app._trajectory_coast_operation(duration_s),
+            self.app.trajectory_view._trajectory_coast_operation(duration_s),
         )
         self.app.operation_overlay.update(self.app.operation.status)
 
