@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import numpy as np
 from orbitsim.core.state import StateVector
-from orbitsim.core.frames import perifocal_to_inertial, inertial_to_perifocal
+from orbitsim.core.frames import perifocal_rotation, perifocal_to_inertial, inertial_to_perifocal  # noqa: F401
 
 
 @dataclass(frozen=True)
@@ -208,6 +208,18 @@ def elements_to_state(elements: KeplerianElements) -> StateVector:
     Implements Curtis, Orbital Mechanics for Engineering Students, Algorithm 4.2.
     Works for elliptic, parabolic, and hyperbolic orbits.
     """
+    return elements_to_state_rotated(
+        elements, perifocal_rotation(elements.raan, elements.i, elements.argp)
+    )
+
+
+def elements_to_state_rotated(elements: KeplerianElements, q: np.ndarray) -> StateVector:
+    """``elements_to_state`` with the perifocal→inertial rotation ``q`` precomputed.
+
+    ``q`` must be ``perifocal_rotation(elements.raan, elements.i, elements.argp)``; it is
+    constant along an orbit, so callers propagating one orbit to many epochs build it once.
+    Bit-identical to ``elements_to_state`` (which delegates here).
+    """
     mu = elements.mu
     p = elements.semi_latus_rectum
     h = np.sqrt(mu * p)
@@ -224,14 +236,9 @@ def elements_to_state(elements: KeplerianElements) -> StateVector:
         dtype=np.float64,
     )
 
-    # Rotate to inertial frame
-    r_inertial, v_inertial = perifocal_to_inertial(
-        r_pqw,
-        v_pqw,
-        elements.raan,
-        elements.i,
-        elements.argp,
-    )
+    # Rotate to inertial frame (same arithmetic as frames.perifocal_to_inertial)
+    r_inertial = np.asarray(q @ r_pqw, dtype=np.float64)
+    v_inertial = np.asarray(q @ v_pqw, dtype=np.float64)
 
     return StateVector(
         r=r_inertial,

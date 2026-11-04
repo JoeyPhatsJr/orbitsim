@@ -20,8 +20,10 @@ On Linux the venv lives at `.venv/bin/`, on Windows at `.venv/Scripts/`.
 
 ```bash
 # Linux
-.venv/bin/python -m pytest tests/ -q                     # full suite (~430 tests, ~4 min: app goldens)
+.venv/bin/python -m pytest tests/ -q -n auto             # full suite in parallel (~460 tests, ~2.5 min)
+.venv/bin/python -m pytest tests/ -q                     # same, serial (~4 min: the app goldens dominate)
 .venv/bin/python -m pytest tests/core -q                 # physics core only (no graphics needed)
+.venv/bin/python -m tests.render.app_harness.profile zoom --project   # frame-time profile of a workload
 .venv/bin/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/bin/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
 .venv/bin/python -m orbitsim                             # launch the sandbox (LEO, flyable)
@@ -192,6 +194,12 @@ don't batch many changes into one late commit. Stage specific files by **explici
   `local_horizon_basis`, which falls back to an r-only vertical.
 - **Hyperbolic Kepler must converge on the Newton step, not |f|.** Converge on
   `abs(dF) <= tol*(1+abs(F))` instead of `abs(f) < tol`. The elliptic solver is immune.
+- **Profile before optimizing; most hot spots were per-point Python calls.** Use
+  `tests.render.app_harness.profile` (fixed-step clock, so runs are comparable). Past wins: orbit
+  lines sampled in one numpy pass (not a StateVector per point); closest approach via
+  `core.propagate.KeplerOrbit` (elements + rotation derived once; `state_at` is bit-identical to
+  `propagate_kepler`); `_norm3`/`_cross3` in the substep hot loop (bit-identical to numpy's, minus
+  the n-d overhead). Prefer bit-identical speedups — then the physics goldens stay exact.
 - **Trajectory lines are the main per-frame cost — throttle, don't naively cache.** Fix is a
   **real-time throttle** (`PREVIEW_THROTTLE_S`, 5 Hz), not a cache. Keep the live line cheap
   (1 orbit, 256 pts); the preview draws 2 orbits at 512 pts.

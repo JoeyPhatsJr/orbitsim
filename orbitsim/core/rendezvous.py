@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.propagate import KeplerOrbit, propagate_kepler
 from orbitsim.core.state import StateVector
 
 
@@ -49,13 +49,26 @@ def closest_approach(
     if coarse_samples < 2:
         raise ValueError(f"coarse_samples must be >= 2, got {coarse_samples}")
 
-    def _sep(t):
-        ra = propagator(state_a, t).r
-        rb = propagator(state_b, t).r
-        return float(np.linalg.norm(ra - rb))
-
     times = np.linspace(0.0, window_s, coarse_samples + 1)
-    seps = np.array([_sep(float(t)) for t in times])
+    if propagator is propagate_kepler:
+        # Fast path: derive each orbit once (KeplerOrbit.state_at is exactly
+        # propagate_kepler) and run the coarse scan vectorized.
+        orbit_a, orbit_b = KeplerOrbit(state_a), KeplerOrbit(state_b)
+        at_a, at_b = orbit_a.state_at, orbit_b.state_at
+    else:
+        def at_a(t):
+            return propagator(state_a, t)
+
+        def at_b(t):
+            return propagator(state_b, t)
+
+    def _sep(t):
+        return float(np.linalg.norm(at_a(t).r - at_b(t).r))
+
+    if propagator is propagate_kepler:
+        seps = np.linalg.norm(orbit_a.positions(times) - orbit_b.positions(times), axis=1)
+    else:
+        seps = np.array([_sep(float(t)) for t in times])
     k = int(np.argmin(seps))
 
     # Ternary-search refine within [t_{k-1}, t_{k+1}].
@@ -76,8 +89,8 @@ def closest_approach(
     if seps[k] <= _sep(t_ca):
         t_ca = float(times[k])
 
-    sa = propagator(state_a, t_ca)
-    sb = propagator(state_b, t_ca)
+    sa = at_a(t_ca)
+    sb = at_b(t_ca)
     sep = float(np.linalg.norm(sa.r - sb.r))
     rel = float(np.linalg.norm(sa.v - sb.v))
     return ClosestApproach(t_ca_s=t_ca, separation_m=sep, rel_speed_mps=rel)

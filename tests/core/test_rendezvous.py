@@ -71,3 +71,44 @@ def test_nbody_ca_differs_from_keplerian_near_moon():
     # N-body and Keplerian CAs must differ by > 1 km (Moon bends trajectories).
     diff = abs(ca_nbody.separation_m - ca_kep.separation_m)
     assert diff > 1000.0, f"expected N-body CA to differ from Keplerian, got {diff:.1f} m"
+
+
+# ---------------------------------------------------------------------------
+# The default (Kepler) path must give the same answer as the generic per-sample
+# path, without re-deriving orbital elements for every sample (it took ~270 ms
+# on the render thread every 0.5 s while a target was selected).
+# ---------------------------------------------------------------------------
+def _ca_cases():
+    from orbitsim.core.moon import moon_state_at
+    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]), v=np.array([0.0, 7.546e3, 300.0]), mu=MU_EARTH, epoch_s=0.0)
+    tli = StateVector(r=np.array([6.7e6, 0.0, 0.0]), v=np.array([0.0, 10.85e3, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    other = StateVector(r=np.array([7.1e6, 1.0e5, 0.0]), v=np.array([-100.0, 7.4e3, 0.0]), mu=MU_EARTH, epoch_s=0.0)
+    moon = moon_state_at(0.0)
+    return {"leo-vs-moon": (leo, moon, 5.0 * 86400.0), "tli-vs-moon": (tli, moon, 6.0 * 86400.0),
+            "leo-vs-leo": (leo, other, 6000.0)}
+
+
+@pytest.mark.parametrize("case", ["leo-vs-moon", "tli-vs-moon", "leo-vs-leo"])
+def test_closest_approach_fast_path_matches_generic_path(case):
+    a, b, window = _ca_cases()[case]
+    fast = closest_approach(a, b, window_s=window)
+    slow = closest_approach(a, b, window_s=window, propagator=lambda s, t: propagate_kepler(s, t))
+    assert fast.t_ca_s == pytest.approx(slow.t_ca_s, abs=1e-3)
+    assert fast.separation_m == pytest.approx(slow.separation_m, rel=1e-9, abs=1e-3)
+    assert fast.rel_speed_mps == pytest.approx(slow.rel_speed_mps, rel=1e-9, abs=1e-6)
+
+
+def test_closest_approach_does_not_rederive_elements_per_sample(monkeypatch):
+    from orbitsim.core import elements as _elements
+    from orbitsim.core import propagate as _prop
+    calls = []
+    real = _elements.state_to_elements
+
+    def counting(state):
+        calls.append(1)
+        return real(state)
+
+    monkeypatch.setattr(_prop, "state_to_elements", counting)
+    a, b, window = _ca_cases()["leo-vs-moon"]
+    closest_approach(a, b, window_s=window)
+    assert len(calls) <= 4, f"state_to_elements called {len(calls)} times"

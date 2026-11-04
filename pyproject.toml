@@ -20,6 +20,7 @@ dev = [
     "pytest>=7.2.0",
     "black>=23.0.0",
     "pillow>=9.0",  # tests/render/app_harness/screens.py pixel diffs
+    "pytest-xdist>=3.5",  # `pytest -n auto`: app goldens run in parallel
 ]
 render = [
     "panda3d>=1.10.0",
