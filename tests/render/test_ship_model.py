@@ -82,3 +82,46 @@ def test_ship_icon_outline_contrasts_with_own_orbit_line():
     from orbitsim.render.line_style import ORBIT_STYLE
     from orbitsim.render.ship_model import SHIP_ICON_OUTLINE_COLOR
     assert sum(SHIP_ICON_OUTLINE_COLOR[:3]) < 0.5 < sum(ORBIT_STYLE.color[:3])
+
+
+# The map icon is a 2.5D marker: long axis = the nose as seen on screen, side toward
+# the camera, never seen nose-on (the default attitude faces the top-down opening
+# camera, which made the icon a ~6x8 px blob).
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def test_icon_axes_show_the_nose_side_on():
+    from orbitsim.render.ship_model import icon_axes
+    x, y, z = icon_axes((1.0, 0.0, 0.2), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+    assert z == pytest.approx((1.0, 0.0, 0.0), abs=1e-12)    # nose, projected on screen
+    assert y == pytest.approx((0.0, 0.0, 1.0), abs=1e-12)    # side faces the camera
+
+
+def test_icon_axes_nose_on_falls_back_to_screen_up():
+    from orbitsim.render.ship_model import icon_axes
+    _, _, z = icon_axes((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+    assert z == pytest.approx((0.0, 1.0, 0.0), abs=1e-12)
+
+
+def test_icon_axes_are_a_right_handed_orthonormal_basis():
+    import random
+    from orbitsim.render.ship_model import icon_axes
+    rng = random.Random(3)
+    for _ in range(50):
+        v = lambda: tuple(rng.uniform(-1, 1) for _ in range(3))  # noqa: E731
+        x, y, z = icon_axes(v(), v(), v())
+        for a in (x, y, z):
+            assert _dot(a, a) == pytest.approx(1.0)
+        assert _dot(x, y) == pytest.approx(0.0, abs=1e-9)
+        assert _dot(y, z) == pytest.approx(0.0, abs=1e-9)
+        cross = (y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0])
+        assert cross == pytest.approx(x, abs=1e-9)
+
+
+def test_ship_icon_draws_on_top_like_a_marker():
+    from panda3d.core import DepthTestAttrib
+    from orbitsim.render.ship_model import build_ship_icon
+    icon = build_ship_icon()
+    attr = icon.get_attrib(DepthTestAttrib)
+    assert attr is not None and attr.get_mode() == DepthTestAttrib.M_none

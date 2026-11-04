@@ -166,7 +166,12 @@ class OrbitApp(ShowBase):
         """Line-width multiplier for the current framebuffer (Retina-aware; 1.0 headless)."""
         if self.win is None:
             return 1.0
-        return px_scale(self.win.get_fb_y_size())
+        fb_h = self.win.get_fb_y_size()
+        win_h = fb_h      # offscreen buffers (headless tests) have no window properties
+        get_props = getattr(self.win, "get_properties", None)
+        if get_props is not None and get_props().has_size():
+            win_h = get_props().get_y_size()
+        return px_scale(fb_h, win_h)
 
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""

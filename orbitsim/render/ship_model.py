@@ -5,6 +5,8 @@ unit-testable without Panda3D, mirroring camera_rig.py. All Panda3D imports
 live INSIDE build_ship_model().
 """
 
+import math
+
 # Camera-distance window over which the map marker cross-fades to the ship model.
 SHIP_VIEW_NEAR_M = 200.0    # at/below: ship model only
 SHIP_VIEW_FAR_M = 5000.0    # at/above: map marker only
@@ -112,6 +114,33 @@ SHIP_ICON_BODY_COLOR = (0.92, 0.95, 1.0, 1.0)
 SHIP_ICON_OUTLINE_COLOR = (0.02, 0.05, 0.10, 1.0)
 
 
+def _norm(v):
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    return None if n < 1e-9 else (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _reject(v, unit):
+    """v minus its component along unit (projection onto the plane normal to unit)."""
+    d = v[0] * unit[0] + v[1] * unit[1] + v[2] * unit[2]
+    return (v[0] - d * unit[0], v[1] - d * unit[1], v[2] - d * unit[2])
+
+
+def icon_axes(nose, view_dir, up_hint):
+    """Model axes (x, y, z) that show the ship icon side-on to the camera.
+
+    The icon is a 2.5D marker: its long axis (model +Z) is the nose direction as seen
+    on screen (projected off the view direction), its side (model +Y) faces the
+    camera, so it never collapses to a dot when the nose points at the camera; then
+    it falls back to screen-up. Returns a right-handed orthonormal basis (x = y x z).
+    """
+    v = _norm(view_dir) or (0.0, 1.0, 0.0)
+    y = (-v[0], -v[1], -v[2])
+    z = (_norm(_reject(nose, v)) or _norm(_reject(up_hint, v))
+         or _norm(_reject((0.0, 0.0, 1.0), v)) or _norm(_reject((1.0, 0.0, 0.0), v)))
+    x = (y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0])
+    return x, y, z
+
+
 def build_ship_icon():
     """The ship model as the constant-size map icon: unlit, light body, dark rim.
 
@@ -149,6 +178,9 @@ def build_ship_icon():
 
     holder.set_scale(SHIP_ICON_RENDER_UNITS / length)
     root.set_light_off(1)
+    # A marker, not scenery: at map zoom the icon spans ~1,900 km, so depth-testing it
+    # half-buried it in Earth. Flat unlit colours make self-overlap invisible.
+    root.set_depth_test(False)
     return root
 
 

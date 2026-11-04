@@ -54,6 +54,13 @@ def planet_orbits_visible(camera_distance_m: float) -> bool:
     return camera_distance_m >= PLANET_ORBITS_MIN_DISTANCE_M
 
 
-def px_scale(framebuffer_height_px: int) -> float:
-    """Line-width multiplier for a framebuffer of this height (never below 1)."""
-    return max(1.0, framebuffer_height_px / REFERENCE_HEIGHT_PX)
+def px_scale(framebuffer_height_px: int, window_height: int) -> float:
+    """Line-width multiplier (never below 1).
+
+    Display density (framebuffer pixels per window unit: 2 on Retina) times a window
+    factor that grows lines proportionally on windows taller than REFERENCE_HEIGHT_PX.
+    """
+    if framebuffer_height_px <= 0 or window_height <= 0:
+        return 1.0
+    density = framebuffer_height_px / window_height
+    return max(1.0, density * max(1.0, window_height / REFERENCE_HEIGHT_PX))
