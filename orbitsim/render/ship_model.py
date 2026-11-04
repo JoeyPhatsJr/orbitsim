@@ -103,6 +103,55 @@ def build_ship_model():
     return np_
 
 
+SHIP_ICON_RENDER_UNITS = 22.0   # map icon nose-to-tail length in render units (camera sits
+                                # 1000 units from the focus, so this is a constant on-screen size)
+SHIP_ICON_OUTLINE_SCALE = 1.18  # outline hull size relative to the icon body
+SHIP_ICON_BODY_COLOR = (0.92, 0.95, 1.0, 1.0)
+# Dark rim: the icon always sits on its own cyan orbit line, so a cyan rim would merge
+# with it. White body pops on Earth's night side, the dark rim on the day side.
+SHIP_ICON_OUTLINE_COLOR = (0.02, 0.05, 0.10, 1.0)
+
+
+def build_ship_icon():
+    """The ship model as the constant-size map icon: unlit, light body, dark rim.
+
+    The rim is the same model scaled up, drawn first, two-sided and without writing
+    depth; the body is then drawn over it, so only the rim shows around the edges.
+    (The model's faces aren't consistently wound, so a back-face inverted hull would
+    draw over the body.) Orient it with the vessel's attitude quaternion each frame;
+    place it at the vessel's render position.
+    """
+    from panda3d.core import NodePath
+
+    root = NodePath("ship_icon")
+    holder = root.attach_new_node("ship_icon_geometry")
+    body = build_ship_model()
+    lo, hi = body.get_tight_bounds()
+    centre = (lo + hi) * 0.5
+    length = float(hi.z - lo.z)
+
+    outline = build_ship_model()
+    outline.set_name("outline")
+    outline.reparent_to(holder)
+    s = SHIP_ICON_OUTLINE_SCALE
+    outline.set_scale(s)
+    outline.set_pos(centre * (1.0 - s))          # scale about the model's centre
+    outline.set_two_sided(True)
+    outline.set_depth_write(False)               # never hides the body drawn after it
+    outline.set_color(*SHIP_ICON_OUTLINE_COLOR)
+    outline.set_bin("fixed", 20)
+
+    body.set_name("body")
+    body.reparent_to(holder)
+    body.set_two_sided(True)
+    body.set_color(*SHIP_ICON_BODY_COLOR)
+    body.set_bin("fixed", 21)
+
+    holder.set_scale(SHIP_ICON_RENDER_UNITS / length)
+    root.set_light_off(1)
+    return root
+
+
 def build_plume():
     """Translucent additive exhaust cone along -Z (tail). Length 1 at unit scale."""
     import math

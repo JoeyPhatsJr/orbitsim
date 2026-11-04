@@ -1,6 +1,5 @@
 """Vessel markers and the cross-fading true-scale ship model + plume."""
 
-from orbitsim.render.geometry import make_uv_sphere
 
 
 class VesselView:
@@ -15,15 +14,13 @@ class VesselView:
         # Vessel markers + orbit lines.
         self.app.vessel_nps = []
         self.app.orbit_nps = []
+        from orbitsim.render.ship_model import build_ship_icon
         for _ in world.vessels:
-            m = make_uv_sphere(1.0, 8, 12)
+            # The real ship model, unlit and outlined. The camera always sits
+            # RENDER_UNITS_ACROSS_VIEW (1000) units from the focus, so a fixed
+            # render-size icon keeps a constant on-screen size at every zoom level.
+            m = build_ship_icon()
             m.reparent_to(self.app.render)
-            m.set_color(1.0, 0.9, 0.2, 1.0)
-            m.set_light_off()  # fullbright marker so it is always visible
-            # The camera always sits RENDER_UNITS_ACROSS_VIEW (1000) units from the
-            # focus, so a fixed render-size marker keeps a constant on-screen size
-            # at every zoom level.
-            m.set_scale(8.0)
             self.app.vessel_nps.append(m)
             self.app.orbit_nps.append(None)
 
@@ -50,9 +47,13 @@ class VesselView:
         """Place vessel markers, refresh trajectory lines, apsis markers."""
         import time as _time
         now_real = _time.monotonic()
+        from panda3d.core import LQuaternion
         for idx, vessel in enumerate(self.app.world.vessels):
             vx, vy, vz = self.app.transform.to_render(vessel.state.r)
             self.app.vessel_nps[idx].set_pos(vx, vy, vz)
+            q = vessel.orientation  # [w, x, y, z]; the icon points where the ship points
+            self.app.vessel_nps[idx].set_quat(
+                LQuaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])))
             self.app.trajectory_view.rebuild_trajectory(idx, vessel, now_real)
         if self.app._preview_np is not None and self.app._preview_origin is not None:
             self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
