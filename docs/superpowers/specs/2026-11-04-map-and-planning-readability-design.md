@@ -54,9 +54,12 @@ that makes multiple nodes harder later, but don't build multi-node support now.
   - the Moon's and planets' orbits: muted grey, there for reference without competing with
     yours (in the solar viewer each planet may get a muted tint);
   - the targeted body's orbit is highlighted relative to the other reference orbits.
-  Must render thick on **macOS**: OpenGL ignores line widths above 1 there, which is why
-  today's `LineSegs.set_thickness` lines come out 1 px. So the lines need real geometry
-  (e.g. screen-space ribbons), not GL line width.
+  Must render thick on macOS and Windows. *(Corrected while planning, 2026-11-04: Panda3D's
+  GL 2.1 context on the dev Mac (M1 Pro) honours `LineSegs.set_thickness`, measured at 1, 4
+  and 12 px exactly. Today's lines are thin by choice: 2.25 px, faded to 28% along the path.
+  On a Retina framebuffer 2.25 px looks like about 1 pt. So `LineSegs` stays, with pixel
+  widths scaled to the window's framebuffer height.)* Encounter segments, today orange,
+  become yellow so they don't clash with the orange planned path.
 - **Background.** Far fewer and dimmer stars, so lines and bodies pop.
 - **Your ship.** The actual 3D ship model (the one from `render/ship_model.py`), pointing the
   way the ship really points, kept at a **fixed, readable on-screen size** at every zoom.
