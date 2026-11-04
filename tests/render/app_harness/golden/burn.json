@@ -1,0 +1,221 @@
+{
+ "events": [
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "a",
+  "a-up",
+  "adjust-pg*",
+  "adjust-pg*",
+  "adjust-pg*",
+  "adjust-pg*",
+  "arrow_down",
+  "arrow_left",
+  "arrow_right",
+  "arrow_up",
+  "async_loader_0",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "comma",
+  "control",
+  "control-up",
+  "d",
+  "d-up",
+  "e",
+  "e-up",
+  "escape",
+  "f1",
+  "f5",
+  "f9",
+  "i",
+  "m",
+  "mouse1",
+  "mouse1-up",
+  "mouse3",
+  "mouse3-up",
+  "p",
+  "period",
+  "q",
+  "q-up",
+  "render-texture-targets-changed",
+  "s",
+  "s-up",
+  "shift",
+  "shift-up",
+  "t",
+  "u",
+  "w",
+  "w-up",
+  "wheel_down",
+  "wheel_up",
+  "window-event",
+  "x",
+  "z"
+ ],
+ "rig": {
+  "azimuth": 0.0,
+  "distance_m": 19999999.999999978,
+  "elevation": 0.3
+ },
+ "sim_time_s": 51.99999999999987,
+ "target": null,
+ "texts": [
+  "+0",
+  "+0",
+  "+0",
+  "Altitude: 501.4 km",
+  "Apoapsis: 2,468.7 km",
+  "Fuel: 100%  (7,986 kg)",
+  "Inclination: 8.2\u00b0",
+  "Mass: 9,986 kg",
+  "NO MANEUVER PLANNED",
+  "Node T",
+  "Normal",
+  "ORBIT",
+  "Periapsis: 500.0 km",
+  "Period: 115.6 min",
+  "Prograde",
+  "Radial",
+  "SAS: OFF    HDG 082\u00b0   PIT +00\u00b0",
+  "Sim time: 52 s past J2000",
+  "Speed: 8.074 km/s",
+  "T+ 0.0 DAYS     WARP  x1",
+  "T+0s",
+  "Throttle: 0%",
+  "Thrust: 50.0 kN   TWR: 0.59",
+  "VESSEL",
+  "WARP LOCKED - thrusting",
+  "dV left: 5,628 m/s"
+ ],
+ "vessel": {
+  "fuel_mass_kg": 7985.714285714275,
+  "nodes": [],
+  "orientation": [
+   1.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "r": [
+   6866712.909062259,
+   415420.3461734489,
+   59353.26859567949
+  ],
+  "sas_mode": "OFF",
+  "throttle": 0.0,
+  "v": [
+   -437.7985621812895,
+   7980.029134013638,
+   1145.0077334808907
+  ]
+ },
+ "warp": 1.0,
+ "world_labels": [
+  [
+   "AP",
+   false
+  ],
+  [
+   "CA: SHIP",
+   true
+  ],
+  [
+   "CA: TARGET",
+   true
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "L1",
+   true
+  ],
+  [
+   "L2",
+   true
+  ],
+  [
+   "L3",
+   true
+  ],
+  [
+   "L4",
+   true
+  ],
+  [
+   "L5",
+   true
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "PE",
+   false
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "TARGET",
+   true
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ]
+ ]
+}

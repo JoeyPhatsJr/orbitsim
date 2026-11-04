@@ -41,3 +41,6 @@ data/textures/
 # Claude Code: personal settings and session worktrees (never commit)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Local screenshot baselines for the app.py split (machine-specific GPU output)
+.refactor-screens/

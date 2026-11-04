@@ -1,0 +1,77 @@
+{
+ "events": [
+  "0",
+  "arrow_down",
+  "arrow_left",
+  "arrow_right",
+  "arrow_up",
+  "async_loader_0",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "comma",
+  "escape",
+  "f1",
+  "mouse3",
+  "mouse3-up",
+  "p",
+  "period",
+  "render-texture-targets-changed",
+  "wheel_down",
+  "wheel_up",
+  "window-event"
+ ],
+ "rig": {
+  "azimuth": 0.0,
+  "distance_m": 2000000000000.002,
+  "elevation": 0.3
+ },
+ "sim_time_s": 947061333.3333325,
+ "target": null,
+ "texts": [
+  "Solar system (JPL DE440)\nDate: 2030-01-04\n',' / '.' or the buttons change warp",
+  "T+ 10,961.4 DAYS     WARP  x1,000,000"
+ ],
+ "vessel": null,
+ "warp": 1000000.0,
+ "world_labels": [
+  [
+   "Earth",
+   false
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ]
+ ]
+}
