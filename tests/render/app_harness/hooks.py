@@ -22,3 +22,27 @@ def current_target_name(app):
 def set_jog(app, axis: str, value: float) -> None:
     """Deflect a maneuver jog slider ('pro', 'nrm', 'rad') to ``value`` in [-1, 1]."""
     app._jog[axis]["value"] = value
+
+
+def preview_lines(app):
+    """(estimate_shown, exact_shown) for the maneuver preview line."""
+    return (getattr(app, "_preview_estimate_np", None) is not None,
+            getattr(app, "_preview_np", None) is not None)
+
+
+def preview_at_current_scale(app) -> bool:
+    """Whether the drawn exact preview was built at the current zoom scale."""
+    return (getattr(app, "_preview_np", None) is not None
+            and getattr(app, "_preview_built_scale", None) == app.transform.scale_m_per_unit)
+
+
+def preview_start_error_m(app) -> float:
+    """Distance [m] from the drawn exact preview's first point to where the burn would
+    really start now (apply_maneuver on the live vessel state); inf if none is drawn."""
+    import numpy as np
+    from orbitsim.core.maneuvers import apply_maneuver
+    points = getattr(app, "_preview_points", None)
+    if getattr(app, "_preview_np", None) is None or points is None:
+        return float("inf")
+    start = apply_maneuver(app.world.vessels[0].state, app.maneuver_editor.current_node()).r
+    return float(np.linalg.norm(np.asarray(points[0]) - start))

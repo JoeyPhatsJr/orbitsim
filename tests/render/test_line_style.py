@@ -56,3 +56,9 @@ def test_planet_orbits_hidden_at_earth_moon_zoom_shown_at_planetary_zoom():
     assert not planet_orbits_visible(1.3e9)          # whole Earth-Moon system in view
     assert planet_orbits_visible(PLANET_ORBITS_MIN_DISTANCE_M)
     assert planet_orbits_visible(3.0e11)             # ~2 AU
+
+
+def test_estimate_is_a_fainter_plan_line():
+    from orbitsim.render.line_style import ESTIMATE_STYLE
+    assert ESTIMATE_STYLE.color[:3] == PLAN_STYLE.color[:3]
+    assert ESTIMATE_STYLE.color[3] < PLAN_STYLE.color[3] and ESTIMATE_STYLE.dash is not None

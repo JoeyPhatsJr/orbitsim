@@ -66,11 +66,11 @@ def sample_trajectory(
     if solar_system:
         from orbitsim.core.nbody import (
             osculating_elements_solar,
-            propagate_solar_system,
+            propagate_solar_prediction,
             stable_prediction_ephemeris,
         )
         osc_fn = osculating_elements_solar
-        prop_fn = propagate_solar_system
+        prop_fn = propagate_solar_prediction
     else:
         from orbitsim.core.nbody import osculating_elements, propagate_earth_moon
         osc_fn = osculating_elements
@@ -88,12 +88,10 @@ def sample_trajectory(
         cur = state
         for i in range(1, n_pts):
             if solar_system:
-                # The visual prediction is far cheaper than the on-rails sim: a larger
-                # deep-space ceiling AND a coarse substep floor so a near-Earth escape
-                # climb-out (which the periapsis cap would otherwise integrate at ~25 s
-                # steps, ~4.6 s per refresh) stays responsive. The line loses only
-                # sub-periapsis detail it never draws; adaptive stepping still tightens
-                # for encounters/flybys above the floor.
+                # Drawn predictions step by the *current* distance to each body
+                # (propagate_solar_prediction): fine near Earth/Moon, coarse in between,
+                # with a larger deep-space ceiling. The old periapsis-sized steps with a
+                # 120 s floor mispredicted a Moon flyby by 7x.
                 cur = prop_fn(cur, dt, max_step_s=24.0 * 3600.0,
                               min_substep_s=min_substep_s)
             else:

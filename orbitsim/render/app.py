@@ -33,7 +33,7 @@ class OrbitApp(ShowBase):
 
     # Constants shared by several controllers (single-user constants live on their controller).
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
-    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
+    PREDICTION_MIN_SUBSTEP_S = 1.0  # stall guard for drawn predictions (steps size themselves)
                                       # (sim is untouched): escape climb-out 4.6s -> ~1.7s
     QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
     # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
@@ -129,10 +129,21 @@ class OrbitApp(ShowBase):
         """Preview state, process pool and planning executors."""
         self._preview_np = None
         self._preview_origin = None
-        self._preview_submit_t = 0.0
         self._preview_future = None
         self._preview_future_key = None
         self._preview_encounters = []
+        self._preview_points = None            # cached exact preview samples [m]
+        self._preview_built_scale = None       # zoom scale the exact line was built at
+        self._preview_exact_key = None         # burn the drawn exact line belongs to
+        self._preview_last_key = None          # burn seen last frame (change detection)
+        self._preview_key_changed_t = 0.0      # real time the burn last changed
+        self._preview_estimate_np = None       # faint two-body line while editing
+        self._preview_estimate_points = None
+        self._preview_estimate_scale = None
+        self._preview_estimate_start = None    # post-burn state the estimate was built from
+        self._preview_exact_start = None       # post-burn state the drawn exact line used
+        self._preview_inflight_start = None    # post-burn state of the job in flight
+        self._preview_submit_t = 0.0           # real time of the last exact submit
         if not self.solar_system:
             from concurrent.futures import ThreadPoolExecutor
             # One persistent process pool does all heavy CPU work: the planning grid

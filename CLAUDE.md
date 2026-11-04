@@ -215,9 +215,18 @@ don't batch many changes into one late commit. Stage specific files by **explici
   so every process re-compiled the Lambert solver on first use (~2.4 s per process) on the
   first intercept/porkchop plan. `core/jit_cache.py` turns numba's disk cache on at
   `core/transfers.py` import. That call must stay *before* the first Lambert call.
-- **Trajectory lines are the main per-frame cost — throttle, don't naively cache.** Fix is a
-  **real-time throttle** (`PREVIEW_THROTTLE_S`, 5 Hz), not a cache. Keep the live line cheap
-  (1 orbit, 256 pts); the preview draws 2 orbits at 512 pts.
+- **Drawn predictions have their own stepper; never point `World.step` at it.** The live line
+  and the maneuver preview integrate with `nbody.propagate_solar_prediction`: each body's
+  substep is sized by its *current* distance at 1/`PREDICTION_SUBSTEP_DIVISOR` (1000) of its
+  timescale. Flight's periapsis-sized steps with the old 120 s preview floor mispredicted a
+  Moon flyby by 7× (6,057 km vs ~45,670 km converged), taking 6 s. The prediction stepper
+  gets it within 1% in 0.75 s (`tests/render/test_preview_accuracy.py`). Flight itself is ~5%
+  off on that flyby; Moon flybys amplify departure errors, so be careful with tolerances.
+- **Maneuver preview: estimate while editing, exact once settled.** While the burn changes,
+  a faint two-body estimate (`kepler_estimate_points`, `ESTIMATE_STYLE`) redraws every frame.
+  The exact N-body job is submitted once the burn has been still `PREVIEW_SETTLE_S`, once per
+  burn (`should_submit_exact`). Both lines rebuild from cached points on zoom; don't resubmit
+  to rescale. Keep the live line cheap (1 orbit, 256 pts).
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.

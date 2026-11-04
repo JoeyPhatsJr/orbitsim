@@ -8,9 +8,12 @@ from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.hud.format import fmt_countdown
-from orbitsim.render.line_style import PLAN_STYLE
+from orbitsim.render.line_style import ESTIMATE_STYLE, PLAN_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.trajectory_helpers import localize_polyline, maneuver_preview_key
+from orbitsim.render.trajectory_helpers import (
+    kepler_estimate_points, localize_polyline, maneuver_preview_key, preview_start_drifted,
+    should_refresh_exact, should_submit_exact,
+)
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
 
@@ -25,7 +28,8 @@ class ManeuverEditor:
     NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
     NODE_JOG_CURVE = 4.0
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
-    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
+    PREVIEW_SETTLE_S = 0.25       # burn must be still this long before the exact preview runs
+    PREVIEW_REFRESH_S = 0.5       # min real-seconds between drift refreshes of the same burn
 
     def __init__(self, app) -> None:
         self.app = app
@@ -340,57 +344,141 @@ class ManeuverEditor:
         self.refresh_readout()
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
-        """Poll/submit preview work while keeping N-body integration off the render thread."""
-        preview_key = maneuver_preview_key(node, self.app._node_epoch_s)
-        future = self.app._preview_future
+        """Live two-body estimate while the burn changes; exact N-body path once it settles.
+
+        The exact path is sampled off the render thread (pool) and submitted only after
+        the burn has been still for PREVIEW_SETTLE_S, once per burn (no resubmits); both
+        lines are rebuilt from cached points when the zoom scale changes.
+        """
+        app = self.app
+        preview_key = maneuver_preview_key(node, app._node_epoch_s)
+        future = app._preview_future
         if future is not None and future.done():
             points, encounters = future.result()
-            completed_key = self.app._preview_future_key
-            self.app._preview_future = None
-            self.app._preview_future_key = None
+            completed_key = app._preview_future_key
+            app._preview_future = None
+            app._preview_future_key = None
             if preview_key == completed_key and node.magnitude_mps > 0.0:
-                if self.app._preview_np is not None:
-                    self.app._preview_np.remove_node()
-                local_points, self.app._preview_origin = localize_polyline(points)
-                scale = self.app.transform.scale_m_per_unit
-                render_points = [tuple(point / scale) for point in local_points]
-                px = self.app.line_px_scale()
-                self.app._preview_np = build_orbit_node(render_points, PLAN_STYLE, px_scale=px)
-                self.app._preview_np.reparent_to(self.app.render)
-                self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
-                # Encounter patches ride the preview node (same origin/scale).
-                self.app._preview_encounters = encounters
-                self.app.trajectory_view.build_encounter_patches(
-                    self.app._preview_np, points, self.app._preview_origin, scale, encounters,
-                    px_scale=px,
-                )
+                app._preview_points = points
+                app._preview_encounters = encounters
+                app._preview_exact_key = completed_key
+                app._preview_exact_start = app._preview_inflight_start
+                self._draw_preview_exact()
+                self._remove_preview_estimate()
 
         if node.magnitude_mps <= 0.0:
-            if self.app._preview_future is not None:
-                self.app._preview_future_key = None
-                if self.app._preview_future.cancel():
-                    self.app._preview_future = None
-            if self.app._preview_np is not None:
-                self.app._preview_np.remove_node()
-                self.app._preview_np = None
-                self.app._preview_origin = None
-            self.app._preview_encounters = []
+            if app._preview_future is not None:
+                app._preview_future_key = None
+                if app._preview_future.cancel():
+                    app._preview_future = None
+            self._remove_preview_exact()
+            self._remove_preview_estimate()
+            app._preview_exact_key = None
+            app._preview_exact_start = None
+            app._preview_last_key = None
             return
 
-        if (
-            self.app._preview_future is None
-            and (
-                self.app._preview_np is None
-                or now_real - self.app._preview_submit_t > self.PREVIEW_THROTTLE_S
-            )
-        ):
-            post_burn = apply_maneuver(vessel.state, node)
-            self.app._preview_submit_t = now_real
-            self.app._preview_future_key = preview_key
-            self.app._preview_future = self.app._compute_executor.submit(
+        # Where the burn would start right now (cheap two-body): a burn-now node's start
+        # moves with the ship; a manual burn or quickload moves a scheduled node's.
+        post_burn = apply_maneuver(vessel.state, node)
+        if preview_key != app._preview_last_key:
+            app._preview_last_key = preview_key
+            app._preview_key_changed_t = now_real
+            if preview_key != app._preview_exact_key:
+                self._remove_preview_exact()      # stale: it shows a different burn
+                app._preview_exact_key = None
+                app._preview_exact_start = None
+                self._set_preview_estimate(post_burn)
+        elif (app._preview_estimate_np is not None
+              and preview_start_drifted(app._preview_estimate_start, post_burn)):
+            self._set_preview_estimate(post_burn)
+
+        scale = app.transform.scale_m_per_unit
+        if app._preview_np is not None and app._preview_built_scale != scale:
+            self._draw_preview_exact()
+        if app._preview_estimate_np is not None and app._preview_estimate_scale != scale:
+            self._draw_preview_estimate()
+        if app._preview_estimate_np is not None:
+            app._preview_estimate_np.set_pos(*app.transform.to_render(np.zeros(3)))
+
+        # A job whose burn was cleared mid-flight still occupies the worker: count it.
+        inflight_key = (None if app._preview_future is None
+                        else (app._preview_future_key or ("cancelled",)))
+        settled = should_submit_exact(preview_key, app._preview_exact_key, inflight_key,
+                                      app._preview_key_changed_t, now_real,
+                                      self.PREVIEW_SETTLE_S)
+        # The drawn burn's start moved without an edit: recompute, keeping the line shown.
+        refresh = should_refresh_exact(
+            preview_key, app._preview_exact_key, inflight_key,
+            preview_start_drifted(app._preview_exact_start, post_burn),
+            now_real, app._preview_submit_t, self.PREVIEW_REFRESH_S)
+        if settled or refresh:
+            app._preview_future_key = preview_key
+            app._preview_inflight_start = post_burn
+            app._preview_submit_t = now_real
+            app._preview_future = app._compute_executor.submit(
                 sample_preview, post_burn,
-                self.app.world.solar_system, self.app.PREDICTION_MIN_SUBSTEP_S,
+                app.world.solar_system, app.PREDICTION_MIN_SUBSTEP_S,
             )
+
+    def _set_preview_estimate(self, post_burn) -> None:
+        """Recompute and redraw the two-body estimate from this post-burn state."""
+        self.app._preview_estimate_start = post_burn
+        self.app._preview_estimate_points = kepler_estimate_points(post_burn)
+        self._draw_preview_estimate()
+
+    def _draw_preview_exact(self) -> None:
+        """(Re)build the exact preview line + encounter patches from cached points."""
+        app = self.app
+        if app._preview_np is not None:
+            app._preview_np.remove_node()
+        points = app._preview_points
+        local_points, app._preview_origin = localize_polyline(points)
+        scale = app.transform.scale_m_per_unit
+        render_points = [tuple(point / scale) for point in local_points]
+        px = app.line_px_scale()
+        app._preview_np = build_orbit_node(render_points, PLAN_STYLE, px_scale=px)
+        app._preview_np.reparent_to(app.render)
+        app._preview_np.set_pos(*app.transform.to_render(app._preview_origin))
+        app._preview_built_scale = scale
+        # Encounter patches ride the preview node (same origin/scale).
+        app.trajectory_view.build_encounter_patches(
+            app._preview_np, points, app._preview_origin, scale, app._preview_encounters,
+            px_scale=px,
+        )
+
+    def _remove_preview_exact(self) -> None:
+        app = self.app
+        if app._preview_np is not None:
+            app._preview_np.remove_node()
+        app._preview_np = None
+        app._preview_origin = None
+        app._preview_built_scale = None
+        app._preview_encounters = []
+
+    def _draw_preview_estimate(self) -> None:
+        """(Re)build the faint two-body estimate (Earth-centred) at the current scale."""
+        app = self.app
+        self._remove_preview_estimate(keep_points=True)
+        points = app._preview_estimate_points
+        if points is None:
+            return
+        scale = app.transform.scale_m_per_unit
+        render_points = [tuple(point / scale) for point in points]
+        app._preview_estimate_np = build_orbit_node(
+            render_points, ESTIMATE_STYLE, px_scale=app.line_px_scale())
+        app._preview_estimate_np.reparent_to(app.render)
+        app._preview_estimate_np.set_pos(*app.transform.to_render(np.zeros(3)))
+        app._preview_estimate_scale = scale
+
+    def _remove_preview_estimate(self, keep_points: bool = False) -> None:
+        app = self.app
+        if app._preview_estimate_np is not None:
+            app._preview_estimate_np.remove_node()
+        app._preview_estimate_np = None
+        app._preview_estimate_scale = None
+        if not keep_points:
+            app._preview_estimate_points = None
 
     def frame_maneuver_node(self):
         """Scheduled node: preview, marker, auto-warp-down, readout."""
