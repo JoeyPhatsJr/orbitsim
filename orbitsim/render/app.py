@@ -2,9 +2,7 @@
 
 import numpy as np
 from direct.showbase.ShowBase import ShowBase
-from panda3d.core import (
-    ClockObject,
-)
+from panda3d.core import ClockObject
 
 from orbitsim.render.floating_origin import RenderTransform
 from orbitsim.render.camera_rig import CameraRig
@@ -14,27 +12,16 @@ from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.render.process_pool import build_process_pool
 
 from orbitsim.render.controllers.title_screen import TitleScreen
-
 from orbitsim.render.controllers.solar_view import SolarView
-
 from orbitsim.render.controllers.warp_controls import WarpControls
-
 from orbitsim.render.controllers.flight_input import FlightInput
-
 from orbitsim.render.controllers.quicksave import Quicksave
-
 from orbitsim.render.controllers.targeting import Targeting
-
 from orbitsim.render.controllers.porkchop_modal import PorkchopModal
-
 from orbitsim.render.controllers.trajectory_view import TrajectoryView
-
 from orbitsim.render.controllers.maneuver_editor import ManeuverEditor
-
 from orbitsim.render.controllers.bodies_view import BodiesView
-
 from orbitsim.render.controllers.vessel_view import VesselView
-
 from orbitsim.render.controllers.readouts import Readouts
 
 _global_clock = ClockObject.get_global_clock()
@@ -42,6 +29,15 @@ _global_clock = ClockObject.get_global_clock()
 
 class OrbitApp(ShowBase):
     """Renders one central body + vessels with orbit lines; time-warpable."""
+
+    # Constants shared by several controllers (single-user constants live on their controller).
+    EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
+    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
+                                      # (sim is untouched): escape climb-out 4.6s -> ~1.7s
+    QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
+    # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
+    # trajectory and magenta maneuver preview.
+    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
 
     def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
@@ -71,7 +67,7 @@ class OrbitApp(ShowBase):
         self.warp_controls = WarpControls(self)
         self.solar_view = SolarView(self)
         self.title_screen = TitleScreen(self)
-        self.title_screen._build_title_screen()
+        self.title_screen.build_title_screen()
 
     def destroy(self) -> None:
         # De-duplicate: _compute_executor and _grid_executor may both be _pool.
@@ -83,10 +79,6 @@ class OrbitApp(ShowBase):
                 executor.shutdown(wait=False, cancel_futures=True)
             setattr(self, attr, None)
         super().destroy()
-
-    # ------------------------------------------------------------------ title screen
-
-    # ------------------------------------------------------------------ sim scene
 
     def _start_sim(self) -> None:
         """Build the world scene (bodies, vessels, HUD, maneuver UI) and start updating."""
@@ -103,32 +95,32 @@ class OrbitApp(ShowBase):
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
-        self.operation_overlay = OperationOverlay(self, self.trajectory_view._cancel_operation)
+        self.operation_overlay = OperationOverlay(self, self.trajectory_view.cancel_operation)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self.settings_panel = SettingsPanel(
             self.aspect2d, self.hud.set_units,
-            on_unlimited_toggle=self.maneuver_editor._set_unlimited_dv,
+            on_unlimited_toggle=self.maneuver_editor.set_unlimited_dv,
             enable_unlimited=not self.solar_system)
-        self.warp_controls._build_warp_controls()
+        self.warp_controls.build_warp_controls()
 
-        self.bodies_view._build_central_body()
-        self.bodies_view._build_lighting()
-        self.vessel_view._build_vessel_markers()
-        self.vessel_view._build_ship_view()
-        self.bodies_view._build_orbit_frame()
+        self.bodies_view.build_central_body()
+        self.bodies_view.build_lighting()
+        self.vessel_view.build_vessel_markers()
+        self.vessel_view.build_ship_view()
+        self.bodies_view.build_orbit_frame()
         self._build_background_work()
         if self.solar_system:
-            self.solar_view._build_planets()
+            self.solar_view.build_planets()
         else:
-            self.readouts._build_sandbox_controls()
-            self.targeting._build_targeting()
-            self.readouts._build_apsis_and_encounter_markers()
-            self.bodies_view._build_moon_and_lagrange()
-            self.bodies_view._build_sandbox_planets()
-        self.bodies_view._build_starfield()
+            self.readouts.build_sandbox_controls()
+            self.targeting.build_targeting()
+            self.readouts.build_apsis_and_encounter_markers()
+            self.bodies_view.build_moon_and_lagrange()
+            self.bodies_view.build_sandbox_planets()
+        self.bodies_view.build_starfield()
 
-        self.flight_input._setup_input()
+        self.flight_input.setup_input()
         self.task_mgr.add(self._update, "update")
 
     def _build_background_work(self):
@@ -168,59 +160,9 @@ class OrbitApp(ShowBase):
             self._porkchop_request = 0
         self._porkchop_card = None
 
-    # Distinct colours for the Sun + 8 planets (constant on-screen marker size).
-    _PLANET_COLORS = {
-        "Sun": (1.0, 0.85, 0.2, 1.0),
-        "Mercury": (0.6, 0.6, 0.6, 1.0),
-        "Venus": (0.9, 0.8, 0.5, 1.0),
-        "Earth": (0.3, 0.5, 1.0, 1.0),
-        "Mars": (0.9, 0.4, 0.2, 1.0),
-        "Jupiter": (0.8, 0.7, 0.5, 1.0),
-        "Saturn": (0.9, 0.8, 0.6, 1.0),
-        "Uranus": (0.6, 0.85, 0.9, 1.0),
-        "Neptune": (0.3, 0.4, 0.9, 1.0),
-    }
-
-    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
-    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
-    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
-    JOG_DEADZONE = 0.02  # |value| below this contributes no change
-
-    # Scheduled maneuver node.
-    NODE_TIME_STEP_S = 30.0       # seconds per "Node -/+" press (base step for buttons)
-    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
-    NODE_JOG_CURVE = 4.0
-    AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
-    EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
-    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
-    MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
-    TRAJECTORY_REFRESH_S = 2.0    # prediction cadence; integration runs off the render thread
-    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
-                                      # (sim is untouched): escape climb-out 4.6s -> ~1.7s
-
-    MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
-
-    ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
-    LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
-    THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
-    SHIP_VIEW_DISTANCE_M = 80.0   # default close framing for ship view
-    SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
-    SOI_INSIDE_COLOR = (0.45, 1.0, 0.65, 1.0)  # greenish "captured by the Moon"
-    SOI_BASE_ALPHA = 0.10                       # faint translucent shell
-    SOI_INSIDE_ALPHA = 0.18
-    SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
-    SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
-
-    QUICKSAVE_PATH = "saves/quicksave.json"
-
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""
         self.hud.flash(text)
-
-    # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
-    # trajectory and magenta maneuver preview.
-    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
-    MAX_ENCOUNTER_MARKERS = 4   # rarely more than 1-2 flybys visible on a path
 
     def _update_responsive_ui(self) -> None:
         """Apply breakpoint changes only when the viewport dimensions change."""
@@ -250,36 +192,36 @@ class OrbitApp(ShowBase):
 
         if self.solar_system:
             self.clock.advance(real_dt)
-            self.solar_view._update_solar_system()
+            self.solar_view.update_solar_system()
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
-        self.targeting._poll_planning()
-        self.porkchop_modal._poll_porkchop()
+        self.targeting.poll_planning()
+        self.porkchop_modal.poll_porkchop()
 
         target_pos, maneuver_dir = self._frame_flight(real_dt)
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
-        self.maneuver_editor._apply_jogs(real_dt)
+        self.maneuver_editor.apply_jogs(real_dt)
 
         focus, scale = self._frame_origin()
-        self.bodies_view._frame_moon_ring(scale)
-        self.bodies_view._frame_sun()
-        self.vessel_view._frame_vessels()
-        self.vessel_view._frame_ship_view()
-        node = self.maneuver_editor._frame_maneuver_node()
-        self.bodies_view._frame_moon()
-        self.targeting._frame_target_label()
-        self.bodies_view._frame_lagrange()
-        self.bodies_view._frame_planets(scale)
-        self.targeting._frame_closest_approach(node)
+        self.bodies_view.frame_moon_ring(scale)
+        self.bodies_view.frame_sun()
+        self.vessel_view.frame_vessels()
+        self.vessel_view.frame_ship_view()
+        node = self.maneuver_editor.frame_maneuver_node()
+        self.bodies_view.frame_moon()
+        self.targeting.frame_target_label()
+        self.bodies_view.frame_lagrange()
+        self.bodies_view.frame_planets(scale)
+        self.targeting.frame_closest_approach(node)
 
-        self.flight_input._apply_mouse_orbit()
-        self.bodies_view._update_starfield()
+        self.flight_input.apply_mouse_orbit()
+        self.bodies_view.update_starfield()
         self.rig.apply()
-        self.readouts._update_marker_readability(focus)
+        self.readouts.update_marker_readability(focus)
 
-        self.readouts._frame_readouts(target_pos, maneuver_dir)
+        self.readouts.frame_readouts(target_pos, maneuver_dir)
         return task.cont
 
     def _frame_flight(self, real_dt):
@@ -287,7 +229,7 @@ class OrbitApp(ShowBase):
         # Flight input, then bound warp: 1x while thrusting (no integrating through warp),
         # else cap to the largest warp whose per-frame sub-step count stays in budget near
         # bodies (silent — the readout just won't climb past the cap).
-        self.flight_input._apply_flight_input(real_dt)
+        self.flight_input.apply_flight_input(real_dt)
         if self.world.any_thrusting():
             self.clock.warp = 1.0
         elif self.world.vessels:
@@ -306,7 +248,7 @@ class OrbitApp(ShowBase):
         target_pos = (self._target.state_at(self.clock.sim_time_s).r
                       if self._target is not None else None)
         maneuver_dir = None
-        planned_node = self.maneuver_editor._current_node()
+        planned_node = self.maneuver_editor.current_node()
         if planned_node.magnitude_mps > 0.0:
             from orbitsim.core.maneuvers import maneuver_direction
 
@@ -319,7 +261,7 @@ class OrbitApp(ShowBase):
             v.sas_maneuver_dir = maneuver_dir
         # An armed automatic burn lands exactly on its epoch instead of stepping past it
         # at high warp. This keeps the impulse and the displayed maneuver direction aligned.
-        ttn_before_step = self.maneuver_editor._time_to_node()
+        ttn_before_step = self.maneuver_editor.time_to_node()
         requested_dt = real_dt * self.clock.warp
         if (
             self._auto_execute_node
@@ -335,10 +277,10 @@ class OrbitApp(ShowBase):
             from orbitsim.core.nbody import refresh_ephemeris_cache
             refresh_ephemeris_cache(self.clock.sim_time_s)
         self.world.step(sim_dt)
-        if self._auto_execute_node and self.maneuver_editor._time_to_node() is not None:
-            if self.maneuver_editor._time_to_node() <= self.EXECUTE_TOLERANCE_S:
+        if self._auto_execute_node and self.maneuver_editor.time_to_node() is not None:
+            if self.maneuver_editor.time_to_node() <= self.EXECUTE_TOLERANCE_S:
                 self._auto_execute_node = False
-                self.maneuver_editor._execute_burn()
+                self.maneuver_editor.execute_burn()
         return target_pos, maneuver_dir
 
     def _frame_origin(self):

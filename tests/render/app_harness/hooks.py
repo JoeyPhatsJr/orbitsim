@@ -10,7 +10,7 @@ def select_target(app, name: str) -> None:
     matches = [t for t in app._targets if t.name == name]
     if not matches:
         raise LookupError(f"no target named {name!r}")
-    app.targeting._clear_target()
+    app.targeting.clear_target()
     app._target = matches[0]
 
 

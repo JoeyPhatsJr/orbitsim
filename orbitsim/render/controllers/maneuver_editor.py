@@ -1,28 +1,35 @@
 """Maneuver-node editor: jog sliders, node timing, preview, execute, unlimited dV."""
+
+import numpy as np
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.DirectSlider import DirectSlider
 from direct.gui.OnscreenText import OnscreenText
-from orbitsim.core.maneuvers import ManeuverNode
-from orbitsim.core.maneuvers import apply_maneuver
+from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.hud.format import fmt_countdown
-from orbitsim.render.orbit_lines import MANEUVER_COLOR
-from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.trajectory_helpers import localize_polyline
-from orbitsim.render.trajectory_helpers import maneuver_preview_key
+from orbitsim.render.orbit_lines import MANEUVER_COLOR, build_orbit_node
+from orbitsim.render.trajectory_helpers import localize_polyline, maneuver_preview_key
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
-import numpy as np
 
 
 class ManeuverEditor:
-    """Maneuver-node editor: jog sliders, node timing, preview, execute, unlimited dV. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
+
+    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
+    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
+    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
+    JOG_DEADZONE = 0.02  # |value| below this contributes no change
+    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
+    NODE_JOG_CURVE = 4.0
+    AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
+    PREVIEW_THROTTLE_S = 0.2      # min real-seconds between post-burn preview rebuilds (5 Hz)
 
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_maneuver_ui(self) -> None:
+    def build_maneuver_ui(self) -> None:
         """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
 
         Each slider is a rate control: hold it right to increase that delta-V component
@@ -101,7 +108,7 @@ class ManeuverEditor:
             text="Execute Burn",
             scale=0.045,
             pos=(0.40, 0.0, 0.10),
-            command=self._execute_burn,
+            command=self.execute_burn,
             parent=self.app._action_frame,
             **button_options(),
         )
@@ -114,17 +121,17 @@ class ManeuverEditor:
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
-            ("Clear Tgt", self.app.targeting._clear_target),
-            ("Intercept", self.app.targeting._plan_intercept),
+            ("Clear Tgt", self.app.targeting.clear_target),
+            ("Intercept", self.app.targeting.plan_intercept),
         ]
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
                          command=cmd, parent=self.app._maneuver_frame, **button_options())
         # Releasing the mouse springs every jog slider back to its center (zero rate).
         self.app.accept("mouse1-up", self._release_jogs)
-        self._refresh_readout()
+        self.refresh_readout()
 
-    def _toggle_maneuver_drawer(self) -> None:
+    def toggle_maneuver_drawer(self) -> None:
         if self.app._maneuver_frame.is_hidden():
             self.app._maneuver_frame.show()
         else:
@@ -137,12 +144,12 @@ class ManeuverEditor:
         so small displacements give fine control and large ones change quickly.
         """
         mag = abs(value)
-        if mag <= self.app.JOG_DEADZONE:
+        if mag <= self.JOG_DEADZONE:
             return 0.0
-        shaped = (np.exp(self.app.JOG_CURVE * mag) - 1.0) / (np.exp(self.app.JOG_CURVE) - 1.0)
-        return float(np.copysign(self.app.JOG_MAX_RATE_MPS * shaped, value))
+        shaped = (np.exp(self.JOG_CURVE * mag) - 1.0) / (np.exp(self.JOG_CURVE) - 1.0)
+        return float(np.copysign(self.JOG_MAX_RATE_MPS * shaped, value))
 
-    def _apply_jogs(self, real_dt_s: float) -> None:
+    def apply_jogs(self, real_dt_s: float) -> None:
         """Integrate each jog slider's rate into its delta-V component for this frame."""
         changed = False
         for axis, slider in self.app._jog.items():
@@ -152,13 +159,13 @@ class ManeuverEditor:
                 self.app._dv_value_text[axis].setText(f"{self.app._dv[axis]:+.0f}")
                 changed = True
         if changed:
-            self._refresh_readout()
+            self.refresh_readout()
         if hasattr(self.app, "_node_time_jog"):
             tv = self.app._node_time_jog["value"]
             mag = abs(tv)
-            if mag > self.app.JOG_DEADZONE:
-                shaped = (np.exp(self.app.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.app.NODE_JOG_CURVE) - 1.0)
-                rate = float(np.copysign(self.app.NODE_JOG_MAX_RATE * shaped, tv))
+            if mag > self.JOG_DEADZONE:
+                shaped = (np.exp(self.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.NODE_JOG_CURVE) - 1.0)
+                rate = float(np.copysign(self.NODE_JOG_MAX_RATE * shaped, tv))
                 now = self.app.clock.sim_time_s
                 base = self.app._node_epoch_s if self.app._node_epoch_s is not None else now
                 self.app._node_epoch_s = max(now, base + rate * real_dt_s)
@@ -176,13 +183,13 @@ class ManeuverEditor:
         """Spring all jog thumbs back to center so the value stops changing on release.
 
         Also attempt a target pick: a left-click that didn't drag is a tap on a body."""
-        self.app.targeting._try_pick_target()
+        self.app.targeting.try_pick_target()
         for slider in self.app._jog.values():
             slider["value"] = 0.0
         if hasattr(self.app, "_node_time_jog"):
             self.app._node_time_jog["value"] = 0.0
 
-    def _current_node(self) -> ManeuverNode:
+    def current_node(self) -> ManeuverNode:
         """Build the node from the current dV values at the scheduled epoch (or now if none)."""
         epoch = (self.app._node_epoch_s if self.app._node_epoch_s is not None
                  else self.app.world.vessels[0].state.epoch_s)
@@ -193,7 +200,7 @@ class ManeuverEditor:
             dv_radial_mps=self.app._dv["rad"],
         )
 
-    def _time_to_node(self):
+    def time_to_node(self):
         """Seconds until the scheduled node, or None if no node is scheduled."""
         if self.app._node_epoch_s is None:
             return None
@@ -231,9 +238,9 @@ class ManeuverEditor:
         if hasattr(self.app, "_node_time_text"):
             self.app._node_time_text.setText("T+0s")
 
-    def _refresh_readout(self) -> None:
+    def refresh_readout(self) -> None:
         import math
-        node = self._current_node()
+        node = self.current_node()
         budget = self.app.world.vessels[0].delta_v_remaining
         left = "INF" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
         self.app._dv_line = (
@@ -247,7 +254,7 @@ class ManeuverEditor:
             else:
                 self.app._dv_total_text.setText("")
         if hasattr(self.app, "_exec_btn"):
-            ttn = self._time_to_node()
+            ttn = self.time_to_node()
             if getattr(self.app, "_auto_execute_node", False):
                 self.app._exec_btn["text"] = "Cancel Auto Burn"
             elif ttn is not None and ttn > self.app.EXECUTE_TOLERANCE_S:
@@ -269,9 +276,9 @@ class ManeuverEditor:
                     from direct.gui import DirectGuiGlobals as DGG
                     self.app._exec_btn["state"] = DGG.NORMAL
                     self.app._action_status.setText(f"BURN READY  /  {node.magnitude_mps:,.0f} m/s")
-        self._sync_maneuver_hud()
+        self.sync_maneuver_hud()
 
-    def _sync_maneuver_hud(self) -> None:
+    def sync_maneuver_hud(self) -> None:
         enc = getattr(self.app, "_encounter_line", "")
         self.app.hud.set_maneuver(self.app._dv_line, self.app._node_line, self.app._target_line, enc)
 
@@ -283,22 +290,22 @@ class ManeuverEditor:
         for vessel in self.app.world.vessels:
             vessel.unlimited_dv = on
 
-    def _set_unlimited_dv(self, on: bool) -> None:
+    def set_unlimited_dv(self, on: bool) -> None:
         if self.app.solar_system or not self.app.world.vessels:
             return  # no flyable vessel (solar viewer) — nothing to toggle
         self._apply_unlimited(on)
         self.app.settings_panel.sync(on)   # keep the Esc-panel label in step with key/title
         self.app._flash_message(f"Unlimited dV {'ON' if on else 'OFF'}")
-        self._refresh_readout()
+        self.refresh_readout()
 
-    def _toggle_unlimited_dv(self) -> None:
+    def toggle_unlimited_dv(self) -> None:
         cur = bool(self.app.world.vessels and self.app.world.vessels[0].unlimited_dv)
-        self._set_unlimited_dv(not cur)
+        self.set_unlimited_dv(not cur)
 
-    def _execute_burn(self) -> None:
+    def execute_burn(self) -> None:
         from orbitsim.core.flight import fuel_burned_for_dv
 
-        ttn = self._time_to_node()
+        ttn = self.time_to_node()
         if ttn is not None and ttn > self.app.EXECUTE_TOLERANCE_S:
             if self.app.world.any_thrusting():
                 self.app._flash_message("Cut throttle before jumping to the node")
@@ -308,14 +315,14 @@ class ManeuverEditor:
             self.app._operation_rollback = (
                 vessel, vessel.state, vessel.orientation.copy(), self.app.clock.sim_time_s
             )
-            self.app.operation.start("Coasting to maneuver", self.app.trajectory_view._jump_operation(ttn))
+            self.app.operation.start("Coasting to maneuver", self.app.trajectory_view.jump_operation(ttn))
             self.app.operation_overlay.update(self.app.operation.status)
             return
         if ttn is not None and ttn < -self.app.EXECUTE_TOLERANCE_S:
             self._clear_node()  # node already passed; discard rather than burn backward in time
             return
         v0 = self.app.world.vessels[0]
-        node = self._current_node()
+        node = self.current_node()
         dv = node.magnitude_mps
         if 0.0 < dv <= v0.delta_v_remaining:
             v0.state = apply_maneuver(v0.state, node)
@@ -329,7 +336,7 @@ class ManeuverEditor:
             self.app._dv[axis] = 0.0
             self.app._dv_value_text[axis].setText("+0")
         self._release_jogs()
-        self._refresh_readout()
+        self.refresh_readout()
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
         """Poll/submit preview work while keeping N-body integration off the render thread."""
@@ -353,7 +360,7 @@ class ManeuverEditor:
                 self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
                 # Encounter patches ride the preview node (same origin/scale).
                 self.app._preview_encounters = encounters
-                self.app.trajectory_view._build_encounter_patches(
+                self.app.trajectory_view.build_encounter_patches(
                     self.app._preview_np, points, self.app._preview_origin, scale, encounters
                 )
 
@@ -373,7 +380,7 @@ class ManeuverEditor:
             self.app._preview_future is None
             and (
                 self.app._preview_np is None
-                or now_real - self.app._preview_submit_t > self.app.PREVIEW_THROTTLE_S
+                or now_real - self.app._preview_submit_t > self.PREVIEW_THROTTLE_S
             )
         ):
             post_burn = apply_maneuver(vessel.state, node)
@@ -384,20 +391,20 @@ class ManeuverEditor:
                 self.app.world.solar_system, self.app.PREDICTION_MIN_SUBSTEP_S,
             )
 
-    def _frame_maneuver_node(self):
+    def frame_maneuver_node(self):
         """Scheduled node: preview, marker, auto-warp-down, readout."""
         import time as _time
         # Scheduled maneuver node: preview (magenta), node marker (cyan), auto-warp-down,
         # readout, and a vessel.nodes mirror so quicksave persists the plan.
-        node = self._current_node()
+        node = self.current_node()
         v0 = self.app.world.vessels[0]
-        ttn = self._time_to_node()
+        ttn = self.time_to_node()
         # Discard a node that slipped well past its epoch unexecuted, so it can't linger
         # invisibly or later execute backward in time.
         if ttn is not None and ttn < -self.app.EXECUTE_TOLERANCE_S:
             self._clear_node()
             ttn = None
-            node = self._current_node()
+            node = self.current_node()
         v0.nodes = [node] if (self.app._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
         # N-body preview sampling is CPU-heavy, so it runs on one worker. Only the cheap
         # LineSegs swap happens here on the render thread when a result is ready.
@@ -431,7 +438,7 @@ class ManeuverEditor:
                 self.app._node_dv_label.remove_node()
                 self.app._node_dv_label = None
         # Auto-warp-down as the node nears (never warps up).
-        if ttn is not None and 0.0 < ttn <= self.app.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
+        if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
             self.app.clock.warp_down()
         # Pending-node readout (single node); shows "DUE" once within the execute window.
         if ttn is not None and ttn >= -self.app.EXECUTE_TOLERANCE_S:
@@ -442,5 +449,5 @@ class ManeuverEditor:
             self.app._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
         else:
             self.app._node_line = ""
-        self._sync_maneuver_hud()
+        self.sync_maneuver_hud()
         return node

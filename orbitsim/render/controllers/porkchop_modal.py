@@ -1,31 +1,34 @@
 """Transfer-window (porkchop) analysis overlay, computed off the render thread."""
+
+import numpy as np
 from direct.gui.DirectButton import DirectButton
 from direct.gui.DirectFrame import DirectFrame
 from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.optimize import porkchop
-from orbitsim.core.planets import A_EARTH
-from orbitsim.core.planets import A_JUPITER
-from orbitsim.core.planets import A_MARS
-from orbitsim.core.planets import A_MERCURY
-from orbitsim.core.planets import A_NEPTUNE
-from orbitsim.core.planets import A_SATURN
-from orbitsim.core.planets import A_URANUS
-from orbitsim.core.planets import A_VENUS
+from orbitsim.core.planets import (
+    A_EARTH,
+    A_JUPITER,
+    A_MARS,
+    A_MERCURY,
+    A_NEPTUNE,
+    A_SATURN,
+    A_URANUS,
+    A_VENUS,
+)
 from orbitsim.core.state import StateVector
 from orbitsim.render.porkchop import render_porkchop_png
 from panda3d.core import CardMaker
-import numpy as np
 
 
 class PorkchopModal:
-    """Transfer-window (porkchop) analysis overlay, computed off the render thread. Stateless: all state lives on the OrbitApp it is given."""
+    """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
     def __init__(self, app) -> None:
         self.app = app
 
-    def _toggle_porkchop(self) -> None:
+    def toggle_porkchop(self) -> None:
         """Build a porkchop plot and overlay it. Uses the current target if one
         is selected (planet or Moon); otherwise falls back to a generic higher-orbit
         demo. Pressing 'p' again removes it.
@@ -116,7 +119,7 @@ class PorkchopModal:
         self.app._porkchop_render = (dep_times, tof_grid)
         self.app._porkchop_future = self.app._planning_executor.submit(job)
 
-    def _poll_porkchop(self) -> None:
+    def poll_porkchop(self) -> None:
         """Draw the porkchop overlay once its background grid finishes."""
         future = getattr(self.app, "_porkchop_future", None)
         if future is None or not future.done():
@@ -155,9 +158,9 @@ class PorkchopModal:
         self.app._porkchop_card = card
         DirectButton(
             text="CREATE MANEUVER", scale=0.048, pos=(0.38, 0, -0.61),
-            command=self.app.targeting._plan_intercept, parent=self.app._porkchop_modal, **button_options(),
+            command=self.app.targeting.plan_intercept, parent=self.app._porkchop_modal, **button_options(),
         )
         DirectButton(
             text="CLOSE", scale=0.048, pos=(-0.38, 0, -0.61),
-            command=self._toggle_porkchop, parent=self.app._porkchop_modal, **button_options(),
+            command=self.toggle_porkchop, parent=self.app._porkchop_modal, **button_options(),
         )
