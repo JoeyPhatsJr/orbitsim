@@ -645,3 +645,21 @@ def test_prediction_ephemeris_reuses_the_state_for_a_repeated_time(monkeypatch):
         b = nb._csun(12345.678)
         c = nb._csun(12346.0)
     assert a is b and len(calls) == 2 and c is not a
+
+
+def test_world_step_never_uses_the_prediction_stepper(monkeypatch):
+    # The drawn-prediction stepper trades flight-identical stepping for speed; the flown
+    # sim must keep propagate_solar_system (the pinned LEO coast guards its numbers).
+    from orbitsim.core.bodies import EARTH
+    from orbitsim.sim.world import Vessel, World
+    import pytest
+
+    def _boom(*a, **k):
+        pytest.fail("World.step must not use propagate_solar_prediction")
+    monkeypatch.setattr(nb, "propagate_solar_prediction", _boom)
+    r = 6.878e6
+    st = StateVector(r=np.array([r, 0.0, 0.0]), v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                     mu=MU_EARTH)
+    world = World(EARTH, [Vessel("v", st)], solar_system=True)
+    world.step(600.0)
+    assert world.vessels[0].state.epoch_s == 600.0

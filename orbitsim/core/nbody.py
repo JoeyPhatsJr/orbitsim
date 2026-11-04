@@ -107,9 +107,9 @@ def _conic_periapsis_m(r_rel, v_rel, mu):
     return p / (1.0 + _norm3(e_vec))
 
 
-def _timescale_cap_s(radius_m, mu):
-    """1/SUBSTEP_DIVISOR of the circular-orbit timescale at radius_m."""
-    return (2 * np.pi * np.sqrt(radius_m**3 / mu)) / SUBSTEP_DIVISOR
+def _timescale_cap_s(radius_m, mu, divisor=SUBSTEP_DIVISOR):
+    """1/divisor of the circular-orbit timescale at radius_m (default SUBSTEP_DIVISOR)."""
+    return (2 * np.pi * np.sqrt(radius_m**3 / mu)) / divisor
 
 
 def _attractor_cap_s(r, v, t_s, attractors, max_step_s):
@@ -456,7 +456,8 @@ _SOLAR_CAP_BODIES = [
 ]
 
 
-def _solar_cap_s(r, v, t_s, max_step_s):
+def _solar_cap_s(r, v, t_s, max_step_s, periapsis_fn=_conic_periapsis_m,
+                divisor=SUBSTEP_DIVISOR):
     """Largest safe substep at (r, v) for the full solar-system field [s].
 
     The SOI-dominant body (Moon -> planet -> Earth -> Sun) gets a
@@ -470,10 +471,10 @@ def _solar_cap_s(r, v, t_s, max_step_s):
     rE = _norm3(r)
     moon_dominant = rM < MOON_SOI_M
     if moon_dominant:
-        rp = max(_conic_periapsis_m(r - moon.r, v - moon.v, MU_MOON), R_MOON)
-        cap = min(cap, _timescale_cap_s(rp, MU_MOON))
+        rp = max(periapsis_fn(r - moon.r, v - moon.v, MU_MOON), R_MOON)
+        cap = min(cap, _timescale_cap_s(rp, MU_MOON, divisor))
     elif rM > 0:
-        cap = min(cap, _timescale_cap_s(rM, MU_MOON))
+        cap = min(cap, _timescale_cap_s(rM, MU_MOON, divisor))
 
     planet_dominant = False
     for state_fn, mu, soi, radius in _SOLAR_CAP_BODIES[1:]:   # planets only
@@ -483,26 +484,26 @@ def _solar_cap_s(r, v, t_s, max_step_s):
             continue
         if rB < soi and not moon_dominant:
             planet_dominant = True
-            rp = max(_conic_periapsis_m(r - st.r, v - st.v, mu), radius)
-            cap = min(cap, _timescale_cap_s(rp, mu))
+            rp = max(periapsis_fn(r - st.r, v - st.v, mu), radius)
+            cap = min(cap, _timescale_cap_s(rp, mu, divisor))
         else:
-            cap = min(cap, _timescale_cap_s(rB, mu))
+            cap = min(cap, _timescale_cap_s(rB, mu, divisor))
 
     earth_dominant = not moon_dominant and not planet_dominant and rE < EARTH_SOI_M
     if earth_dominant:
-        rp = max(_conic_periapsis_m(r, v, MU_EARTH), R_EARTH)
-        cap = min(cap, _timescale_cap_s(rp, MU_EARTH))
+        rp = max(periapsis_fn(r, v, MU_EARTH), R_EARTH)
+        cap = min(cap, _timescale_cap_s(rp, MU_EARTH, divisor))
     elif rE > 0:
-        cap = min(cap, _timescale_cap_s(rE, MU_EARTH))
+        cap = min(cap, _timescale_cap_s(rE, MU_EARTH, divisor))
 
     sun = _csun(t_s)
     rS = _norm3(r - sun.r)
     if rS > 0:
         if moon_dominant or planet_dominant or earth_dominant:
-            cap = min(cap, _timescale_cap_s(rS, MU_SUN))
+            cap = min(cap, _timescale_cap_s(rS, MU_SUN, divisor))
         else:
-            rp = max(_conic_periapsis_m(r - sun.r, v - sun.v, MU_SUN), R_SUN)
-            cap = min(cap, _timescale_cap_s(rp, MU_SUN))
+            rp = max(periapsis_fn(r - sun.r, v - sun.v, MU_SUN), R_SUN)
+            cap = min(cap, _timescale_cap_s(rp, MU_SUN, divisor))
     return cap
 
 
@@ -522,6 +523,35 @@ def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0,
         state.r, state.v, state.epoch_s, dt_s, solar_system_accel,
         lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s), max_step_s,
         min_substep_s=min_substep_s)
+    return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
+
+
+# Drawn predictions (live trajectory + maneuver preview) only. Flight's periapsis-sized
+# steps with the old 120 s preview floor mispredicted a Moon flyby by 7x; stepping by the
+# *current* distance to each body at 1/1000 of its timescale matches the converged path
+# within ~1% at ~6x the old speed. Never used by World.step (the flown sim).
+PREDICTION_SUBSTEP_DIVISOR = 1000.0
+
+
+def _current_distance_m(r_rel, v_rel, mu):
+    """Step-size radius for predictions: the current distance (not the conic periapsis)."""
+    return _norm3(r_rel)
+
+
+def propagate_solar_prediction(state, dt_s, max_step_s=24.0 * 3600.0, min_substep_s=1.0):
+    """Propagate under full solar-system gravity for a *drawn prediction*.
+
+    Same Verlet integrator and forces as propagate_solar_system, but each body's
+    substep cap uses its current distance at 1/PREDICTION_SUBSTEP_DIVISOR of the local
+    timescale: fine near Earth and the Moon, coarse in between. Not bit-identical to the
+    flown sim (it is closer to the converged path); never call it from World.step.
+    """
+    r, v, t = _verlet_adaptive(
+        state.r, state.v, state.epoch_s, dt_s, solar_system_accel,
+        lambda rr, vv, tt: _solar_cap_s(rr, vv, tt, max_step_s,
+                                        periapsis_fn=_current_distance_m,
+                                        divisor=PREDICTION_SUBSTEP_DIVISOR),
+        max_step_s, min_substep_s=min_substep_s)
     return StateVector(r=r, v=v, mu=state.mu, epoch_s=state.epoch_s + dt_s)
 
 

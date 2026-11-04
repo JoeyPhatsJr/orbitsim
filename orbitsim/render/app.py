@@ -33,7 +33,7 @@ class OrbitApp(ShowBase):
 
     # Constants shared by several controllers (single-user constants live on their controller).
     EXECUTE_TOLERANCE_S = 2.0     # execute allowed only within this of the node epoch
-    PREDICTION_MIN_SUBSTEP_S = 120.0  # coarse substep floor for the visual prediction only
+    PREDICTION_MIN_SUBSTEP_S = 1.0  # stall guard for drawn predictions (steps size themselves)
                                       # (sim is untouched): escape climb-out 4.6s -> ~1.7s
     QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
     # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
