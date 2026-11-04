@@ -10,7 +10,7 @@ class WarpControls:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_warp_controls(self) -> None:
+    def build_warp_controls(self) -> None:
         """Top-center on-screen warp control: slower / faster buttons + readout.
         (The ',' and '.' keys do the same.) Works in both sandbox and solar modes."""
         from orbitsim.render.ui.theme import THEME, button_options
@@ -28,15 +28,15 @@ class WarpControls:
                          command=self.app.clock.warp_down, parent=self.app._warp_frame,
                          **button_options()),
             DirectButton(text=">>", scale=0.05, pos=(0.28, 0.0, -0.085),
-                         command=self._warp_up_guarded, parent=self.app._warp_frame,
+                         command=self.warp_up_guarded, parent=self.app._warp_frame,
                          **button_options()),
             DirectButton(text="MAX", scale=0.042, pos=(0.48, 0.0, -0.085),
-                         command=self._max_warp_guarded, parent=self.app._warp_frame,
+                         command=self.max_warp_guarded, parent=self.app._warp_frame,
                          **button_options()),
         ]
-        self._update_warp_readout()
+        self.update_warp_readout()
 
-    def _update_warp_readout(self) -> None:
+    def update_warp_readout(self) -> None:
         if getattr(self.app, "_warp_readout", None) is not None:
             locked = not self.app.solar_system and self.app.world.any_thrusting()
             suffix = "  (LOCKED)" if locked else ""
@@ -45,7 +45,7 @@ class WarpControls:
                 f"T+ {days:,.1f} DAYS     WARP  x{self.app.clock.warp:,.0f}{suffix}"
             )
 
-    def _warp_up_guarded(self):
+    def warp_up_guarded(self):
         if self.app.world.any_thrusting():
             return
         if self.app.world.vessels:
@@ -62,7 +62,7 @@ class WarpControls:
                 return
         self.app.clock.warp_up()
 
-    def _max_warp_guarded(self):
+    def max_warp_guarded(self):
         """Jump directly to the highest safe warp (up to 100,000,000x in deep space)."""
         if self.app.world.any_thrusting():
             return
@@ -87,4 +87,4 @@ class WarpControls:
                     SimClock.WARP_STEPS,
                 )
         self.app.clock.warp = float(cap)
-        self._update_warp_readout()
+        self.update_warp_readout()

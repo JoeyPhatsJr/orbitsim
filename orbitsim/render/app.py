@@ -71,7 +71,7 @@ class OrbitApp(ShowBase):
         self.warp_controls = WarpControls(self)
         self.solar_view = SolarView(self)
         self.title_screen = TitleScreen(self)
-        self.title_screen._build_title_screen()
+        self.title_screen.build_title_screen()
 
     def destroy(self) -> None:
         # De-duplicate: _compute_executor and _grid_executor may both be _pool.
@@ -103,32 +103,32 @@ class OrbitApp(ShowBase):
             self.rig.set_distance(2.0e12)
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
-        self.operation_overlay = OperationOverlay(self, self.trajectory_view._cancel_operation)
+        self.operation_overlay = OperationOverlay(self, self.trajectory_view.cancel_operation)
         bindings = SOLAR_BINDINGS if self.solar_system else SANDBOX_BINDINGS
         self.keybind_overlay = KeybindOverlay(self.aspect2d, bindings)
         self.settings_panel = SettingsPanel(
             self.aspect2d, self.hud.set_units,
-            on_unlimited_toggle=self.maneuver_editor._set_unlimited_dv,
+            on_unlimited_toggle=self.maneuver_editor.set_unlimited_dv,
             enable_unlimited=not self.solar_system)
-        self.warp_controls._build_warp_controls()
+        self.warp_controls.build_warp_controls()
 
-        self.bodies_view._build_central_body()
-        self.bodies_view._build_lighting()
-        self.vessel_view._build_vessel_markers()
-        self.vessel_view._build_ship_view()
-        self.bodies_view._build_orbit_frame()
+        self.bodies_view.build_central_body()
+        self.bodies_view.build_lighting()
+        self.vessel_view.build_vessel_markers()
+        self.vessel_view.build_ship_view()
+        self.bodies_view.build_orbit_frame()
         self._build_background_work()
         if self.solar_system:
-            self.solar_view._build_planets()
+            self.solar_view.build_planets()
         else:
-            self.readouts._build_sandbox_controls()
-            self.targeting._build_targeting()
-            self.readouts._build_apsis_and_encounter_markers()
-            self.bodies_view._build_moon_and_lagrange()
-            self.bodies_view._build_sandbox_planets()
-        self.bodies_view._build_starfield()
+            self.readouts.build_sandbox_controls()
+            self.targeting.build_targeting()
+            self.readouts.build_apsis_and_encounter_markers()
+            self.bodies_view.build_moon_and_lagrange()
+            self.bodies_view.build_sandbox_planets()
+        self.bodies_view.build_starfield()
 
-        self.flight_input._setup_input()
+        self.flight_input.setup_input()
         self.task_mgr.add(self._update, "update")
 
     def _build_background_work(self):
@@ -250,36 +250,36 @@ class OrbitApp(ShowBase):
 
         if self.solar_system:
             self.clock.advance(real_dt)
-            self.solar_view._update_solar_system()
+            self.solar_view.update_solar_system()
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
-        self.targeting._poll_planning()
-        self.porkchop_modal._poll_porkchop()
+        self.targeting.poll_planning()
+        self.porkchop_modal.poll_porkchop()
 
         target_pos, maneuver_dir = self._frame_flight(real_dt)
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
-        self.maneuver_editor._apply_jogs(real_dt)
+        self.maneuver_editor.apply_jogs(real_dt)
 
         focus, scale = self._frame_origin()
-        self.bodies_view._frame_moon_ring(scale)
-        self.bodies_view._frame_sun()
-        self.vessel_view._frame_vessels()
-        self.vessel_view._frame_ship_view()
-        node = self.maneuver_editor._frame_maneuver_node()
-        self.bodies_view._frame_moon()
-        self.targeting._frame_target_label()
-        self.bodies_view._frame_lagrange()
-        self.bodies_view._frame_planets(scale)
-        self.targeting._frame_closest_approach(node)
+        self.bodies_view.frame_moon_ring(scale)
+        self.bodies_view.frame_sun()
+        self.vessel_view.frame_vessels()
+        self.vessel_view.frame_ship_view()
+        node = self.maneuver_editor.frame_maneuver_node()
+        self.bodies_view.frame_moon()
+        self.targeting.frame_target_label()
+        self.bodies_view.frame_lagrange()
+        self.bodies_view.frame_planets(scale)
+        self.targeting.frame_closest_approach(node)
 
-        self.flight_input._apply_mouse_orbit()
-        self.bodies_view._update_starfield()
+        self.flight_input.apply_mouse_orbit()
+        self.bodies_view.update_starfield()
         self.rig.apply()
-        self.readouts._update_marker_readability(focus)
+        self.readouts.update_marker_readability(focus)
 
-        self.readouts._frame_readouts(target_pos, maneuver_dir)
+        self.readouts.frame_readouts(target_pos, maneuver_dir)
         return task.cont
 
     def _frame_flight(self, real_dt):
@@ -287,7 +287,7 @@ class OrbitApp(ShowBase):
         # Flight input, then bound warp: 1x while thrusting (no integrating through warp),
         # else cap to the largest warp whose per-frame sub-step count stays in budget near
         # bodies (silent — the readout just won't climb past the cap).
-        self.flight_input._apply_flight_input(real_dt)
+        self.flight_input.apply_flight_input(real_dt)
         if self.world.any_thrusting():
             self.clock.warp = 1.0
         elif self.world.vessels:
@@ -306,7 +306,7 @@ class OrbitApp(ShowBase):
         target_pos = (self._target.state_at(self.clock.sim_time_s).r
                       if self._target is not None else None)
         maneuver_dir = None
-        planned_node = self.maneuver_editor._current_node()
+        planned_node = self.maneuver_editor.current_node()
         if planned_node.magnitude_mps > 0.0:
             from orbitsim.core.maneuvers import maneuver_direction
 
@@ -319,7 +319,7 @@ class OrbitApp(ShowBase):
             v.sas_maneuver_dir = maneuver_dir
         # An armed automatic burn lands exactly on its epoch instead of stepping past it
         # at high warp. This keeps the impulse and the displayed maneuver direction aligned.
-        ttn_before_step = self.maneuver_editor._time_to_node()
+        ttn_before_step = self.maneuver_editor.time_to_node()
         requested_dt = real_dt * self.clock.warp
         if (
             self._auto_execute_node
@@ -335,10 +335,10 @@ class OrbitApp(ShowBase):
             from orbitsim.core.nbody import refresh_ephemeris_cache
             refresh_ephemeris_cache(self.clock.sim_time_s)
         self.world.step(sim_dt)
-        if self._auto_execute_node and self.maneuver_editor._time_to_node() is not None:
-            if self.maneuver_editor._time_to_node() <= self.EXECUTE_TOLERANCE_S:
+        if self._auto_execute_node and self.maneuver_editor.time_to_node() is not None:
+            if self.maneuver_editor.time_to_node() <= self.EXECUTE_TOLERANCE_S:
                 self._auto_execute_node = False
-                self.maneuver_editor._execute_burn()
+                self.maneuver_editor.execute_burn()
         return target_pos, maneuver_dir
 
     def _frame_origin(self):

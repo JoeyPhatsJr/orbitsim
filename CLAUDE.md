@@ -58,16 +58,17 @@ If you are tempted to `import panda3d` inside `core/`, stop — the design is wr
 Data flow each frame (`render/app.py::OrbitApp._update`, an ordered list of steps):
 `_frame_flight` (input, warp caps, `clock.advance(dt)`, `refresh_ephemeris_cache(t)`,
 `world.step(sim_dt)`) → `_frame_origin` (recentre the floating origin on the focused vessel) →
-controller `_frame_*` steps remap everything to render space (bodies, vessels, maneuver node,
-targeting) → `readouts._frame_readouts` (HUD/navball). **Order matters** — keep it.
+controller `frame_*` steps remap everything to render space (bodies, vessels, maneuver node,
+targeting) → `readouts.frame_readouts` (HUD/navball). **Order matters** — keep it.
 
 `OrbitApp` (`render/app.py`, ~360 lines) only wires things up: `_start_sim` is an ordered list of
-`_build_*` calls and `_update` an ordered list of `_frame_*` calls. The behavior lives in
+controller `build_*` calls and `_update` an ordered list of `frame_*` calls. Controller methods
+other objects call are public; a leading underscore means "internal to this controller". The behavior lives in
 **stateless controllers** in `render/controllers/` (`title_screen`, `solar_view`, `warp_controls`,
 `flight_input`, `quicksave`, `targeting`, `porkchop_modal`, `trajectory_view`, `maneuver_editor`,
 `bodies_view`, `vessel_view`, `readouts`). Each holds only `self.app`; **all state stays on
 `OrbitApp`** (`self.app._node_epoch_s`, `self.app._target`, …). Cross-feature calls go through the
-owning controller (`self.app.maneuver_editor._current_node()`), never `self.app._current_node()`.
+owning controller (`self.app.maneuver_editor.current_node()`), never `self.app._current_node()`.
 
 `OrbitApp` has **two modes**: the **sandbox** (default — Earth-centered, one flyable vessel,
 maneuver editor) and the **solar viewer** (`--solar` — Sun-centered, planets from the ephemeris,

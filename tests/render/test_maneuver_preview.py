@@ -104,7 +104,7 @@ def test_build_encounter_patches_skips_primary_escape_and_short_runs():
         enc("Sun", 45, 50, 7.0e8),     # skipped: heliocentric escape
         enc("Mars", 52, 52, 3.4e6),    # skipped: single-sample run (< 2 points)
     ]
-    TrajectoryView(_FakeApp())._build_encounter_patches(
+    TrajectoryView(_FakeApp()).build_encounter_patches(
         parent, pts, pts[0].copy(), 2.0e4, encounters
     )
     assert parent.get_num_children() == 1

@@ -8,7 +8,7 @@ class VesselView:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_vessel_markers(self):
+    def build_vessel_markers(self):
         """Constant-size vessel markers."""
         world = self.app.world
         # Vessel markers + orbit lines.
@@ -26,7 +26,7 @@ class VesselView:
             self.app.vessel_nps.append(m)
             self.app.orbit_nps.append(None)
 
-    def _build_ship_view(self):
+    def build_ship_view(self):
         """True-scale ship model + plume for vessel 0."""
         # Ship view: a true-scale, lit, oriented model of vessel 0 that cross-fades
         # in from the constant-size marker as the camera zooms close. (ship_model.py)
@@ -45,19 +45,19 @@ class VesselView:
             self.app._plume_np.reparent_to(self.app._ship_model_np)
             self.app._plume_np.hide()
 
-    def _frame_vessels(self):
+    def frame_vessels(self):
         """Place vessel markers, refresh trajectory lines, apsis markers."""
         import time as _time
         now_real = _time.monotonic()
         for idx, vessel in enumerate(self.app.world.vessels):
             vx, vy, vz = self.app.transform.to_render(vessel.state.r)
             self.app.vessel_nps[idx].set_pos(vx, vy, vz)
-            self.app.trajectory_view._rebuild_trajectory(idx, vessel, now_real)
+            self.app.trajectory_view.rebuild_trajectory(idx, vessel, now_real)
         if self.app._preview_np is not None and self.app._preview_origin is not None:
             self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
-        self.app.readouts._place_apsis_markers()
+        self.app.readouts.place_apsis_markers()
 
-    def _frame_ship_view(self):
+    def frame_ship_view(self):
         """Cross-fade vessel 0 marker <-> true-scale model + plume."""
         # Ship view: cross-fade marker -> true-scale oriented model for vessel 0.
         if self.app._ship_model_np is not None:

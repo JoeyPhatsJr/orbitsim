@@ -12,7 +12,7 @@ class TitleScreen:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_title_screen(self) -> None:
+    def build_title_screen(self) -> None:
         """Show the start menu: title, a delta-V budget slider, and a Play button.
 
         The sim scene and update loop are not built until Play is clicked, so the
@@ -104,4 +104,4 @@ class TitleScreen:
         self.app._title_nodes = []
         self.app._start_sim()                # builds the HUD + settings panel
         if want_unlimited:
-            self.app.maneuver_editor._set_unlimited_dv(True)  # now applies flag + syncs panel + readout
+            self.app.maneuver_editor.set_unlimited_dv(True)  # now applies flag + syncs panel + readout

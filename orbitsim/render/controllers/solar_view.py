@@ -10,7 +10,7 @@ class SolarView:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_planets(self) -> None:
+    def build_planets(self) -> None:
         """Create constant-size markers + labels for the Sun and 8 planets."""
         from orbitsim.core.bodies import PLANETS, SUN
 
@@ -58,7 +58,7 @@ class SolarView:
             }
             return geo_fns[name](t_s).r - pl.sun_state_at(t_s).r
 
-    def _update_solar_system(self) -> None:
+    def update_solar_system(self) -> None:
         """Place the Sun + planets for the current sim time (DE440 or fallback)."""
         from datetime import datetime, timedelta
         from orbitsim.core.ephemeris import available as ephemeris_available
@@ -73,11 +73,11 @@ class SolarView:
             label.set_pos(rx, ry, rz + 6.0)
 
         self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
-        self.app.flight_input._apply_mouse_orbit()
-        self.app.bodies_view._update_starfield()
+        self.app.flight_input.apply_mouse_orbit()
+        self.app.bodies_view.update_starfield()
         self.app.rig.apply()
 
-        self.app.warp_controls._update_warp_readout()
+        self.app.warp_controls.update_warp_readout()
         source = "JPL DE440" if ephemeris_available() else "circular approx (offline)"
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
         self.app.hud.text.setText(

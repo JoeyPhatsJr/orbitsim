@@ -10,11 +10,11 @@ class Readouts:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_sandbox_controls(self):
+    def build_sandbox_controls(self):
         """Maneuver editor, navball, SAS panel, velocity readout, dock."""
         # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
         # *current* state (dt=0), so the executed orbit matches the live preview.
-        self.app.maneuver_editor._build_maneuver_ui()
+        self.app.maneuver_editor.build_maneuver_ui()
         self.app._fuel_capacity = (
             self.app.world.vessels[0].fuel_mass_kg if self.app.world.vessels else 0.0
         )
@@ -22,18 +22,18 @@ class Readouts:
         self.app.navball = Navball(self.app)
         from orbitsim.render.sas_panel import SasPanel, VelocityReadout
         self.app.sas_panel = SasPanel(
-            self.app, on_set_mode=self.app.flight_input._set_sas, on_toggle=self.app.flight_input._toggle_sas
+            self.app, on_set_mode=self.app.flight_input.set_sas, on_toggle=self.app.flight_input.toggle_sas
         )
         self.app.vel_readout = VelocityReadout(self.app, lambda: self.app.hud.units)
         from orbitsim.render.ui.widgets import PanelDock
         self.app.panel_dock = PanelDock(self.app, [
             ("ORBIT", self.app.hud.toggle_orbit),
             ("VESSEL", self.app.hud.toggle_vessel),
-            ("MANEUVER", self.app.maneuver_editor._toggle_maneuver_drawer),
+            ("MANEUVER", self.app.maneuver_editor.toggle_maneuver_drawer),
         ])
         self.app._maneuver_frame.hide()  # clean-flight default; MNV dock button opens it
 
-    def _build_apsis_and_encounter_markers(self):
+    def build_apsis_and_encounter_markers(self):
         """PE/AP markers + encounter periapsis cues."""
         from orbitsim.render.world_labels import build_labeled_marker, build_world_label
         self.app._apsis_positions = {"PE": None, "AP": None}
@@ -64,7 +64,7 @@ class Readouts:
             self.app._encounter_marker_nps.append(mk)
             self.app._encounter_labels.append(lbl)
 
-    def _place_apsis_markers(self) -> None:
+    def place_apsis_markers(self) -> None:
         """Place cached Pe/Ap cues in the current floating-origin frame."""
         for name in ("PE", "AP"):
             world_pos = self.app._apsis_positions[name]
@@ -79,7 +79,7 @@ class Readouts:
             label.set_pos(rx, ry, rz + 7.0)
             marker.show()
 
-    def _update_marker_readability(self, focus_m) -> None:
+    def update_marker_readability(self, focus_m) -> None:
         """Fade distant cues and declutter their labels by navigation priority."""
         from panda3d.core import TransparencyAttrib
         from orbitsim.render.world_markers import declutter_indices, distance_fade
@@ -104,7 +104,7 @@ class Readouts:
         ):
             add(label, marker, self.app._lagrange_positions.get(name), 20)
 
-        points_px = [self.app.targeting._marker_px(item[2]) for item in candidates]
+        points_px = [self.app.targeting.marker_px(item[2]) for item in candidates]
         visible = declutter_indices(
             points_px, [item[3] for item in candidates], min_separation_px=52.0
         )
@@ -164,9 +164,9 @@ class Readouts:
             f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
             f"free dV {dv_eq:,.0f} m/s"
         )
-        self.app.maneuver_editor._sync_maneuver_hud()
+        self.app.maneuver_editor.sync_maneuver_hud()
 
-    def _frame_readouts(self, target_pos, maneuver_dir):
+    def frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""
         v0 = self.app.world.vessels[0]
         # Osculating elements about the dominant body.
@@ -230,5 +230,5 @@ class Readouts:
             target_rel_speed = float(np.linalg.norm(v0.state.v - target_velocity))
         self.app.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_encounter_info(v0, dom_body, dom_pos)
-        self.app.trajectory_view._update_encounter_cues()
-        self.app.warp_controls._update_warp_readout()
+        self.app.trajectory_view.update_encounter_cues()
+        self.app.warp_controls.update_warp_readout()

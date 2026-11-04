@@ -15,7 +15,7 @@ class TrajectoryView:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _cancel_operation(self) -> None:
+    def cancel_operation(self) -> None:
         self.app.operation.cancel()
         rollback = getattr(self.app, "_operation_rollback", None)
         if rollback is not None:
@@ -27,7 +27,7 @@ class TrajectoryView:
         self.app.operation_overlay.update(self.app.operation.status)
         self.app._flash_message("Operation cancelled")
 
-    def _jump_operation(self, duration_s):
+    def jump_operation(self, duration_s):
         """Frame-budgeted coast generator; one ephemeris-aware day per rendered frame."""
         from orbitsim.core.nbody import refresh_ephemeris_cache
 
@@ -39,9 +39,9 @@ class TrajectoryView:
             self.app.clock.sim_time_s += dt_s
             yield (index + 1) / total
         self.app._operation_rollback = None
-        self.app.maneuver_editor._execute_burn()
+        self.app.maneuver_editor.execute_burn()
 
-    def _trajectory_coast_operation(self, duration_s):
+    def trajectory_coast_operation(self, duration_s):
         """Frame-budgeted coast to a clicked future trajectory sample."""
         from orbitsim.core.nbody import refresh_ephemeris_cache
 
@@ -57,7 +57,7 @@ class TrajectoryView:
         self.app._traj_epoch_cache[0] = None
         self.app._flash_message("Arrived at trajectory point")
 
-    def _build_encounter_patches(self, parent, world_pts, origin, scale, encounters):
+    def build_encounter_patches(self, parent, world_pts, origin, scale, encounters):
         """Draw each flyby SOI segment as a distinct-colored overlay parented to the
         trajectory node (so it inherits the floating-origin transform for free)."""
         for enc in encounters:
@@ -85,7 +85,7 @@ class TrajectoryView:
         self.app._traj_render_origin[idx] = origin
         encounters = self.app._traj_encounters[idx] if idx < len(self.app._traj_encounters) else None
         if encounters:
-            self._build_encounter_patches(node, world_pts, origin, scale, encounters)
+            self.build_encounter_patches(node, world_pts, origin, scale, encounters)
         if idx == 0:
             try:
                 if self.app.world.solar_system:
@@ -103,7 +103,7 @@ class TrajectoryView:
                 self.app._apsis_positions["PE"] = None
                 self.app._apsis_positions["AP"] = None
 
-    def _rebuild_trajectory(self, idx, vessel, now_real) -> None:
+    def rebuild_trajectory(self, idx, vessel, now_real) -> None:
         """Poll/submit N-body prediction work without blocking the render thread."""
         future = self.app._traj_future[idx]
         if future is not None and future.done():
@@ -150,7 +150,7 @@ class TrajectoryView:
                 True,   # with_encounters
             )
 
-    def _update_encounter_cues(self) -> None:
+    def update_encounter_cues(self) -> None:
         """Place predicted-flyby periapsis markers and set the HUD approach line.
 
         Shows the post-burn preview's encounters while a maneuver is planned,
@@ -195,4 +195,4 @@ class TrajectoryView:
                 f"Approach {enc.body_name}: {tag}  "
                 f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
             )
-            self.app.maneuver_editor._sync_maneuver_hud()
+            self.app.maneuver_editor.sync_maneuver_hud()

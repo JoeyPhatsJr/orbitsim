@@ -23,7 +23,7 @@ class Targeting:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_targeting(self):
+    def build_targeting(self):
         """Targetable bodies, CA labels, target label."""
         # Targetable bodies. Click a marker to select.
         from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
@@ -68,7 +68,7 @@ class Targeting:
         self.app._target_label.hide()
         self.app._target_label_position = None
 
-    def _on_mouse1_down(self):
+    def on_mouse1_down(self):
         mw = self.app.mouseWatcherNode
         self.app._mouse1_down_px = self._mouse_px() if (mw and mw.has_mouse()) else None
 
@@ -80,7 +80,7 @@ class Targeting:
         w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
         return ((mw.get_mouse_x() * 0.5 + 0.5) * w, (mw.get_mouse_y() * 0.5 + 0.5) * h)
 
-    def _marker_px(self, world_r):
+    def marker_px(self, world_r):
         """Project an inertial position to pixels, or None if behind the camera/off-lens."""
         from panda3d.core import Point2
         rp = self.app.transform.to_render(world_r)
@@ -91,7 +91,7 @@ class Targeting:
         w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
         return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
 
-    def _try_pick_target(self):
+    def try_pick_target(self):
         """On a left-click tap, select a body or coast to a future trajectory point."""
         from orbitsim.render.picking import nearest_future_point, nearest_marker
         down = getattr(self.app, "_mouse1_down_px", None)
@@ -104,11 +104,11 @@ class Targeting:
         if abs(click[0] - down[0]) > 6.0 or abs(click[1] - down[1]) > 6.0:
             return  # was a drag, not a tap
         now = self.app.clock.sim_time_s
-        proj = [self._marker_px(t.state_at(now).r) for t in self.app._targets]
+        proj = [self.marker_px(t.state_at(now).r) for t in self.app._targets]
         idxs = [i for i, p in enumerate(proj) if p is not None]
         hit = nearest_marker(click, [proj[i] for i in idxs], tol_px=22.0)
         if hit is not None:
-            self._clear_target()   # tear down any prior target's CA markers before switching
+            self.clear_target()   # tear down any prior target's CA markers before switching
             self.app._target = self.app._targets[idxs[hit]]
             return
 
@@ -116,7 +116,7 @@ class Targeting:
         epochs = self.app._traj_epoch_cache[0] if self.app._traj_epoch_cache else None
         if points is None or epochs is None or self.app.world.any_thrusting():
             return
-        trajectory_px = [self._marker_px(point) for point in points]
+        trajectory_px = [self.marker_px(point) for point in points]
         point_idx = nearest_future_point(click, trajectory_px, epochs, now, tol_px=16.0)
         if point_idx is None:
             return
@@ -128,11 +128,11 @@ class Targeting:
         )
         self.app.operation.start(
             f"Coasting {fmt_countdown(duration_s)} along trajectory",
-            self.app.trajectory_view._trajectory_coast_operation(duration_s),
+            self.app.trajectory_view.trajectory_coast_operation(duration_s),
         )
         self.app.operation_overlay.update(self.app.operation.status)
 
-    def _plan_intercept(self):
+    def plan_intercept(self):
         """Auto-plan an intercept/departure of the current target.
 
         The Lambert grid search is the expensive part, so it runs on the planning
@@ -212,10 +212,10 @@ class Targeting:
         self.app._dv["rad"] = node.dv_radial_mps
         for axis in ("pro", "nrm", "rad"):
             self.app._dv_value_text[axis].setText(f"{self.app._dv[axis]:+.0f}")
-        self.app.maneuver_editor._refresh_readout()
+        self.app.maneuver_editor.refresh_readout()
         self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
 
-    def _poll_planning(self) -> None:
+    def poll_planning(self) -> None:
         """Apply an intercept plan once its background job finishes."""
         future = getattr(self.app, "_planning_future", None)
         if future is None or not future.done():
@@ -233,7 +233,7 @@ class Targeting:
             return
         self._apply_planned_node(node)
 
-    def _clear_target(self):
+    def clear_target(self):
         """Deselect the current target; remove its closest-approach markers + readout."""
         self.app._target = None
         for attr in ("_ca_marker_ship", "_ca_marker_moon"):
@@ -248,7 +248,7 @@ class Targeting:
             self.app._ca_label_positions[key] = None
             label.hide()
         self.app._target_line = ""
-        self.app.maneuver_editor._sync_maneuver_hud()
+        self.app.maneuver_editor.sync_maneuver_hud()
 
     def _ca_marker(self, attr, color):
         """Lazily create/reuse a closest-approach marker NodePath."""
@@ -265,7 +265,7 @@ class Targeting:
             setattr(self.app, attr, np_)
         return np_
 
-    def _frame_target_label(self):
+    def frame_target_label(self):
         """Billboard label on the selected target."""
         if self.app._target is not None:
             target_now = self.app._target.state_at(self.app.clock.sim_time_s).r
@@ -277,7 +277,7 @@ class Targeting:
             self.app._target_label_position = None
             self.app._target_label.hide()
 
-    def _frame_closest_approach(self, node):
+    def frame_closest_approach(self, node):
         """Closest-approach markers + target readout."""
         v0 = self.app.world.vessels[0]
         # Closest approach to the current target (throttled recompute). Both the ship
@@ -298,7 +298,7 @@ class Targeting:
                 f"Target: {self.app._target.name}   dist {fmt_dist(dist)}"
                 f"   rel {relsp:,.0f} m/s"
             )
-            self.app.maneuver_editor._sync_maneuver_hud()
+            self.app.maneuver_editor.sync_maneuver_hud()
         elif self.app._target is not None:
             import time as _time
             now_real = _time.monotonic()
@@ -347,4 +347,4 @@ class Targeting:
                 f"Target: {self.app._target.name}   CA T-{fmt_countdown(countdown)}"
                 f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
             )
-            self.app.maneuver_editor._sync_maneuver_hud()
+            self.app.maneuver_editor.sync_maneuver_hud()

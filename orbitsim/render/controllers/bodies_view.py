@@ -35,7 +35,7 @@ class BodiesView:
     def __init__(self, app) -> None:
         self.app = app
 
-    def _build_central_body(self):
+    def build_central_body(self):
         """Sun marker (solar) or shaded Earth + atmosphere (sandbox)."""
         # Central body. Solar mode: fullbright Sun marker. Sandbox: the textured,
         # day/night-shaded Earth (with an atmosphere shell), or a flat-blue fallback.
@@ -52,7 +52,7 @@ class BodiesView:
             if self.app._atmo_np is not None:
                 self.app._atmo_np.reparent_to(self.app.central_np)
 
-    def _build_lighting(self):
+    def build_lighting(self):
         """Ambient + directional sun light."""
         # Lighting: low ambient + a sun directional light (aimed at the real Sun each
         # frame in the sandbox). The shadered Earth lights itself; the light is for the
@@ -66,7 +66,7 @@ class BodiesView:
         self.app._sun_light_np.set_hpr(45, -45, 0)
         self.app.render.set_light(self.app._sun_light_np)
 
-    def _build_orbit_frame(self):
+    def build_orbit_frame(self):
         """Orbit frame node + per-vessel trajectory caches."""
         world = self.app.world
         # Orbit frame: holds all Earth-centered orbit lines in world meters; repositioned +
@@ -81,7 +81,7 @@ class BodiesView:
         self.app._traj_render_origin = [None for _ in world.vessels]
         self.app._traj_encounters = [None for _ in world.vessels]
 
-    def _build_moon_and_lagrange(self):
+    def build_moon_and_lagrange(self):
         """Moon marker, SOI shell, Lagrange markers."""
         from orbitsim.render.world_labels import build_labeled_marker, build_world_label
         self.app._moon_np = make_uv_sphere(1.0, 12, 16)
@@ -117,7 +117,7 @@ class BodiesView:
             )
             self.app._lagrange_labels.append(lbl)
 
-    def _build_sandbox_planets(self):
+    def build_sandbox_planets(self):
         """Sandbox planets/Sun, Saturn ring, Moon body, Earth SOI, orbit lines."""
         from orbitsim.render.world_labels import build_labeled_marker, build_world_label
         from panda3d.core import TransparencyAttrib
@@ -228,18 +228,18 @@ class BodiesView:
         self.app._planet_orbit_epoch_bucket = None
         self.app._sun_orbit_frame = self.app.render.attach_new_node("sun_orbit_frame")
 
-    def _build_starfield(self):
+    def build_starfield(self):
         """Inertial camera-centered star background (both modes)."""
         # Star background (both modes): inertial, camera-centered, behind everything.
         self.app.starfield = build_starfield(self.app)
         self.app.starfield.reparent_to(self.app.render)
 
-    def _update_starfield(self) -> None:
+    def update_starfield(self) -> None:
         """Keep the sky centered on the camera so stars sit at infinity (no parallax)."""
         if getattr(self.app, "starfield", None) is not None:
             self.app.starfield.set_pos(self.app.camera.get_pos(self.app.render))
 
-    def _frame_moon_ring(self, scale):
+    def frame_moon_ring(self, scale):
         """Rebuild the Moon's osculating orbit ring on zoom / every few sim-hours."""
         # The real Moon's orbit is eccentric and perturbed, so the ring is its *osculating*
         # ellipse (always passes through the Moon); rebuilt on zoom or every 6 sim-hours.
@@ -257,7 +257,7 @@ class BodiesView:
             )
             self.app._moon_orbit_np.reparent_to(self.app._orbit_frame)
 
-    def _frame_sun(self):
+    def frame_sun(self):
         """Aim the terminator and sun light at the real Sun."""
         # Real Sun direction (Earth->Sun) drives the day/night terminator + sun
         # light. The cached wrapper serves DE440 positions when available and
@@ -273,7 +273,7 @@ class BodiesView:
                                        float(sun_dir[2]) * 1000.0)
             self.app._sun_light_np.look_at(0, 0, 0)
 
-    def _frame_moon(self):
+    def frame_moon(self):
         """Moon marker, true-scale body and SOI shell."""
         # Moon position this frame.
         moon_now = moon_state_at(self.app.clock.sim_time_s)
@@ -297,7 +297,7 @@ class BodiesView:
         self.app._soi_np.set_alpha_scale(fade)
         self.app._soi_np.show()
 
-    def _frame_lagrange(self):
+    def frame_lagrange(self):
         """Lagrange-point markers (bucketed recompute)."""
         # Lagrange points (rotate with the Moon). Each recompute runs three
         # brentq root-solves, so refresh by sim-time bucket instead of every
@@ -318,7 +318,7 @@ class BodiesView:
             lbl.set_pos(rx, ry, rz + 6.0)
             self.app._lagrange_positions[name] = np.asarray(lps[name]).copy()
 
-    def _frame_planets(self, scale):
+    def frame_planets(self, scale):
         """Planet/Sun markers, bodies, SOI shells, Earth SOI, orbit lines."""
         # Planets + Sun: position markers, SOI spheres, and orbit reference lines.
         from orbitsim.core.nbody import (
