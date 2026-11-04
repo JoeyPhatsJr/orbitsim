@@ -55,7 +55,7 @@ class VesselView:
             self.app.trajectory_view._rebuild_trajectory(idx, vessel, now_real)
         if self.app._preview_np is not None and self.app._preview_origin is not None:
             self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
-        self.app._place_apsis_markers()
+        self.app.readouts._place_apsis_markers()
 
     def _frame_ship_view(self):
         """Cross-fade vessel 0 marker <-> true-scale model + plume."""

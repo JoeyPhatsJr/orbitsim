@@ -20,7 +20,7 @@ On Linux the venv lives at `.venv/bin/`, on Windows at `.venv/Scripts/`.
 
 ```bash
 # Linux
-.venv/bin/python -m pytest tests/ -q                     # full suite (~400 tests)
+.venv/bin/python -m pytest tests/ -q                     # full suite (~430 tests, ~4 min: app goldens)
 .venv/bin/python -m pytest tests/core -q                 # physics core only (no graphics needed)
 .venv/bin/python -m pytest tests/core/test_flight.py -q                          # one file
 .venv/bin/python -m pytest "tests/core/test_kepler.py::TestEllipticAnomalies"    # one class/test
@@ -55,13 +55,32 @@ orbitsim/render/ Panda3D. imports sim + core. ALL graphics live here.
 
 If you are tempted to `import panda3d` inside `core/`, stop — the design is wrong at that point.
 
-Data flow each frame (`render/app.py::OrbitApp._update`):
-`clock.advance(dt)` → `refresh_ephemeris_cache(t)` → `world.step(sim_dt)` → recentre the floating
-origin on the focused vessel → remap all positions to render space → update HUD/navball.
+Data flow each frame (`render/app.py::OrbitApp._update`, an ordered list of steps):
+`_frame_flight` (input, warp caps, `clock.advance(dt)`, `refresh_ephemeris_cache(t)`,
+`world.step(sim_dt)`) → `_frame_origin` (recentre the floating origin on the focused vessel) →
+controller `_frame_*` steps remap everything to render space (bodies, vessels, maneuver node,
+targeting) → `readouts._frame_readouts` (HUD/navball). **Order matters** — keep it.
+
+`OrbitApp` (`render/app.py`, ~360 lines) only wires things up: `_start_sim` is an ordered list of
+`_build_*` calls and `_update` an ordered list of `_frame_*` calls. The behavior lives in
+**stateless controllers** in `render/controllers/` (`title_screen`, `solar_view`, `warp_controls`,
+`flight_input`, `quicksave`, `targeting`, `porkchop_modal`, `trajectory_view`, `maneuver_editor`,
+`bodies_view`, `vessel_view`, `readouts`). Each holds only `self.app`; **all state stays on
+`OrbitApp`** (`self.app._node_epoch_s`, `self.app._target`, …). Cross-feature calls go through the
+owning controller (`self.app.maneuver_editor._current_node()`), never `self.app._current_node()`.
 
 `OrbitApp` has **two modes**: the **sandbox** (default — Earth-centered, one flyable vessel,
 maneuver editor) and the **solar viewer** (`--solar` — Sun-centered, planets from the ephemeris,
 no vessel).
+
+**App golden tests** (`tests/render/app_harness/`): each scenario drives a real `OrbitApp`
+headlessly in its own process (inline executors, fake wall clock, fixed 60 fps) through key
+events and button clicks, and must reproduce its recorded JSON (physics state, on-screen text,
+bound events, camera). A failure means behavior changed — fix the code, never the golden; record
+a *new* scenario with `python -m tests.render.app_harness.record <name>` (it runs twice and
+refuses non-deterministic output). `hooks.py` is the only test code allowed to touch OrbitApp
+private attributes. `python -m tests.render.app_harness.screens --record/--compare` gives
+pixel-diffed screenshots against a local baseline.
 
 ### N-body gravity model
 
@@ -191,11 +210,13 @@ don't batch many changes into one late commit. Stage specific files by **explici
   elliptic-R3BP pulsating frame), not the constant `OMEGA_EM`. L-point distances scale with
   d(t); their velocity is `ω_line × r + (ḋ/d)·r`. `OMEGA_EM`/`rotating_frame`/`jacobi_constant`
   remain the idealized circular-CR3BP analysis model only.
-- **Multi-core work goes through the app's one persistent `ProcessPoolExecutor`** (`render/app.py`
-  `_build_process_pool`, `spawn` context, thread-executor fallback). Rules: work sent to it must be
-  **module-level + picklable** — the grid fan-out uses top-level `_*_row` functions in
-  `core/optimize.py`; the trajectory samplers live in `render/trajectory_sampling.py` (no `self`, no
-  Panda3D). Never submit a bound `OrbitApp` method (it drags Panda3D across the pickle). The planning
+- **Multi-core work goes through the app's one persistent `ProcessPoolExecutor`**
+  (`render/process_pool.py::build_process_pool`, `spawn` context, thread-executor fallback). Rules:
+  work sent to it must be **module-level + picklable** — the grid fan-out uses top-level `_*_row`
+  functions in `core/optimize.py`; the trajectory samplers live in `render/trajectory_sampling.py`
+  (no `self`, no Panda3D). Never submit a bound `OrbitApp` **or controller** method (controllers
+  hold `app`, so either drags Panda3D across the pickle); the app golden tests' pool stand-in
+  pickles every job and fails if you do. The planning
   *search* runs on a 1-worker **thread** (`_planning_executor`) that fans cells across the pool and
   is polled in `_update` — so the render thread never blocks. A passed `executor=` must not change a
   result (serial vs pooled is bit-identical; tests pin it). Sequential ODEs (one trajectory sample,
