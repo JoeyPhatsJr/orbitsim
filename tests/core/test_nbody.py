@@ -596,3 +596,39 @@ def test_prediction_ephemeris_surfaces_programming_errors(monkeypatch):
     with nb.stable_prediction_ephemeris():
         with pytest.raises(TypeError):
             nb._csun(0.0)
+
+
+# ---------------------------------------------------------------------------
+# 3-vector helpers for the substep hot loop. np.linalg.norm / np.cross spend most of
+# their time in generic n-d machinery for a 3-vector; the helpers must be BIT-identical
+# so swapping them in changes no trajectory (the physics goldens stay exact).
+# ---------------------------------------------------------------------------
+def test_norm3_is_bit_identical_to_numpy_norm():
+    rng = np.random.default_rng(7)
+    for scale in (1.0, 6.4e6, 3.8e8, 1.5e11, 4.5e12):
+        for x in rng.normal(size=(2000, 3)) * scale:
+            assert nb._norm3(x) == np.linalg.norm(x)
+
+
+def test_cross3_is_bit_identical_to_numpy_cross():
+    rng = np.random.default_rng(11)
+    a = rng.normal(size=(5000, 3)) * 7.0e6
+    b = rng.normal(size=(5000, 3)) * 7.5e3
+    for x, y in zip(a, b):
+        np.testing.assert_array_equal(nb._cross3(x, y), np.cross(x, y))
+
+
+_PINNED_LEO_COAST_R = np.array([6187681.564042751, -3199764.8583145365, -218377.55608006936])
+_PINNED_LEO_COAST_V = np.array([3543.5991237698718, 6652.946383964098, 894.7065215485318])
+
+
+def test_substep_trajectory_unchanged_bit_for_bit():
+    # Pinned output of the solar-system substepper for a LEO coast (recorded before the
+    # 3-vector helpers were introduced): any change to the hot loop's arithmetic shows.
+    st = StateVector(r=np.array([7.0e6, 1.0e5, 2.0e5]), v=np.array([-50.0, 7.5e3, 900.0]),
+                     mu=MU_EARTH, epoch_s=86400.0)
+    out = nb.propagate_solar_system(st, 5400.0, max_step_s=600.0)
+    expected_r = _PINNED_LEO_COAST_R
+    expected_v = _PINNED_LEO_COAST_V
+    np.testing.assert_array_equal(out.r, expected_r)
+    np.testing.assert_array_equal(out.v, expected_v)

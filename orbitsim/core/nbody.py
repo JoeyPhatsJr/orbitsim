@@ -2,6 +2,7 @@
 ship propagator, the Jacobi constant, and the Lagrange points. Barycentric inertial,
 SI, float64. The ship is a massless test particle; the bodies are on rails."""
 from contextlib import contextmanager
+import math
 import threading
 
 import numpy as np
@@ -12,6 +13,19 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.hermite import hermite_state
 from orbitsim.core.elements import state_to_elements
+
+def _norm3(x) -> float:
+    """|x| for a real 3-vector; bit-identical to np.linalg.norm (which is sqrt(x.dot(x)))
+    without its n-d overhead. The substep loop calls this ~3,000x per frame at warp."""
+    return math.sqrt(x.dot(x))
+
+
+def _cross3(a, b) -> np.ndarray:
+    """a x b for 3-vectors; same operations and order as np.cross, so bit-identical."""
+    return np.array([a[1] * b[2] - a[2] * b[1],
+                     a[2] * b[0] - a[0] * b[2],
+                     a[0] * b[1] - a[1] * b[0]])
+
 
 D_EM = 3.844e8                          # Earth-Moon separation [m]
 MU_TOTAL = MU_EARTH + MU_MOON
@@ -50,7 +64,7 @@ def gravity_accel(r_m, t_s, attractors=EARTH_MOON):
     a = np.zeros(3)
     for body in attractors:
         d = r - body.state_at(t_s).r
-        a += -body.mu * d / np.linalg.norm(d)**3
+        a += -body.mu * d / _norm3(d)**3
     return a
 
 
@@ -61,8 +75,8 @@ def earth_moon_accel(r_m, t_s):
     the Lagrange points balance."""
     r = np.asarray(r_m, dtype=np.float64)
     rM = moon_state_at(t_s).r
-    a = -MU_EARTH * r / np.linalg.norm(r)**3
-    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM)**3 + rM / np.linalg.norm(rM)**3)
+    a = -MU_EARTH * r / _norm3(r)**3
+    a += -MU_MOON * ((r - rM) / _norm3(r - rM)**3 + rM / _norm3(rM)**3)
     return a
 
 
@@ -84,13 +98,13 @@ _MIN_SUBSTEP_S = 1e-6      # floor so a zero cap (r exactly at a body) can't sta
 
 def _conic_periapsis_m(r_rel, v_rel, mu):
     """Periapsis radius [m] of the osculating conic — valid for any e (>=0)."""
-    r = np.linalg.norm(r_rel)
+    r = _norm3(r_rel)
     if r == 0.0:
         return 0.0
-    h_vec = np.cross(r_rel, v_rel)
+    h_vec = _cross3(r_rel, v_rel)
     p = np.dot(h_vec, h_vec) / mu
-    e_vec = np.cross(v_rel, h_vec) / mu - r_rel / r
-    return p / (1.0 + np.linalg.norm(e_vec))
+    e_vec = _cross3(v_rel, h_vec) / mu - r_rel / r
+    return p / (1.0 + _norm3(e_vec))
 
 
 def _timescale_cap_s(radius_m, mu):
@@ -108,7 +122,7 @@ def _attractor_cap_s(r, v, t_s, attractors, max_step_s):
     caps = []
     dists = []
     for body in attractors:
-        rb = np.linalg.norm(r - body.state_at(t_s).r)
+        rb = _norm3(r - body.state_at(t_s).r)
         dists.append(rb)
         caps.append(_timescale_cap_s(rb, body.mu) if rb > 0.0 else np.inf)
     cap = max_step_s
@@ -200,8 +214,8 @@ def _earth_moon_cap_s(r, v, t_s, max_step_s):
     """
     cap = max_step_s
     moon = moon_state_at(t_s)
-    rM = np.linalg.norm(r - moon.r)
-    rE = np.linalg.norm(r)
+    rM = _norm3(r - moon.r)
+    rE = _norm3(r)
     if rM < MOON_SOI_M:
         rp = max(_conic_periapsis_m(r - moon.r, v - moon.v, MU_MOON), R_MOON)
         cap = min(cap, _timescale_cap_s(rp, MU_MOON))
@@ -403,13 +417,13 @@ def solar_system_accel(r_m, t_s):
     approximations.
     """
     r = np.asarray(r_m, dtype=np.float64)
-    a = -MU_EARTH * r / np.linalg.norm(r) ** 3
+    a = -MU_EARTH * r / _norm3(r) ** 3
     rM = moon_state_at(t_s).r
-    a += -MU_MOON * ((r - rM) / np.linalg.norm(r - rM) ** 3 + rM / np.linalg.norm(rM) ** 3)
+    a += -MU_MOON * ((r - rM) / _norm3(r - rM) ** 3 + rM / _norm3(rM) ** 3)
     for state_fn, mu in _SOLAR_PERTURBERS:
         rB = state_fn(t_s).r
         dr = r - rB
-        a += -mu * (dr / np.linalg.norm(dr) ** 3 + rB / np.linalg.norm(rB) ** 3)
+        a += -mu * (dr / _norm3(dr) ** 3 + rB / _norm3(rB) ** 3)
     return a
 
 
@@ -441,8 +455,8 @@ def _solar_cap_s(r, v, t_s, max_step_s):
     """
     cap = max_step_s
     moon = moon_state_at(t_s)
-    rM = np.linalg.norm(r - moon.r)
-    rE = np.linalg.norm(r)
+    rM = _norm3(r - moon.r)
+    rE = _norm3(r)
     moon_dominant = rM < MOON_SOI_M
     if moon_dominant:
         rp = max(_conic_periapsis_m(r - moon.r, v - moon.v, MU_MOON), R_MOON)
@@ -453,7 +467,7 @@ def _solar_cap_s(r, v, t_s, max_step_s):
     planet_dominant = False
     for state_fn, mu, soi, radius in _SOLAR_CAP_BODIES[1:]:   # planets only
         st = state_fn(t_s)
-        rB = np.linalg.norm(r - st.r)
+        rB = _norm3(r - st.r)
         if rB <= 0 or rB >= 10 * soi:
             continue
         if rB < soi and not moon_dominant:
@@ -471,7 +485,7 @@ def _solar_cap_s(r, v, t_s, max_step_s):
         cap = min(cap, _timescale_cap_s(rE, MU_EARTH))
 
     sun = _csun(t_s)
-    rS = np.linalg.norm(r - sun.r)
+    rS = _norm3(r - sun.r)
     if rS > 0:
         if moon_dominant or planet_dominant or earth_dominant:
             cap = min(cap, _timescale_cap_s(rS, MU_SUN))
@@ -505,7 +519,7 @@ def dominant_body_solar(r_m, t_s):
     vessel, preferring the smallest SOI (most specific body). Falls back to Earth."""
     r = np.asarray(r_m, dtype=np.float64)
     rM = moon_state_at(t_s).r
-    if np.linalg.norm(r - rM) < MOON_SOI_M:
+    if _norm3(r - rM) < MOON_SOI_M:
         from orbitsim.core.bodies import MOON as MOON_BODY
         return MOON_BODY, rM
     planet_checks = [
@@ -519,9 +533,9 @@ def dominant_body_solar(r_m, t_s):
     ]
     for state_fn, soi, body in planet_checks:
         rB = state_fn(t_s).r
-        if np.linalg.norm(r - rB) < soi:
+        if _norm3(r - rB) < soi:
             return body, rB
-    if np.linalg.norm(r) > EARTH_SOI_M:
+    if _norm3(r) > EARTH_SOI_M:
         rS = _csun(t_s).r
         return SUN_BODY, rS
     return EARTH_BODY, np.zeros(3)
