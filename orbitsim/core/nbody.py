@@ -336,11 +336,16 @@ def ephemeris_available() -> bool:
 def stable_prediction_ephemeris():
     """Give a background prediction its own time-indexed JPL ephemeris cache."""
     previous = getattr(_ephemeris_context, "prediction_cache", None)
+    previous_last = getattr(_ephemeris_context, "prediction_last", None)
     _ephemeris_context.prediction_cache = {}
+    # {name: (t_s, state)}: the accel and the substep cap ask for every body at the
+    # same t; reuse the interpolated state instead of computing it twice (bit-identical).
+    _ephemeris_context.prediction_last = {}
     try:
         yield
     finally:
         _ephemeris_context.prediction_cache = previous
+        _ephemeris_context.prediction_last = previous_last
 
 
 _PREDICTION_EPHEMERIS_STEP_S = 86400.0
@@ -348,6 +353,10 @@ _PREDICTION_EPHEMERIS_STEP_S = 86400.0
 
 def _prediction_ephemeris_state(name, fallback_fn, t_s):
     """Cubic-Hermite interpolation of thread-local daily JPL samples."""
+    last = _ephemeris_context.prediction_last
+    hit = last.get(name)
+    if hit is not None and hit[0] == t_s:
+        return hit[1]
     cache = _ephemeris_context.prediction_cache
     step = _PREDICTION_EPHEMERIS_STEP_S
     bucket = int(np.floor(float(t_s) / step))
@@ -367,7 +376,9 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
 
     start = sample(bucket)
     end = sample(bucket + 1)
-    return hermite_state(start, end, bucket * step, step, t_s, mu=start.mu)
+    state = hermite_state(start, end, bucket * step, step, t_s, mu=start.mu)
+    last[name] = (t_s, state)
+    return state
 
 
 def _make_cached_state_fn(name, fallback_fn):

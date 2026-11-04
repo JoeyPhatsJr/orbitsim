@@ -632,3 +632,16 @@ def test_substep_trajectory_unchanged_bit_for_bit():
     expected_v = _PINNED_LEO_COAST_V
     np.testing.assert_array_equal(out.r, expected_r)
     np.testing.assert_array_equal(out.v, expected_v)
+
+
+def test_prediction_ephemeris_reuses_the_state_for_a_repeated_time(monkeypatch):
+    # The accel and the substep cap ask for every planet at the same t; interpolating
+    # twice was ~30% of a Moon-transfer preview. Same t -> the very same state object.
+    calls = []
+    real = nb.hermite_state
+    monkeypatch.setattr(nb, "hermite_state", lambda *a, **k: calls.append(1) or real(*a, **k))
+    with nb.stable_prediction_ephemeris():
+        a = nb._csun(12345.678)
+        b = nb._csun(12345.678)
+        c = nb._csun(12346.0)
+    assert a is b and len(calls) == 2 and c is not a
