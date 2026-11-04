@@ -50,6 +50,50 @@ def smooth_angle(current_rad: float, target_rad: float, alpha: float) -> float:
     return current_rad + delta * a
 
 
+# Opening view: look down on the orbit from above its plane, tilted toward the Sun.
+# A camera >= 70 deg above the orbit plane can't see the ship behind Earth from LEO
+# (sin 70 * r > R_earth above ~410 km altitude); the tilt shows more of the lit side.
+OPENING_SUN_TILT_RAD = math.radians(20.0)
+# The camera centres on the ship and the orbit reaches ~2 r_ap from it; with the
+# default lens (~23 deg vertical FOV at 16:9) ~10 r_ap keeps the whole ring in frame.
+OPENING_DISTANCE_FACTOR = 10.0
+
+
+def _unit3(v, name):
+    x, y, z = (float(c) for c in v)
+    n = math.sqrt(x * x + y * y + z * z)
+    if n == 0.0:
+        raise ValueError(f"{name} must be non-zero")
+    return (x / n, y / n, z / n)
+
+
+def opening_camera(sun_dir, orbit_normal, r_apoapsis_m: float) -> tuple:
+    """First-frame framing: (azimuth_rad, elevation_rad, distance_m).
+
+    The view direction is the orbit normal (flipped to the Sun's side) tilted
+    OPENING_SUN_TILT_RAD toward the Sun: the whole orbit reads as a ring, the ship
+    is never behind Earth, and more of Earth's day side faces the camera. Raises
+    ValueError for a zero vector or a non-positive radius.
+    """
+    s = _unit3(sun_dir, "sun_dir")
+    n = _unit3(orbit_normal, "orbit_normal")
+    if not r_apoapsis_m > 0.0:
+        raise ValueError(f"r_apoapsis_m must be positive, got {r_apoapsis_m}")
+    if n[0] * s[0] + n[1] * s[1] + n[2] * s[2] < 0.0:
+        n = (-n[0], -n[1], -n[2])
+    # Sun direction projected into the orbit plane (the tilt axis); none if Sun is overhead.
+    dot = n[0] * s[0] + n[1] * s[1] + n[2] * s[2]
+    p = (s[0] - dot * n[0], s[1] - dot * n[1], s[2] - dot * n[2])
+    pn = math.sqrt(p[0] ** 2 + p[1] ** 2 + p[2] ** 2)
+    ct, st = math.cos(OPENING_SUN_TILT_RAD), math.sin(OPENING_SUN_TILT_RAD)
+    if pn > 1e-12:
+        c = tuple(ct * n[i] + st * p[i] / pn for i in range(3))
+    else:
+        c = n
+    elevation = max(-1.5, min(1.5, math.asin(max(-1.0, min(1.0, c[2])))))
+    return math.atan2(c[1], c[0]), elevation, OPENING_DISTANCE_FACTOR * r_apoapsis_m
+
+
 class CameraRig:
     """Orbit camera: azimuth/elevation around a focus, log zoom drives scale.
 

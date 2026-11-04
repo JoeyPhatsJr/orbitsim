@@ -24,6 +24,28 @@ class VesselView:
             self.app.vessel_nps.append(m)
             self.app.orbit_nps.append(None)
 
+    def apply_opening_camera(self):
+        """Snap the first view to the Sun's side of vessel 0, framing its whole orbit."""
+        import numpy as np
+        from orbitsim.core.elements import state_to_elements
+        from orbitsim.core.nbody import _csun
+        from orbitsim.render.camera_rig import opening_camera
+        state = self.app.world.vessels[0].state
+        try:
+            elem = state_to_elements(state)
+            r_ap = elem.a * (1.0 + elem.e) if elem.e < 1.0 else float(np.linalg.norm(state.r))
+        except ValueError:
+            r_ap = float(np.linalg.norm(state.r))
+        normal = np.cross(state.r, state.v)
+        if not np.any(normal):            # landed / radial-only state: any view will do
+            normal = np.array([0.0, 0.0, 1.0])
+        az, el, dist = opening_camera(_csun(self.app.clock.sim_time_s).r, normal, r_ap)
+        rig = self.app.rig
+        rig.set_distance(dist)
+        # Initial framing snaps (current AND target); input handlers only set targets.
+        rig.azimuth = rig.target_azimuth = az
+        rig.elevation = rig.target_elevation = el
+
     def build_ship_view(self):
         """True-scale ship model + plume for vessel 0."""
         # Ship view: a true-scale, lit, oriented model of vessel 0 that cross-fades

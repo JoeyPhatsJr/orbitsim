@@ -119,6 +119,7 @@ class OrbitApp(ShowBase):
             self.readouts.build_apsis_and_encounter_markers()
             self.bodies_view.build_moon_and_lagrange()
             self.bodies_view.build_sandbox_planets()
+            self.vessel_view.apply_opening_camera()
         self.bodies_view.build_starfield()
 
         self.flight_input.setup_input()

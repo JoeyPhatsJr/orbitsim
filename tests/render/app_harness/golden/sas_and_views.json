@@ -87,9 +87,9 @@
   "z"
  ],
  "rig": {
-  "azimuth": 0.0,
-  "distance_m": 376.0205965276458,
-  "elevation": 0.3
+  "azimuth": -2.7709940456475306,
+  "distance_m": 452.4765277067611,
+  "elevation": 1.1950887802199917
  },
  "sim_time_s": 183.33333333333317,
  "target": null,
