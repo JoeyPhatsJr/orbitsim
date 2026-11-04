@@ -88,6 +88,21 @@ def quicksave_roundtrip(h):
     h.step(30)
 
 
+def zoom_with_target_node(h):
+    # Regression: zooming rebuilds the planet orbit lines every frame; that loop used
+    # to rebind `node` (the maneuver node) to a NodePath, crashing the closest-approach
+    # block with AttributeError: 'NodePath' object has no attribute 'magnitude_mps'.
+    _launch_sandbox(h)
+    hooks.select_target(h.app, "Moon")
+    h.step(10)
+    h.send("i")
+    h.step(10)
+    for i in range(120):
+        if i % 10 == 0:
+            h.send("wheel_up")
+        h.step(1)
+
+
 def solar_boot_warp(h):
     h.press("OPEN SOLAR VIEWER")
     h.step(60)
@@ -106,5 +121,6 @@ SCENARIOS = {
     "target_intercept": ("sandbox", target_intercept),
     "porkchop_escape": ("sandbox", porkchop_escape),
     "quicksave_roundtrip": ("sandbox", quicksave_roundtrip),
+    "zoom_with_target_node": ("sandbox", zoom_with_target_node),
     "solar_boot_warp": ("solar", solar_boot_warp),
 }

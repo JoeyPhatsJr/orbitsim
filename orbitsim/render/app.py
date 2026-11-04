@@ -2226,9 +2226,10 @@ class OrbitApp(ShowBase):
                 )
                 pts = [tuple(point / scale) for point in orbit_points]
                 color = _orbit_colors[oname]
-                node = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
-                node.reparent_to(self._sun_orbit_frame)
-                self._planet_orbit_nps[oname] = node
+                # Not `node`: that name is the maneuver node, read later this frame.
+                orbit_np = build_orbit_node(pts, color=color, thickness=1.2, fade_minimum=1.0)
+                orbit_np.reparent_to(self._sun_orbit_frame)
+                self._planet_orbit_nps[oname] = orbit_np
         # Closest approach to the current target (throttled recompute). Both the ship
         # trajectory and the target are referenced to the same base epoch (the node epoch
         # when a burn is planned, else now) so they are compared at matching absolute times;
