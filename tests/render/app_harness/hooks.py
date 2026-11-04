@@ -22,3 +22,15 @@ def current_target_name(app):
 def set_jog(app, axis: str, value: float) -> None:
     """Deflect a maneuver jog slider ('pro', 'nrm', 'rad') to ``value`` in [-1, 1]."""
     app._jog[axis]["value"] = value
+
+
+def preview_lines(app):
+    """(estimate_shown, exact_shown) for the maneuver preview line."""
+    return (getattr(app, "_preview_estimate_np", None) is not None,
+            getattr(app, "_preview_np", None) is not None)
+
+
+def preview_at_current_scale(app) -> bool:
+    """Whether the drawn exact preview was built at the current zoom scale."""
+    return (getattr(app, "_preview_np", None) is not None
+            and getattr(app, "_preview_built_scale", None) == app.transform.scale_m_per_unit)

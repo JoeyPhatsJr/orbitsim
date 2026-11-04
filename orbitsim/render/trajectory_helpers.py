@@ -28,3 +28,29 @@ def localize_polyline(points):
         raise ValueError("polyline points must have shape (n, 3) with n > 0")
     origin = pts[0].copy()
     return pts - origin, origin
+
+
+def kepler_estimate_points(state, n: int = 256):
+    """Geocentric (n, 3) points of the two-body orbit through ``state``, or None.
+
+    The instant stand-in for the maneuver preview while the burn is being edited
+    (ignores the Moon/Sun; the exact N-body path replaces it once editing settles).
+    None for a degenerate state (zero velocity, etc.) -- then nothing is drawn.
+    """
+    from orbitsim.core.elements import state_to_elements
+    from orbitsim.render.orbit_lines import sample_orbit_points
+    try:
+        return sample_orbit_points(state_to_elements(state), n)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def should_submit_exact(current_key, exact_key, inflight_key, last_change_t, now, settle_s):
+    """Whether to start the exact N-body preview for ``current_key`` now.
+
+    Only once the burn has been still for ``settle_s``, when no job is in flight, and
+    when the drawn exact path isn't already for this burn (no endless resubmits).
+    """
+    if current_key == exact_key or inflight_key is not None:
+        return False
+    return now - last_change_t >= settle_s

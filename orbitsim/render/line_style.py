@@ -34,6 +34,9 @@ class LineStyle:
 ORBIT_STYLE = LineStyle((0.22, 0.84, 1.0, 1.0), 3.5, 2.5, 0.65)
 PLAN_STYLE = LineStyle((1.0, 0.62, 0.18, 1.0), 3.5, 2.5, 0.75, dash=(6, 4))
 REFERENCE_STYLE = LineStyle((0.60, 0.64, 0.71, 0.55), 2.0, 0.0, 1.0)
+# The planned path while the burn is still changing: an instant two-body estimate,
+# fainter and finer-dashed so it reads as provisional until the exact path settles.
+ESTIMATE_STYLE = LineStyle((1.0, 0.62, 0.18, 0.45), 3.0, 0.0, 0.75, dash=(3, 4))
 TARGET_REFERENCE_STYLE = LineStyle((0.86, 0.88, 0.92, 0.9), 2.75, 1.5, 1.0)
 ENCOUNTER_STYLE = LineStyle((1.0, 0.83, 0.30, 1.0), 4.5, 2.5, 0.8)
 
