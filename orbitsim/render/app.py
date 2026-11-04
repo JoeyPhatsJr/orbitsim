@@ -20,12 +20,6 @@ from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.core.moon import moon_state_at
 from orbitsim.core.rendezvous import closest_approach
-from orbitsim.core.attitude import (
-    quat_from_axis_angle,
-    quat_multiply,
-    quat_normalize,
-    quat_rotate_vector,
-)
 from orbitsim.core.state import StateVector
 from orbitsim.core.optimize import porkchop
 from orbitsim.render.porkchop import render_porkchop_png
@@ -56,7 +50,6 @@ from orbitsim.render.hud import Hud
 from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
 from orbitsim.render.settings_panel import SettingsPanel
-from orbitsim.sim.persistence import save_scenario, load_scenario
 from orbitsim.render.skybox import build_starfield
 from orbitsim.render.process_pool import build_process_pool
 from orbitsim.render.hud.format import fmt_dist, fmt_countdown
@@ -67,6 +60,12 @@ from orbitsim.render.trajectory_helpers import (
 from orbitsim.render.controllers.title_screen import TitleScreen
 
 from orbitsim.render.controllers.solar_view import SolarView
+
+from orbitsim.render.controllers.warp_controls import WarpControls
+
+from orbitsim.render.controllers.flight_input import FlightInput
+
+from orbitsim.render.controllers.quicksave import Quicksave
 
 _global_clock = ClockObject.get_global_clock()
 
@@ -90,6 +89,9 @@ class OrbitApp(ShowBase):
         self.operation = OperationController()
         from orbitsim.render.ui.performance import FrameMeter
         self.frame_meter = FrameMeter()
+        self.quicksave = Quicksave(self)
+        self.flight_input = FlightInput(self)
+        self.warp_controls = WarpControls(self)
         self.solar_view = SolarView(self)
         self.title_screen = TitleScreen(self)
         self.title_screen._build_title_screen()
@@ -131,7 +133,7 @@ class OrbitApp(ShowBase):
             self.aspect2d, self.hud.set_units,
             on_unlimited_toggle=self._set_unlimited_dv,
             enable_unlimited=not self.solar_system)
-        self._build_warp_controls()
+        self.warp_controls._build_warp_controls()
 
         self._build_central_body()
         self._build_lighting()
@@ -149,7 +151,7 @@ class OrbitApp(ShowBase):
             self._build_sandbox_planets()
         self._build_starfield()
 
-        self._setup_input()
+        self.flight_input._setup_input()
         self.task_mgr.add(self._update, "update")
 
     def _build_central_body(self):
@@ -284,7 +286,7 @@ class OrbitApp(ShowBase):
         self.navball = Navball(self)
         from orbitsim.render.sas_panel import SasPanel, VelocityReadout
         self.sas_panel = SasPanel(
-            self, on_set_mode=self._set_sas, on_toggle=self._toggle_sas
+            self, on_set_mode=self.flight_input._set_sas, on_toggle=self.flight_input._toggle_sas
         )
         self.vel_readout = VelocityReadout(self, lambda: self.hud.units)
         from orbitsim.render.ui.widgets import PanelDock
@@ -1211,45 +1213,6 @@ class OrbitApp(ShowBase):
 
     MOUSE_ORBIT_SENS = 3.0     # radians per unit of normalized mouse travel
 
-    def _setup_input(self) -> None:
-        self.accept("wheel_up", lambda: self.rig.zoom(0.86))
-        self.accept("wheel_down", lambda: self.rig.zoom(1.0 / 0.86))
-        # Right-click + drag orbits the camera (both sandbox and solar modes).
-        self._rmb_down = False
-        self._last_mouse = None
-        self.accept("mouse3", self._rmb, [True])
-        self.accept("mouse3-up", self._rmb, [False])
-        self.accept("arrow_left", lambda: self.rig.orbit(-0.1, 0.0))
-        self.accept("arrow_right", lambda: self.rig.orbit(0.1, 0.0))
-        self.accept("arrow_up", lambda: self.rig.orbit(0.0, 0.1))
-        self.accept("arrow_down", lambda: self.rig.orbit(0.0, -0.1))
-        self.accept("period", self._warp_up_guarded)  # ">" key (blocked while thrusting)
-        self.accept("comma", self.clock.warp_down)  # "<" key
-        self.accept("0", self._max_warp_guarded)
-        self.accept("p", self._toggle_porkchop)  # porkchop delta-V plot
-        self.accept("f1", self.keybind_overlay.toggle)  # keybind help overlay
-        self.accept("escape", self._handle_escape)
-
-        if not self.solar_system and self.world.vessels:
-            self._keys = {k: False for k in ("w", "s", "a", "d", "q", "e", "shift", "control")}
-            for k in list(self._keys):
-                self.accept(k, self._set_key, [k, True])
-                self.accept(f"{k}-up", self._set_key, [k, False])
-            self._mouse1_down_px = None
-            self.accept("mouse1", self._on_mouse1_down)   # tap (no drag) picks a target
-            self.accept("z", self._throttle_full)
-            self.accept("x", self._throttle_cut)
-            self.accept("u", self._toggle_unlimited_dv)
-            self.accept("t", self._toggle_sas)
-            self.accept("m", self._toggle_ship_view)   # snap map <-> ship view
-            sas_keys = ["PROGRADE", "RETROGRADE", "NORMAL", "ANTINORMAL",
-                        "RADIAL_IN", "RADIAL_OUT", "TARGET", "ANTITARGET", "MANEUVER"]
-            for i, mode in enumerate(sas_keys, start=1):
-                self.accept(str(i), self._set_sas, [mode])
-            self.accept("i", self._plan_intercept)
-            self.accept("f5", self._quicksave)
-            self.accept("f9", self._quickload)
-
     ROTATE_RATE_RADPS = 0.8       # manual pitch/yaw/roll rate
     LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
     THROTTLE_STEP = 0.5           # throttle change per second for shift/ctrl
@@ -1261,223 +1224,11 @@ class OrbitApp(ShowBase):
     SOI_FADE_NEAR_M = 1.5e9   # camera distance: full alpha when closer than this
     SOI_FADE_FAR_M = 1.5e10   # ... fading to zero past this (tune by screenshot)
 
-    def _toggle_ship_view(self) -> None:
-        """Snap the camera between remembered map and ship-view distances ('m')."""
-        from orbitsim.render.ship_model import SHIP_VIEW_NEAR_M
-        # "In ship view" means already in close framing; anything farther (incl. a
-        # mid-fade zoom) counts as the map side and is remembered as such.
-        in_ship_view = self.rig.target_distance_m <= SHIP_VIEW_NEAR_M
-        if in_ship_view:
-            self._ship_distance_m = self.rig.target_distance_m  # remember ship framing
-            self.rig.move_to_distance(getattr(self, "_map_distance_m", 2.0e7))
-        else:
-            self._map_distance_m = self.rig.target_distance_m  # remember map framing
-            self.rig.move_to_distance(
-                getattr(self, "_ship_distance_m", self.SHIP_VIEW_DISTANCE_M)
-            )
-
-    def _build_warp_controls(self) -> None:
-        """Top-center on-screen warp control: slower / faster buttons + readout.
-        (The ',' and '.' keys do the same.) Works in both sandbox and solar modes."""
-        from orbitsim.render.ui.theme import THEME, button_options
-        self._warp_frame = DirectFrame(
-            frameColor=THEME.panel,
-            frameSize=(-0.64, 0.64, -0.16, -0.02),
-            parent=self.a2dTopCenter,
-        )
-        self._warp_readout = OnscreenText(
-            text="", pos=(0.0, -0.09), scale=0.045, fg=THEME.text,
-            shadow=(0, 0, 0, 1), mayChange=True, parent=self._warp_frame,
-        )
-        self._warp_btns = [
-            DirectButton(text="<<", scale=0.05, pos=(-0.28, 0.0, -0.085),
-                         command=self.clock.warp_down, parent=self._warp_frame,
-                         **button_options()),
-            DirectButton(text=">>", scale=0.05, pos=(0.28, 0.0, -0.085),
-                         command=self._warp_up_guarded, parent=self._warp_frame,
-                         **button_options()),
-            DirectButton(text="MAX", scale=0.042, pos=(0.48, 0.0, -0.085),
-                         command=self._max_warp_guarded, parent=self._warp_frame,
-                         **button_options()),
-        ]
-        self._update_warp_readout()
-
-    def _update_warp_readout(self) -> None:
-        if getattr(self, "_warp_readout", None) is not None:
-            locked = not self.solar_system and self.world.any_thrusting()
-            suffix = "  (LOCKED)" if locked else ""
-            days = self.clock.sim_time_s / 86400.0
-            self._warp_readout.setText(
-                f"T+ {days:,.1f} DAYS     WARP  x{self.clock.warp:,.0f}{suffix}"
-            )
-
-    def _warp_up_guarded(self):
-        if self.world.any_thrusting():
-            return
-        if self.world.vessels:
-            from orbitsim.sim.clock import SimClock
-            if self.world.solar_system:
-                from orbitsim.core.nbody import max_safe_warp_solar
-                cap = max_safe_warp_solar(
-                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
-            else:
-                from orbitsim.core.nbody import max_safe_warp
-                cap = max_safe_warp(
-                    self.world.vessels[0].state, self.clock.sim_time_s, SimClock.WARP_STEPS)
-            if self.clock.warp >= cap:
-                return
-        self.clock.warp_up()
-
-    def _max_warp_guarded(self):
-        """Jump directly to the highest safe warp (up to 100,000,000x in deep space)."""
-        if self.world.any_thrusting():
-            return
-        from orbitsim.sim.clock import SimClock
-
-        cap = float(SimClock.WARP_STEPS[-1])
-        if self.world.vessels:
-            if self.world.solar_system:
-                from orbitsim.core.nbody import max_safe_warp_solar
-
-                cap = max_safe_warp_solar(
-                    self.world.vessels[0].state,
-                    self.clock.sim_time_s,
-                    SimClock.WARP_STEPS,
-                )
-            else:
-                from orbitsim.core.nbody import max_safe_warp
-
-                cap = max_safe_warp(
-                    self.world.vessels[0].state,
-                    self.clock.sim_time_s,
-                    SimClock.WARP_STEPS,
-                )
-        self.clock.warp = float(cap)
-        self._update_warp_readout()
-
-    def _rmb(self, down):
-        self._rmb_down = down
-        self._last_mouse = None
-
-    def _handle_escape(self):
-        """Close the topmost transient surface before opening settings."""
-        if self.operation.status.running:
-            self._cancel_operation()
-            return
-        if getattr(self.keybind_overlay, "visible", False):
-            self.keybind_overlay.hide()
-            return
-        if getattr(self, "_porkchop_card", None) is not None:
-            self._porkchop_card.remove_node()
-            self._porkchop_card = None
-            if getattr(self, "_porkchop_modal", None) is not None:
-                self._porkchop_modal.destroy()
-                self._porkchop_modal = None
-            return
-        self.settings_panel.toggle()
-
-    def _apply_mouse_orbit(self):
-        """Orbit the camera while the right mouse button is held and dragged."""
-        mw = self.mouseWatcherNode
-        if mw is None or not (self._rmb_down and mw.has_mouse()):
-            self._last_mouse = None
-            return
-        x, y = mw.get_mouse_x(), mw.get_mouse_y()
-        if self._last_mouse is not None:
-            dx = x - self._last_mouse[0]
-            dy = y - self._last_mouse[1]
-            self.rig.orbit(dx * self.MOUSE_ORBIT_SENS, dy * self.MOUSE_ORBIT_SENS)
-        self._last_mouse = (x, y)
-
-    def _set_key(self, key, down):
-        self._keys[key] = down
-
-    def _throttle_full(self):
-        self.world.vessels[0].throttle = 1.0
-
-    def _throttle_cut(self):
-        self.world.vessels[0].throttle = 0.0
-
-    def _toggle_sas(self):
-        v = self.world.vessels[0]
-        v.sas_mode = "STABILITY" if v.sas_mode == "OFF" else "OFF"
-
-    def _set_sas(self, mode):
-        if mode == "MANEUVER" and self._current_node().magnitude_mps <= 0.0:
-            self._flash_message("Plan a maneuver first")
-            return
-        self.world.vessels[0].sas_mode = mode
-
     QUICKSAVE_PATH = "saves/quicksave.json"
 
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""
         self.hud.flash(text)
-
-    def _quicksave(self) -> None:
-        """F5: write the current sandbox world + clock to the quicksave slot."""
-        try:
-            save_scenario(self.world, self.clock, self.QUICKSAVE_PATH)
-            self._flash_message("Quicksaved")
-        except (OSError, ValueError) as exc:
-            self._flash_message(f"Quicksave failed: {exc}")
-
-    def _quickload(self) -> None:
-        """F9: restore the quicksave in place onto the live vessel + clock.
-
-        Mutating the existing vessel (rather than swapping self.world) keeps the
-        Panda3D scene graph intact. Sandbox-only: one vessel, fixed central body.
-        """
-        try:
-            world, clock = load_scenario(self.QUICKSAVE_PATH)
-        except (OSError, ValueError) as exc:
-            self._flash_message(f"Quickload failed: {exc}")
-            return
-        src = world.vessels[0]
-        dst = self.world.vessels[0]
-        dst.state = src.state
-        dst.dry_mass_kg = src.dry_mass_kg
-        dst.fuel_mass_kg = src.fuel_mass_kg
-        dst.max_thrust_n = src.max_thrust_n
-        dst.exhaust_velocity_mps = src.exhaust_velocity_mps
-        dst.max_turn_rate_radps = src.max_turn_rate_radps
-        dst.throttle = src.throttle
-        dst.sas_mode = src.sas_mode
-        dst.orientation = src.orientation
-        dst.nodes[:] = src.nodes
-        self.world.solar_system = world.solar_system
-        self.clock.sim_time_s = clock.sim_time_s
-        self.clock.warp = clock.warp
-        self._flash_message("Quickloaded")
-
-    def _apply_flight_input(self, dt):
-        """Manual throttle trim + rotation from held keys (sandbox flight)."""
-        if self.solar_system or not self.world.vessels:
-            return
-        v = self.world.vessels[0]
-        k = self._keys
-        if k["shift"]:
-            v.throttle = min(1.0, v.throttle + self.THROTTLE_STEP * dt)
-        if k["control"]:
-            v.throttle = max(0.0, v.throttle - self.THROTTLE_STEP * dt)
-        ax = np.zeros(3)
-        if k["w"]:
-            ax = ax + np.array([1.0, 0.0, 0.0])    # pitch
-        if k["s"]:
-            ax = ax + np.array([-1.0, 0.0, 0.0])
-        if k["a"]:
-            ax = ax + np.array([0.0, -1.0, 0.0])   # yaw left
-        if k["d"]:
-            ax = ax + np.array([0.0, 1.0, 0.0])
-        if k["q"]:
-            ax = ax + np.array([0.0, 0.0, 1.0])    # roll
-        if k["e"]:
-            ax = ax + np.array([0.0, 0.0, -1.0])
-        if np.linalg.norm(ax) > 0.0:
-            v.sas_mode = "OFF"                      # taking manual control
-            world_axis = quat_rotate_vector(v.orientation, ax)
-            dq = quat_from_axis_angle(world_axis, self.ROTATE_RATE_RADPS * dt)
-            v.orientation = quat_normalize(quat_multiply(dq, v.orientation))
 
     def _toggle_porkchop(self) -> None:
         """Build a porkchop plot and overlay it. Uses the current target if one
@@ -1817,7 +1568,7 @@ class OrbitApp(ShowBase):
         self._frame_planets(scale)
         self._frame_closest_approach(node)
 
-        self._apply_mouse_orbit()
+        self.flight_input._apply_mouse_orbit()
         self._update_starfield()
         self.rig.apply()
         self._update_marker_readability(focus)
@@ -1830,7 +1581,7 @@ class OrbitApp(ShowBase):
         # Flight input, then bound warp: 1x while thrusting (no integrating through warp),
         # else cap to the largest warp whose per-frame sub-step count stays in budget near
         # bodies (silent — the readout just won't climb past the cap).
-        self._apply_flight_input(real_dt)
+        self.flight_input._apply_flight_input(real_dt)
         if self.world.any_thrusting():
             self.clock.warp = 1.0
         elif self.world.vessels:
@@ -2351,7 +2102,7 @@ class OrbitApp(ShowBase):
         self.vel_readout.update(v0.state.v_mag, target_rel_speed)
         self._update_encounter_info(v0, dom_body, dom_pos)
         self._update_encounter_cues()
-        self._update_warp_readout()
+        self.warp_controls._update_warp_readout()
 
     def _update_encounter_cues(self) -> None:
         """Place predicted-flyby periapsis markers and set the HUD approach line.

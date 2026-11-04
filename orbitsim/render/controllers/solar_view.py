@@ -73,11 +73,11 @@ class SolarView:
             label.set_pos(rx, ry, rz + 6.0)
 
         self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
-        self.app._apply_mouse_orbit()
+        self.app.flight_input._apply_mouse_orbit()
         self.app._update_starfield()
         self.app.rig.apply()
 
-        self.app._update_warp_readout()
+        self.app.warp_controls._update_warp_readout()
         source = "JPL DE440" if ephemeris_available() else "circular approx (offline)"
         date = datetime(2000, 1, 1, 12, 0, 0) + timedelta(seconds=t)
         self.app.hud.text.setText(
