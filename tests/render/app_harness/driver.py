@@ -86,14 +86,18 @@ _fake_monotonic = FakeMonotonic()
 _installed = False
 
 
-def install_determinism(win_size: str = "960 600") -> None:
+def install_determinism(win_size: str = "960 600", inline_executors: bool = True) -> None:
+    """Fixed-step offscreen Panda3D. With ``inline_executors`` (goldens), background jobs run
+    at submit time and wall-clock throttles use a fake clock, so runs are bit-reproducible.
+    Without it (profiling real frame cost), the real thread/process pools and wall clock stay."""
     global _installed
     if _installed:
         return
     _installed = True
-    concurrent.futures.ThreadPoolExecutor = InlineExecutor
-    concurrent.futures.ProcessPoolExecutor = InlineProcessExecutor
-    time.monotonic = _fake_monotonic
+    if inline_executors:
+        concurrent.futures.ThreadPoolExecutor = InlineExecutor
+        concurrent.futures.ProcessPoolExecutor = InlineProcessExecutor
+        time.monotonic = _fake_monotonic
     from panda3d.core import ClockObject, loadPrcFileData
     loadPrcFileData("", f"window-type offscreen\nwin-size {win_size}\naudio-library-name null")
     clock = ClockObject.get_global_clock()
