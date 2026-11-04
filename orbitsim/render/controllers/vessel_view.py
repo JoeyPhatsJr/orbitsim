@@ -1,6 +1,5 @@
 """Vessel markers and the cross-fading true-scale ship model + plume."""
 
-from orbitsim.render.geometry import make_uv_sphere
 
 
 class VesselView:
@@ -15,17 +14,40 @@ class VesselView:
         # Vessel markers + orbit lines.
         self.app.vessel_nps = []
         self.app.orbit_nps = []
+        from orbitsim.render.ship_model import build_ship_icon
         for _ in world.vessels:
-            m = make_uv_sphere(1.0, 8, 12)
+            # The real ship model, unlit and outlined. The camera always sits
+            # RENDER_UNITS_ACROSS_VIEW (1000) units from the focus, so a fixed
+            # render-size icon keeps a constant on-screen size at every zoom level.
+            m = build_ship_icon()
             m.reparent_to(self.app.render)
-            m.set_color(1.0, 0.9, 0.2, 1.0)
-            m.set_light_off()  # fullbright marker so it is always visible
-            # The camera always sits RENDER_UNITS_ACROSS_VIEW (1000) units from the
-            # focus, so a fixed render-size marker keeps a constant on-screen size
-            # at every zoom level.
-            m.set_scale(8.0)
             self.app.vessel_nps.append(m)
             self.app.orbit_nps.append(None)
+
+    def apply_opening_camera(self):
+        """Snap the first view to the Sun's side of vessel 0, framing its whole orbit."""
+        import numpy as np
+        from orbitsim.core.elements import state_to_elements
+        from orbitsim.core.nbody import _csun, refresh_ephemeris_cache
+        from orbitsim.render.camera_rig import opening_camera
+        # This runs before the first frame's cache refresh: without it _csun serves the
+        # offline circular Sun (~100 deg off the DE440 Sun that lights Earth).
+        refresh_ephemeris_cache(self.app.clock.sim_time_s)
+        state = self.app.world.vessels[0].state
+        try:
+            elem = state_to_elements(state)
+            r_ap = elem.a * (1.0 + elem.e) if elem.e < 1.0 else float(np.linalg.norm(state.r))
+        except ValueError:
+            r_ap = float(np.linalg.norm(state.r))
+        normal = np.cross(state.r, state.v)
+        if not np.any(normal):            # landed / radial-only state: any view will do
+            normal = np.array([0.0, 0.0, 1.0])
+        az, el, dist = opening_camera(_csun(self.app.clock.sim_time_s).r, normal, r_ap)
+        rig = self.app.rig
+        rig.set_distance(dist)
+        # Initial framing snaps (current AND target); input handlers only set targets.
+        rig.azimuth = rig.target_azimuth = az
+        rig.elevation = rig.target_elevation = el
 
     def build_ship_view(self):
         """True-scale ship model + plume for vessel 0."""
@@ -50,9 +72,19 @@ class VesselView:
         """Place vessel markers, refresh trajectory lines, apsis markers."""
         import time as _time
         now_real = _time.monotonic()
+        from panda3d.core import LMatrix3f, LQuaternion
+        from orbitsim.core.attitude import nose_direction
+        from orbitsim.render.ship_model import icon_axes
+        cam_q = self.app.camera.get_quat(self.app.render)
+        view_dir, up_hint = tuple(cam_q.get_forward()), tuple(cam_q.get_up())
         for idx, vessel in enumerate(self.app.world.vessels):
             vx, vy, vz = self.app.transform.to_render(vessel.state.r)
             self.app.vessel_nps[idx].set_pos(vx, vy, vz)
+            # 2.5D map icon: long axis = the nose as seen on screen, side to the camera.
+            x, y, z = icon_axes(tuple(nose_direction(vessel.orientation)), view_dir, up_hint)
+            icon_q = LQuaternion()
+            icon_q.set_from_matrix(LMatrix3f(*x, *y, *z))
+            self.app.vessel_nps[idx].set_quat(self.app.render, icon_q)
             self.app.trajectory_view.rebuild_trajectory(idx, vessel, now_real)
         if self.app._preview_np is not None and self.app._preview_origin is not None:
             self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))

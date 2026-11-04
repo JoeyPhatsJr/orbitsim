@@ -87,9 +87,9 @@
   "z"
  ],
  "rig": {
-  "azimuth": 0.0,
-  "distance_m": 19999999.999999978,
-  "elevation": 0.3
+  "azimuth": -1.261633917829836,
+  "distance_m": 88432714.28571446,
+  "elevation": -1.3595397369784044
  },
  "sim_time_s": 3482.906960185889,
  "target": null,
@@ -198,7 +198,7 @@
   ],
   [
    "PE",
-   true
+   false
   ],
   [
    "Saturn",

@@ -1,5 +1,7 @@
 """Tests for the procedural star-direction helper (offline, no graphics)."""
 import math
+
+import pytest
 from orbitsim.render.skybox import random_star_dirs
 
 
@@ -29,4 +31,15 @@ def test_build_starfield_returns_a_node():
     base = ShowBase()
     sky = build_starfield(base)
     assert sky is not None and not sky.is_empty()
+    # Quiet background: whichever starfield this machine builds (texture or procedural)
+    # is dimmed so orbit lines and bodies stand out.
+    from orbitsim.render.skybox import STARFIELD_BRIGHTNESS
+    assert sky.get_color_scale()[0] == pytest.approx(STARFIELD_BRIGHTNESS, abs=1e-3)  # Panda3D quantizes color scales
     base.destroy()
+
+
+def test_procedural_starfield_is_dimmed():
+    from orbitsim.render.skybox import STARFIELD_BRIGHTNESS, _background, _procedural_points
+    node = _background(_procedural_points())
+    assert node.get_color_scale()[0] == pytest.approx(STARFIELD_BRIGHTNESS, abs=1e-3)  # Panda3D quantizes color scales
+    assert STARFIELD_BRIGHTNESS < 0.5

@@ -3,6 +3,7 @@
 import numpy as np
 from orbitsim.core.elements import state_to_elements
 from orbitsim.render.hud.format import fmt_countdown
+from orbitsim.render.line_style import ENCOUNTER_STYLE, ORBIT_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import coast_chunks, localize_polyline
 from orbitsim.render.trajectory_sampling import (
@@ -61,7 +62,8 @@ class TrajectoryView:
         self.app._traj_epoch_cache[0] = None
         self.app._flash_message("Arrived at trajectory point")
 
-    def build_encounter_patches(self, parent, world_pts, origin, scale, encounters):
+    def build_encounter_patches(self, parent, world_pts, origin, scale, encounters,
+                                px_scale=1.0):
         """Draw each flyby SOI segment as a distinct-colored overlay parented to the
         trajectory node (so it inherits the floating-origin transform for free)."""
         for enc in encounters:
@@ -71,9 +73,7 @@ class TrajectoryView:
             if len(seg) < 2:
                 continue
             pts = [tuple((p - origin) / scale) for p in seg]
-            node = build_orbit_node(
-                pts, color=self.app.ENCOUNTER_COLOR, thickness=3.0, fade_minimum=0.7
-            )
+            node = build_orbit_node(pts, ENCOUNTER_STYLE, px_scale=px_scale)
             node.reparent_to(parent)   # local points already relative to origin/scale
 
     def _install_trajectory(self, idx, world_pts, scale, state) -> None:
@@ -82,14 +82,15 @@ class TrajectoryView:
         pts = [tuple(p / scale) for p in local_pts]
         if self.app.orbit_nps[idx] is not None:
             self.app.orbit_nps[idx].remove_node()   # removes any child encounter patches too
-        node = build_orbit_node(pts)
+        px = self.app.line_px_scale()
+        node = build_orbit_node(pts, ORBIT_STYLE, px_scale=px)
         node.reparent_to(self.app.render)
         node.set_pos(*self.app.transform.to_render(origin))
         self.app.orbit_nps[idx] = node
         self.app._traj_render_origin[idx] = origin
         encounters = self.app._traj_encounters[idx] if idx < len(self.app._traj_encounters) else None
         if encounters:
-            self.build_encounter_patches(node, world_pts, origin, scale, encounters)
+            self.build_encounter_patches(node, world_pts, origin, scale, encounters, px_scale=px)
         if idx == 0:
             try:
                 if self.app.world.solar_system:

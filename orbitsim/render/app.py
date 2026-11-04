@@ -10,6 +10,7 @@ from orbitsim.render.hud import Hud
 from orbitsim.render.keybind_overlay import KeybindOverlay, SANDBOX_BINDINGS, SOLAR_BINDINGS
 from orbitsim.render.settings_panel import SettingsPanel
 from orbitsim.render.process_pool import build_process_pool
+from orbitsim.render.line_style import ENCOUNTER_STYLE, px_scale
 
 from orbitsim.render.controllers.title_screen import TitleScreen
 from orbitsim.render.controllers.solar_view import SolarView
@@ -37,7 +38,7 @@ class OrbitApp(ShowBase):
     QUICKSAVE_PATH = "saves/quicksave.json"   # the harness redirects this to a temp file
     # Sphere-of-influence encounter patch: warm gold, distinct from the cyan
     # trajectory and magenta maneuver preview.
-    ENCOUNTER_COLOR = (1.0, 0.58, 0.16, 1.0)
+    ENCOUNTER_COLOR = ENCOUNTER_STYLE.color
 
     def __init__(self, world, clock, solar_system: bool = False) -> None:
         super().__init__()
@@ -118,6 +119,7 @@ class OrbitApp(ShowBase):
             self.readouts.build_apsis_and_encounter_markers()
             self.bodies_view.build_moon_and_lagrange()
             self.bodies_view.build_sandbox_planets()
+            self.vessel_view.apply_opening_camera()
         self.bodies_view.build_starfield()
 
         self.flight_input.setup_input()
@@ -159,6 +161,17 @@ class OrbitApp(ShowBase):
             self._porkchop_render = None      # (dep_times, tof_grid, label) for on-poll draw
             self._porkchop_request = 0
         self._porkchop_card = None
+
+    def line_px_scale(self) -> float:
+        """Line-width multiplier for the current framebuffer (Retina-aware; 1.0 headless)."""
+        if self.win is None:
+            return 1.0
+        fb_h = self.win.get_fb_y_size()
+        win_h = fb_h      # offscreen buffers (headless tests) have no window properties
+        get_props = getattr(self.win, "get_properties", None)
+        if get_props is not None and get_props().has_size():
+            win_h = get_props().get_y_size()
+        return px_scale(fb_h, win_h)
 
     def _flash_message(self, text: str) -> None:
         """Transient on-screen user feedback (toast)."""

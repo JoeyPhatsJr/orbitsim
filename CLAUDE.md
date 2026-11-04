@@ -172,7 +172,15 @@ don't batch many changes into one late commit. Stage specific files by **explici
 - **Skyfield loader** is `from skyfield.api import Loader; Loader(dir)` — NOT `load.Loader(dir)`.
 - **Render markers** must use constant on-screen size, not tiny world-space radii. The
   **`CameraRig` owns scale** (`scale_m_per_unit = distance/1000`); set the rig's `distance_m`,
-  not the transform scale, to change zoom.
+  not the transform scale, to change zoom. The ship's map icon is the real model
+  (`ship_model.build_ship_icon`, `SHIP_ICON_RENDER_UNITS` long), oriented by the vessel's
+  attitude every frame.
+- **Lines and markers must be unlit (`set_light_off`).** `LineSegs` have no normals, so the
+  scene's ambient + sun lights rendered every orbit line at ~10% of its colour. That was the
+  "can't see the lines" bug. Line looks come from `render/line_style.py` named styles
+  (`ORBIT_STYLE`, `PLAN_STYLE`, `reference_style(targeted)`, …). Widths are **framebuffer
+  pixels** × `OrbitApp.line_px_scale()` (Retina-aware), which GL honours on the dev Mac (M1,
+  GL 2.1), so they're constant on screen at any zoom.
 - **Panda3D path resolution:** load shaders/textures via `Filename.from_os_specific(p)`. Raw
   Windows backslash paths silently fail to resolve.
 - **Quaternions** (`core/attitude.py`) are `[w, x, y, z]`, unit norm; the ship **nose** is body

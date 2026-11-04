@@ -50,3 +50,78 @@ def test_build_ship_model_nose_points_plus_z():
     assert hi.z > abs(lo.z)
     # Roughly ship-sized (metres), not a unit primitive.
     assert (hi.z - lo.z) > 5.0
+
+
+def test_ship_icon_is_fixed_render_length_and_outlined():
+    # Pure geometry: no ShowBase/window needed (one ShowBase per process is fragile).
+    from orbitsim.render.ship_model import build_ship_icon, SHIP_ICON_RENDER_UNITS
+    icon = build_ship_icon()
+    lo, hi = icon.get_tight_bounds()
+    assert (hi - lo).z == pytest.approx(SHIP_ICON_RENDER_UNITS * 1.18, rel=0.02)  # outline is the outer hull
+    assert not icon.find("**/outline").is_empty()
+    assert icon.has_light_off() or icon.find("**/+GeomNode").has_light_off()
+
+
+def test_ship_icon_body_always_draws_over_its_outline():
+    # The model's faces aren't consistently wound, so an inverted-hull outline drew
+    # *over* the body (the icon looked like a solid cyan blob). The outline must be
+    # two-sided, write no depth, and sort before the body, so only its rim shows.
+    from panda3d.core import CullFaceAttrib, DepthWriteAttrib
+    from orbitsim.render.ship_model import build_ship_icon
+    icon = build_ship_icon()
+    outline = icon.find("**/outline")
+    body = icon.find("**/body")
+    assert outline.get_attrib(DepthWriteAttrib).get_mode() == DepthWriteAttrib.M_off
+    assert outline.get_attrib(CullFaceAttrib).get_effective_mode() == CullFaceAttrib.M_cull_none
+    assert body.get_attrib(CullFaceAttrib).get_effective_mode() == CullFaceAttrib.M_cull_none
+    assert outline.get_bin_draw_order() < body.get_bin_draw_order()
+
+
+def test_ship_icon_outline_contrasts_with_own_orbit_line():
+    # The icon always sits on its own (cyan) orbit line, so a cyan rim would vanish.
+    from orbitsim.render.line_style import ORBIT_STYLE
+    from orbitsim.render.ship_model import SHIP_ICON_OUTLINE_COLOR
+    assert sum(SHIP_ICON_OUTLINE_COLOR[:3]) < 0.5 < sum(ORBIT_STYLE.color[:3])
+
+
+# The map icon is a 2.5D marker: long axis = the nose as seen on screen, side toward
+# the camera, never seen nose-on (the default attitude faces the top-down opening
+# camera, which made the icon a ~6x8 px blob).
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def test_icon_axes_show_the_nose_side_on():
+    from orbitsim.render.ship_model import icon_axes
+    x, y, z = icon_axes((1.0, 0.0, 0.2), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+    assert z == pytest.approx((1.0, 0.0, 0.0), abs=1e-12)    # nose, projected on screen
+    assert y == pytest.approx((0.0, 0.0, 1.0), abs=1e-12)    # side faces the camera
+
+
+def test_icon_axes_nose_on_falls_back_to_screen_up():
+    from orbitsim.render.ship_model import icon_axes
+    _, _, z = icon_axes((0.0, 0.0, 1.0), (0.0, 0.0, -1.0), (0.0, 1.0, 0.0))
+    assert z == pytest.approx((0.0, 1.0, 0.0), abs=1e-12)
+
+
+def test_icon_axes_are_a_right_handed_orthonormal_basis():
+    import random
+    from orbitsim.render.ship_model import icon_axes
+    rng = random.Random(3)
+    for _ in range(50):
+        v = lambda: tuple(rng.uniform(-1, 1) for _ in range(3))  # noqa: E731
+        x, y, z = icon_axes(v(), v(), v())
+        for a in (x, y, z):
+            assert _dot(a, a) == pytest.approx(1.0)
+        assert _dot(x, y) == pytest.approx(0.0, abs=1e-9)
+        assert _dot(y, z) == pytest.approx(0.0, abs=1e-9)
+        cross = (y[1] * z[2] - y[2] * z[1], y[2] * z[0] - y[0] * z[2], y[0] * z[1] - y[1] * z[0])
+        assert cross == pytest.approx(x, abs=1e-9)
+
+
+def test_ship_icon_draws_on_top_like_a_marker():
+    from panda3d.core import DepthTestAttrib
+    from orbitsim.render.ship_model import build_ship_icon
+    icon = build_ship_icon()
+    attr = icon.get_attrib(DepthTestAttrib)
+    assert attr is not None and attr.get_mode() == DepthTestAttrib.M_none

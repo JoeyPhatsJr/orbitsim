@@ -8,7 +8,8 @@ from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.hud.format import fmt_countdown
-from orbitsim.render.orbit_lines import MANEUVER_COLOR, build_orbit_node
+from orbitsim.render.line_style import PLAN_STYLE
+from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import localize_polyline, maneuver_preview_key
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
@@ -353,15 +354,15 @@ class ManeuverEditor:
                 local_points, self.app._preview_origin = localize_polyline(points)
                 scale = self.app.transform.scale_m_per_unit
                 render_points = [tuple(point / scale) for point in local_points]
-                self.app._preview_np = build_orbit_node(
-                    render_points, color=MANEUVER_COLOR, thickness=2.75
-                )
+                px = self.app.line_px_scale()
+                self.app._preview_np = build_orbit_node(render_points, PLAN_STYLE, px_scale=px)
                 self.app._preview_np.reparent_to(self.app.render)
                 self.app._preview_np.set_pos(*self.app.transform.to_render(self.app._preview_origin))
                 # Encounter patches ride the preview node (same origin/scale).
                 self.app._preview_encounters = encounters
                 self.app.trajectory_view.build_encounter_patches(
-                    self.app._preview_np, points, self.app._preview_origin, scale, encounters
+                    self.app._preview_np, points, self.app._preview_origin, scale, encounters,
+                    px_scale=px,
                 )
 
         if node.magnitude_mps <= 0.0:

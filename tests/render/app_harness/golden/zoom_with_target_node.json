@@ -87,9 +87,9 @@
   "z"
  ],
  "rig": {
-  "azimuth": 0.0,
-  "distance_m": 3554083.672676232,
-  "elevation": 0.3
+  "azimuth": -1.261633917829836,
+  "distance_m": 15714863.298664957,
+  "elevation": -1.3595397369784044
  },
  "sim_time_s": 233.3333333333329,
  "target": "Moon",
@@ -154,7 +154,7 @@
  "world_labels": [
   [
    "AP",
-   false
+   true
   ],
   [
    "CA: MOON",
@@ -206,7 +206,7 @@
   ],
   [
    "PE",
-   true
+   false
   ],
   [
    "Saturn",
