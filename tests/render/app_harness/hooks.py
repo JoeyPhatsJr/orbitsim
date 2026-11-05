@@ -124,3 +124,9 @@ def set_mouse1_held(app, held) -> None:
 
 def dragging(app):
     return app.node_handles.dragging()
+
+
+def orbit_line_ready(app) -> bool:
+    """Whether the live orbit line has been sampled (real pools compute it async)."""
+    cache = getattr(app, "_traj_world_cache", None)
+    return bool(cache) and cache[0] is not None
