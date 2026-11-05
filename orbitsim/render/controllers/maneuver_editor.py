@@ -433,16 +433,18 @@ class ManeuverEditor:
         lines are rebuilt from cached points when the zoom scale changes.
         """
         app = self.app
-        preview_key = maneuver_preview_key(node, app._node_epoch_s)
+        target_name = app.targeting.aim_target_name()
+        preview_key = maneuver_preview_key(node, app._node_epoch_s, target_name)
         future = app._preview_future
         if future is not None and future.done():
-            points, encounters = future.result()
+            points, encounters, approach = future.result()
             completed_key = app._preview_future_key
             app._preview_future = None
             app._preview_future_key = None
             if preview_key == completed_key and node.magnitude_mps > 0.0:
                 app._preview_points = points
                 app._preview_encounters = encounters
+                app._preview_approach = approach
                 app._preview_exact_key = completed_key
                 app._preview_exact_start = app._preview_inflight_start
                 self._draw_preview_exact()
@@ -500,7 +502,7 @@ class ManeuverEditor:
             app._preview_submit_t = now_real
             app._preview_future = app._compute_executor.submit(
                 sample_preview, post_burn,
-                app.world.solar_system, app.PREDICTION_MIN_SUBSTEP_S,
+                app.world.solar_system, app.PREDICTION_MIN_SUBSTEP_S, target_name,
             )
 
     def _set_preview_estimate(self, post_burn) -> None:
@@ -537,6 +539,7 @@ class ManeuverEditor:
         app._preview_origin = None
         app._preview_built_scale = None
         app._preview_encounters = []
+        app._preview_approach = None
 
     def _draw_preview_estimate(self) -> None:
         """(Re)build the faint two-body estimate (Earth-centred) at the current scale."""

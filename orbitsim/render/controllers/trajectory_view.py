@@ -113,14 +113,17 @@ class TrajectoryView:
         future = self.app._traj_future[idx]
         if future is not None and future.done():
             try:
-                points, epochs, encounters = future.result()
+                result = future.result()
+                points, epochs, encounters = result[:3]
                 self.app._traj_world_cache[idx] = points
                 self.app._traj_epoch_cache[idx] = epochs
                 self.app._traj_encounters[idx] = encounters
+                self.app._traj_approach[idx] = result[3] if len(result) > 3 else None
             except Exception:
                 self.app._traj_world_cache[idx] = None
                 self.app._traj_epoch_cache[idx] = None
                 self.app._traj_encounters[idx] = []
+                self.app._traj_approach[idx] = None
             self.app._traj_future[idx] = None
             self.app._traj_last_complete_t[idx] = now_real
             self.app._traj_render_scale[idx] = None
@@ -142,6 +145,7 @@ class TrajectoryView:
         ):
             horizon = _trajectory_horizon_s(vessel.state, self.app.world.solar_system)
             n_pts = 256
+            approach_body = self.app.targeting.aim_target_name() if idx == 0 else None
             self.app._traj_last_submit_t[idx] = now_real
             self.app._traj_future[idx] = self.app._compute_executor.submit(
                 sample_trajectory,
@@ -153,6 +157,7 @@ class TrajectoryView:
                 2,
                 True,   # with_times
                 True,   # with_encounters
+                approach_body,
             )
 
     def update_encounter_cues(self) -> None:

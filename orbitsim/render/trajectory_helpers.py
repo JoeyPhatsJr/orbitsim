@@ -2,13 +2,17 @@
 import numpy as np
 
 
-def maneuver_preview_key(node, scheduled_epoch_s):
-    """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
+def maneuver_preview_key(node, scheduled_epoch_s, target_name=None):
+    """Stable preview identity; burn-now epochs move with the vessel and are ignored.
+
+    The target is part of it: the exact preview also measures the approach to the
+    target, so switching targets makes the drawn result stale."""
     return (
         node.dv_prograde_mps,
         node.dv_normal_mps,
         node.dv_radial_mps,
         scheduled_epoch_s,
+        target_name,
     )
 
 

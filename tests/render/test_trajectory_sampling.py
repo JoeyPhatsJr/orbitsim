@@ -55,9 +55,10 @@ def test_sample_trajectory_matches_across_process_boundary():
 
 def test_sample_preview_returns_points_and_encounters():
     state = _leo_state()
-    pts, encounters = sample_preview(state, solar_system=False, min_substep_s=MIN_SUBSTEP_S)
+    pts, encounters, approach = sample_preview(state, solar_system=False, min_substep_s=MIN_SUBSTEP_S)
     assert pts.shape == (256, 3)
     assert isinstance(encounters, list)   # empty list for a bound LEO with no flyby
+    assert approach is None               # no target asked for
 
 
 def test_trajectory_horizon_earth_moon_is_one_week():

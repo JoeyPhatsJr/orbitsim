@@ -70,6 +70,16 @@ class Targeting:
         self.app._target_label.hide()
         self.app._target_label_position = None
 
+    def aim_target_name(self):
+        """The target the exact previews measure an approach to: the Moon or a planet.
+
+        None with no target, for Lagrange points (not bodies) and for the Sun."""
+        from orbitsim.render.targets import MoonTarget, PlanetTarget
+        target = self.app._target
+        if isinstance(target, (MoonTarget, PlanetTarget)) and target.name != "Sun":
+            return target.name
+        return None
+
     def marker_px(self, world_r):
         """Project an inertial position to pixels, or None if behind the camera/off-lens."""
         from panda3d.core import Point2

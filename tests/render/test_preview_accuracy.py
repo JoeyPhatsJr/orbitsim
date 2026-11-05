@@ -39,7 +39,7 @@ def de440():
 
 
 def test_moon_transfer_preview_matches_converged_truth(de440):
-    _pts, encounters = sample_preview(PINNED, True, PREVIEW_FLOOR_S)
+    _pts, encounters, _ap = sample_preview(PINNED, True, PREVIEW_FLOOR_S)
     moon = _moon(encounters)
     ref_alt = REF_PERIAPSIS_RADIUS_M - R_MOON
     alt = moon.periapsis_radius_m - R_MOON
@@ -65,5 +65,35 @@ def test_moon_transfer_preview_stays_cheap(de440, monkeypatch):
 def test_escape_preview_is_finite_and_fast_enough(de440):
     esc = StateVector(r=PINNED.r, v=PINNED.v * 1.25, mu=PINNED.mu, epoch_s=PINNED.epoch_s)
     t0 = time.perf_counter()
-    pts, _enc = sample_preview(esc, True, PREVIEW_FLOOR_S)
+    pts, _enc, _ap = sample_preview(esc, True, PREVIEW_FLOOR_S)
     assert np.isfinite(pts).all() and time.perf_counter() - t0 < 5.0   # generous CI bound
+
+
+# Plan 4: the B-plane planner prototype's node (planned against the pre-Yoshida preview,
+# where it read a 190 km pass). Converged truth today (prediction propagator at divisor
+# 3,000, 3600 s chunks, conic Pe; re-measured 2026-11-05): -30.4 km, a grazing impact.
+# The preview's 256 samples are 2.8 h apart; the old parabola through them read 3,298 km.
+LOW_PASS_NODE_DV = (3131.43288823, -27.139359, -87.11806646)
+LOW_PASS_NODE_EPOCH_S = 3669.3721983198875
+REF_LOW_PASS_ALT_M = -30.4e3
+
+
+def test_low_moon_pass_reads_its_true_periapsis(de440):
+    from orbitsim.__main__ import _default_world
+    from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
+    node = ManeuverNode(LOW_PASS_NODE_EPOCH_S, *LOW_PASS_NODE_DV)
+    post = apply_maneuver(_default_world().vessels[0].state, node)
+    _pts, encounters, _ap = sample_preview(post, True, PREVIEW_FLOOR_S)
+    moon = _moon(encounters)
+    assert abs((moon.periapsis_radius_m - R_MOON) - REF_LOW_PASS_ALT_M) < 25e3, \
+        (moon.periapsis_radius_m - R_MOON)     # the parabola read 3,258 km
+
+
+def test_preview_reports_target_approach(de440):
+    _pts, _enc, ap = sample_preview(PINNED, True, PREVIEW_FLOOR_S, target_name="Moon")
+    assert ap.body_name == "Moon" and ap.distance_m < 1.0e8
+
+
+def test_preview_without_target_has_no_approach(de440):
+    _pts, _enc, ap = sample_preview(PINNED, True, PREVIEW_FLOOR_S)
+    assert ap is None
