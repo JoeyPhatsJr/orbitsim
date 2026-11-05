@@ -154,3 +154,58 @@ print("RESULT", a + [hooks.current_target_name(app), hooks.orbit_menu_labels(app
 app.destroy()
 """)
     assert target == "Moon" and menu is None and target2 == "Moon" and menu2 is None
+
+
+# --- 3D handles (plan 3, Task 3) ---
+DRAG = PRELUDE + r"""
+click(hooks.orbit_point_px(app, 40)); h.press("Add burn here"); h.step(5)
+def drag(kind, hold_frames=60, release=True):
+    start = hooks.handle_px(app, kind); node = hooks.node_px(app)
+    hooks.set_mouse_px(app, start); h.step(1); h.send("mouse1")
+    end = (start[0] + 1.5 * (start[0] - node[0]), start[1] + 1.5 * (start[1] - node[1]))
+    hooks.set_mouse_px(app, end); h.step(hold_frames)
+    if release:
+        h.send("mouse1-up"); h.step(30)
+"""
+
+
+def test_prograde_handle_adds_only_prograde():
+    epoch0, state = _run(DRAG + r"""
+epoch0 = hooks.node_state(app)[0]
+drag("pro+")
+print("RESULT", [epoch0, hooks.node_state(app)])
+app.destroy()
+""")
+    epoch, pro, nrm, rad = state
+    assert pro > 0 and nrm == 0.0 and rad == 0.0 and epoch == epoch0 and pro == round(pro, 1)
+
+
+def test_radial_in_handle_lowers_radial():
+    state = _run(DRAG + r"""
+drag("rad-")
+print("RESULT", hooks.node_state(app))
+app.destroy()
+""")
+    assert state[3] < 0 and state[1] == 0.0 and state[2] == 0.0
+
+
+def test_drag_ends_when_button_no_longer_held():
+    # Mouse released over a panel / outside the window: DirectGUI swallows mouse1-up,
+    # so the drag must end when the device says the button is up.
+    dragging, a, b = _run(DRAG + r"""
+drag("pro+", hold_frames=5, release=False)
+hooks.set_mouse1_held(app, False); h.step(2)
+a = hooks.node_state(app)
+h.step(30)
+print("RESULT", [hooks.dragging(app), a, hooks.node_state(app)])
+app.destroy()
+""")
+    assert dragging is None and a == b
+
+
+def test_handles_hidden_without_node():
+    node = _run(PRELUDE + r"""
+print("RESULT", hooks.node_px(app))
+app.destroy()
+""")
+    assert node is None

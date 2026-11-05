@@ -75,9 +75,18 @@ class NodePlacement:
             self.close_menu()                     # a click elsewhere just closes the menu
             self.app._mouse1_down_px = None
             return
-        self.app._mouse1_down_px = self.app.flight_input.mouse_px()
+        px = self.app.flight_input.mouse_px()
+        handle = self.app.node_handles.hit_test(px)
+        if handle is not None:
+            self.app.node_handles.begin_drag(handle, px)   # a drag, not a tap
+            self.app._mouse1_down_px = None
+            return
+        self.app._mouse1_down_px = px
 
     def on_mouse1_up(self) -> None:
+        if self.app.node_handles.dragging() is not None:
+            self.app.node_handles.end_drag()
+            return
         down = getattr(self.app, "_mouse1_down_px", None)
         self.app._mouse1_down_px = None
         if down is None:
@@ -175,8 +184,10 @@ class NodePlacement:
             return
         fi = self.app.flight_input
         mouse = fi.mouse_px()
+        handles = self.app.node_handles
         if (mouse is None or fi.mouse_over_gui() or getattr(self.app, "_rmb_down", False)
-                or self.app.operation.status.running):
+                or self.app.operation.status.running or handles.dragging() is not None
+                or handles.hit_test(mouse) is not None):
             self._hide_ghost()
             return
         hit = self.orbit_pick_at(mouse, self._pt(LINE_HIT_PT))

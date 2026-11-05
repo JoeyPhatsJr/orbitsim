@@ -103,3 +103,24 @@ def orbit_menu_labels(app):
 
 def settings_visible(app) -> bool:
     return not app.settings_panel._frame.is_hidden()
+
+
+def node_px(app):
+    """Pixel position of the burn node marker, or None when there are no handles."""
+    return getattr(app, "_node_px", None)
+
+
+def handle_px(app, kind: str):
+    return app._handle_px.get(kind)
+
+
+def set_mouse1_held(app, held) -> None:
+    """Override what the mouse device reports for the left button; None restores it."""
+    if held is None:
+        vars(app.flight_input).pop("mouse1_held", None)
+    else:
+        app.flight_input.mouse1_held = lambda: held
+
+
+def dragging(app):
+    return app.node_handles.dragging()

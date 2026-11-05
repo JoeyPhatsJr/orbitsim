@@ -575,7 +575,6 @@ class ManeuverEditor:
                 self.app._node_marker_np.reparent_to(self.app.render)
                 self.app._node_marker_np.set_color(0.3, 1.0, 1.0, 1.0)
                 self.app._node_marker_np.set_light_off()
-                self.app._node_marker_np.set_scale(6.0)
             self.app._node_marker_np.set_pos(mx, my, mz)
             if self.app._node_dv_label is None:
                 from orbitsim.render.world_labels import build_world_label

@@ -76,3 +76,26 @@ def test_menu_moves_above_a_rect_it_would_overlap():
     nav = (-0.3, 0.3, -1.0, -0.4)                 # (left, right, bottom, top), aspect2d
     assert menu_clear_of((-0.1, -0.5), nav) == pytest.approx((-0.1, -0.4 + 0.17 + 0.02))
     assert menu_clear_of((0.5, -0.5), nav) == (0.5, -0.5)          # beside it: unchanged
+
+
+# --- Drag handles (plan 3, Task 3) ---
+from orbitsim.render.node_edit import HANDLES, axis_unit_px, handle_drag_value  # noqa: E402
+
+
+def test_axis_unit_px():
+    assert axis_unit_px((0, 0), (30, 40), 8) == pytest.approx((0.6, 0.8))
+
+
+def test_axis_unit_px_none_when_foreshortened():
+    assert axis_unit_px((0, 0), (3, 4), 8) is None
+
+
+def test_handle_drag_value_along_against_and_across():
+    assert handle_drag_value((0, 0), (75, 0), (1, 0), 150) == 0.5
+    assert handle_drag_value((0, 0), (-300, 0), (1, 0), 150) == -1.0
+    assert handle_drag_value((0, 0), (0, 80), (1, 0), 150) == 0.0
+
+
+def test_handles_cover_each_axis_both_ways():
+    assert sorted((a, s) for _k, a, s, _c in HANDLES) == sorted(
+        (a, s) for a in ("pro", "nrm", "rad") for s in (1, -1))

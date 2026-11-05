@@ -118,3 +118,45 @@ def menu_clear_of(menu_xz, rect, menu_w=0.46, menu_h=0.17, gap=0.02):
     if not overlaps:
         return (x, z)
     return (x, top + menu_h + gap)
+
+
+# --- 3D drag handles (plan 3, Task 3) ---
+# (kind, axis, sign, rgb). Prograde lime, normal violet, radial coral.
+HANDLES = (
+    ("pro+", "pro", 1, (0.75, 1.0, 0.30)), ("pro-", "pro", -1, (0.75, 1.0, 0.30)),
+    ("nrm+", "nrm", 1, (0.80, 0.50, 1.0)), ("nrm-", "nrm", -1, (0.80, 0.50, 1.0)),
+    ("rad+", "rad", 1, (1.0, 0.45, 0.45)), ("rad-", "rad", -1, (1.0, 0.45, 0.45)),
+)
+HANDLE_OFFSET_PX = 36.0      # handle distance from the node, on screen
+HANDLE_RADIUS_PX = 5.0
+NODE_RADIUS_PX = 7.0
+HANDLE_HIT_PX = 12.0
+NODE_HIT_PX = 14.0
+MIN_AXIS_PX = 8.0            # a handle pair this foreshortened is hidden (axis ~ at camera)
+MAX_DRAG_PX = 150.0          # pull this far along the handle for full rate
+DRAG_MAX_RATE_MPS = 400.0    # delta-V rate at full pull (the slider's curve)
+
+
+@dataclass(frozen=True)
+class HandleDrag:
+    """An in-progress drag: which handle (or "node"), where it started, its screen axis."""
+
+    kind: str
+    start_px: tuple
+    axis_px: tuple = None
+
+
+def axis_unit_px(node_px, handle_px, min_len_px):
+    """Unit screen direction node -> handle, or None when shorter than ``min_len_px``
+    (the axis points nearly at the camera: hide the pair, never divide by ~0)."""
+    dx, dy = handle_px[0] - node_px[0], handle_px[1] - node_px[1]
+    length = math.hypot(dx, dy)
+    if length < min_len_px:
+        return None
+    return (dx / length, dy / length)
+
+
+def handle_drag_value(start_px, mouse_px, axis_unit, max_drag_px) -> float:
+    """Jog value in [-1, 1]: how far the mouse is pulled along the handle's screen axis."""
+    along = (mouse_px[0] - start_px[0]) * axis_unit[0] + (mouse_px[1] - start_px[1]) * axis_unit[1]
+    return max(-1.0, min(1.0, along / max_drag_px))

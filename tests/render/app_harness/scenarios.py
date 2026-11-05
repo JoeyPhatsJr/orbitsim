@@ -183,6 +183,25 @@ def click_body_targets(h):
     h.step(10)
 
 
+def handle_drag_prograde(h):
+    """Add a burn from the orbit menu, then pull its prograde handle (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Add burn here")
+    h.step(5)
+    start = hooks.handle_px(h.app, "pro+")
+    node = hooks.node_px(h.app)
+    hooks.set_mouse_px(h.app, start)
+    h.step(1)
+    h.send("mouse1")
+    hooks.set_mouse_px(h.app, (start[0] + 1.5 * (start[0] - node[0]),
+                               start[1] + 1.5 * (start[1] - node[1])))
+    h.step(60)
+    h.send("mouse1-up")
+    h.step(30)
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -197,6 +216,7 @@ SCENARIOS = {
     "orbit_menu_add_burn": ("sandbox", orbit_menu_add_burn),
     "orbit_menu_warp_here": ("sandbox", orbit_menu_warp_here),
     "click_body_targets": ("sandbox", click_body_targets),
+    "handle_drag_prograde": ("sandbox", handle_drag_prograde),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
 }
