@@ -115,7 +115,7 @@
   "-38",
   "Altitude: 524.6 km",
   "Apoapsis: 2,465.2 km",
-  "Approach Moon: Pe 44,271 km  T-12d 08h  v-inf 1.2 km/s",
+  "Approach Moon: Pe 43,936 km  T-12d 08h  v-inf 1.2 km/s",
   "Fuel: 100%  (8,000 kg)",
   "Inclination: 8.1\u00b0",
   "Intercept planned (dV 3,130 m/s)",
@@ -146,7 +146,7 @@
  "vessel": {
   "fuel_mass_kg": 8000.0,
   "nodes": [
-   "ManeuverNode(epoch_s=3669.372494315167, dv_prograde_mps=3129.318834978412, dv_normal_mps=-9.77629971082689, dv_radial_mps=-38.14043240379687)"
+   "ManeuverNode(epoch_s=3669.3724940036805, dv_prograde_mps=3129.318838880518, dv_normal_mps=-9.776302237516973, dv_radial_mps=-38.1405454593298)"
   ],
   "orientation": [
    1.0,
@@ -155,16 +155,16 @@
    0.0
   ],
   "r": [
-   6681627.077244661,
-   1715375.6215735166,
-   245053.6623129075
+   6681627.150280179,
+   1715374.658189095,
+   245053.5246865959
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   -1801.7216551783179,
-   7765.744815219804,
-   1109.392138390476
+   -1801.722395769764,
+   7765.744799981697,
+   1109.3921362136066
   ]
  },
  "warp": 100.0,
@@ -214,7 +214,7 @@
    false
   ],
   [
-   "Moon Pe 44,271 km  T-12d 08h",
+   "Moon Pe 43,936 km  T-12d 08h",
    false
   ],
   [

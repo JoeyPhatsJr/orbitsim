@@ -756,13 +756,15 @@ def test_cross3_is_bit_identical_to_numpy_cross():
         np.testing.assert_array_equal(nb._cross3(x, y), np.cross(x, y))
 
 
-_PINNED_LEO_COAST_R = np.array([6187681.564042751, -3199764.8583145365, -218377.55608006936])
-_PINNED_LEO_COAST_V = np.array([3543.5991237698718, 6652.946383964098, 894.7065215485318])
+# Re-pinned for the Yoshida 4th-order step at SUBSTEP_DIVISOR 100 (flight-accuracy plan).
+# Against a Yoshida/divisor-1000 reference: |dr| 105.8 m (was 6,170.5 m with Verlet/200).
+_PINNED_LEO_COAST_R = np.array([6190491.628957393, -3194202.3732476626, -217633.5987026762])
+_PINNED_LEO_COAST_V = np.array([3537.937754715665, 6656.031690958849, 894.9252775313337])
 
 
 def test_substep_trajectory_unchanged_bit_for_bit():
-    # Pinned output of the solar-system substepper for a LEO coast (recorded before the
-    # 3-vector helpers were introduced): any change to the hot loop's arithmetic shows.
+    # Pinned output of the solar-system substepper for a LEO coast: any change to the
+    # hot loop's arithmetic shows.
     st = StateVector(r=np.array([7.0e6, 1.0e5, 2.0e5]), v=np.array([-50.0, 7.5e3, 900.0]),
                      mu=MU_EARTH, epoch_s=86400.0)
     out = nb.propagate_solar_system(st, 5400.0, max_step_s=600.0)
