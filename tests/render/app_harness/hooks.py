@@ -46,3 +46,21 @@ def preview_start_error_m(app) -> float:
         return float("inf")
     start = apply_maneuver(app.world.vessels[0].state, app.maneuver_editor.current_node()).r
     return float(np.linalg.norm(np.asarray(points[0]) - start))
+
+
+def set_key_held(app, key: str, held) -> None:
+    """Override what the keyboard reports for ``key`` (headless has no device);
+    held=None removes the override."""
+    overrides = app.__dict__.setdefault("_test_key_held", {})
+    if held is None:
+        overrides.pop(key, None)
+    else:
+        overrides[key] = held
+    real = type(app.flight_input).key_held
+    fi = app.flight_input
+    fi.key_held = lambda k, _o=overrides, _fi=fi: _o[k] if k in _o else real(_fi, k)
+
+
+def node_state(app) -> tuple:
+    """(node epoch or None, dV prograde, normal, radial) of the planned burn."""
+    return (app._node_epoch_s, app._dv["pro"], app._dv["nrm"], app._dv["rad"])

@@ -32,8 +32,10 @@ class FlightInput:
         self.app.accept("arrow_right", lambda: self.app.rig.orbit(0.1, 0.0))
         self.app.accept("arrow_up", lambda: self.app.rig.orbit(0.0, 0.1))
         self.app.accept("arrow_down", lambda: self.app.rig.orbit(0.0, -0.1))
-        self.app.accept("period", self.app.warp_controls.warp_up_guarded)  # ">" key (blocked while thrusting)
-        self.app.accept("comma", self.app.clock.warp_down)  # "<" key
+        # Panda3D names punctuation keys by the character (KeyboardButton.ascii_key(".")
+        # is "."), not "period"/"comma" -- those never fired from a real keyboard.
+        self.app.accept(".", self.app.warp_controls.warp_up_guarded)  # warp up (blocked while thrusting)
+        self.app.accept(",", self.app.clock.warp_down)  # warp down
         self.app.accept("0", self.app.warp_controls.max_warp_guarded)
         self.app.accept("p", self.app.porkchop_modal.toggle_porkchop)  # porkchop delta-V plot
         self.app.accept("f1", self.app.keybind_overlay.toggle)  # keybind help overlay
@@ -56,8 +58,22 @@ class FlightInput:
             for i, mode in enumerate(sas_keys, start=1):
                 self.app.accept(str(i), self.set_sas, [mode])
             self.app.accept("i", self.app.targeting.plan_intercept)
+            # Burn nudges: tap for a step, hold to ramp (see render/node_edit.py).
+            from orbitsim.render.node_edit import NUDGE_KEYS
+            for key in NUDGE_KEYS:
+                self.app.accept(key, self.app.maneuver_editor.on_nudge_key, [key, True])
+                self.app.accept(f"{key}-up", self.app.maneuver_editor.on_nudge_key, [key, False])
             self.app.accept("f5", self.app.quicksave.save)
             self.app.accept("f9", self.app.quicksave.load)
+
+    def key_held(self, key: str):
+        """Whether the keyboard reports ``key`` down; None when there's no input
+        device to ask (headless/offscreen), so callers keep their own state."""
+        watcher = getattr(self.app, "mouseWatcherNode", None)
+        if watcher is None:
+            return None
+        from panda3d.core import KeyboardButton
+        return bool(watcher.is_button_down(KeyboardButton.ascii_key(key)))
 
     def _toggle_ship_view(self) -> None:
         """Snap the camera between remembered map and ship-view distances ('m')."""

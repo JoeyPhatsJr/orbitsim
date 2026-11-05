@@ -46,13 +46,14 @@ def node_edit_execute(h):
 
 def warp_keys(h):
     _launch_sandbox(h)
+    # Panda3D's real key names (",", "."), not "comma"/"period" (plan 3 warp-key fix).
     for _ in range(3):
-        h.send("period")
+        h.send(".")
         h.step(20)
     h.send("0")
     h.step(60)
-    h.send("comma")
-    h.send("comma")
+    h.send(",")
+    h.send(",")
     h.step(20)
 
 
@@ -106,9 +107,9 @@ def zoom_with_target_node(h):
 def solar_boot_warp(h):
     h.press("OPEN SOLAR VIEWER")
     h.step(60)
-    h.send("period")
+    h.send(".")                     # Panda3D's real key names (plan 3 warp-key fix)
     h.step(60)
-    h.send("comma")
+    h.send(",")
     h.step(30)
 
 
@@ -122,6 +123,25 @@ def solar_porkchop_key(h):
     h.step(10)
 
 
+def nudge_keys(h):
+    """Edit a burn with the keyboard: taps and holds on every nudge axis (plan 3)."""
+    _launch_sandbox(h)
+    h.step(10)
+    h.send("]")                     # tap: node 10 s ahead
+    h.send("]-up")
+    h.send("]")                     # hold: node later, ramping
+    h.step(90)
+    h.send("]-up")
+    h.send("j")                     # tap: +1 m/s prograde
+    h.send("j-up")
+    h.send("l")                     # hold: normal, ramping
+    h.step(60)
+    h.send("l-up")
+    h.send(";")                     # tap: -1 m/s radial
+    h.send(";-up")
+    h.step(30)
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -132,6 +152,7 @@ SCENARIOS = {
     "porkchop_escape": ("sandbox", porkchop_escape),
     "quicksave_roundtrip": ("sandbox", quicksave_roundtrip),
     "zoom_with_target_node": ("sandbox", zoom_with_target_node),
+    "nudge_keys": ("sandbox", nudge_keys),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
 }

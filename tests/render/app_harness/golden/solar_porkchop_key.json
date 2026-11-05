@@ -1,5 +1,7 @@
 {
  "events": [
+  ",",
+  ".",
   "0",
   "arrow_down",
   "arrow_left",
@@ -11,13 +13,11 @@
   "click-mouse1-pg*",
   "click-mouse1-pg*",
   "click-mouse1-pg*",
-  "comma",
   "escape",
   "f1",
   "mouse3",
   "mouse3-up",
   "p",
-  "period",
   "render-texture-targets-changed",
   "wheel_down",
   "wheel_up",

@@ -227,6 +227,7 @@ class OrbitApp(ShowBase):
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
         self.maneuver_editor.apply_jogs(real_dt)
+        self.maneuver_editor.apply_nudges(real_dt)
 
         focus, scale = self._frame_origin()
         self.bodies_view.frame_moon_ring(scale)

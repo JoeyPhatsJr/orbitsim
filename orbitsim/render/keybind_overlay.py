@@ -18,6 +18,10 @@ SANDBOX_BINDINGS = [
     ("1-8", "SAS mode (pro/retro/normal/...)"),
     ("U", "Toggle unlimited dV"),
     ("I", "Plan intercept to target"),
+    ("H / J", "Burn retrograde / prograde"),
+    ("K / L", "Burn anti-normal / normal"),
+    ("; / '", "Burn radial in / out"),
+    ("[ / ]", "Burn earlier / later"),
     ("P", "Porkchop plot (target or demo)"),
     (", / .", "Warp down / up"),
     ("F5 / F9", "Quicksave / Quickload"),
@@ -41,13 +45,13 @@ class KeybindOverlay:
     def __init__(self, parent, lines):
         self.visible = False
         self._frame = DirectFrame(
-            frameColor=(0, 0, 0, 0.6), frameSize=(-0.7, 0.7, -0.75, 0.75),
+            frameColor=(0, 0, 0, 0.6), frameSize=(-0.75, 0.75, -0.95, 0.85),
             pos=(0, 0, 0), parent=parent,
         )
         body = "\n".join(f"{k:>14}   {desc}" for k, desc in lines)
         self._text = OnscreenText(
-            text="Controls\n\n" + body, scale=0.05, fg=(1, 1, 1, 1),
-            align=TextNode.ALeft, pos=(-0.62, 0.66), parent=self._frame,
+            text="Controls\n\n" + body, scale=0.045, fg=(1, 1, 1, 1),
+            align=TextNode.ALeft, pos=(-0.68, 0.76), parent=self._frame,
             mayChange=False,
         )
         self._frame.hide()
