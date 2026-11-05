@@ -226,7 +226,7 @@ don't batch many changes into one late commit. Stage specific files by **explici
   `core/transfers.py` import. That call must stay *before* the first Lambert call.
 - **Drawn predictions have their own stepper; never point `World.step` at it.** The live line
   and the maneuver preview integrate with `nbody.propagate_solar_prediction`: each body's
-  substep is sized by its *current* distance at 1/`PREDICTION_SUBSTEP_DIVISOR` (1000) of its
+  substep is sized by its *current* distance at 1/`PREDICTION_SUBSTEP_DIVISOR` (300, with the 4th-order step) of its
   timescale. Flight's periapsis-sized steps with the old 120 s preview floor mispredicted a
   Moon flyby by 7× (6,057 km vs ~45,670 km converged), taking 6 s. The prediction stepper
   (now on the same Yoshida step) gets it within 0.01% in ~1.9 s

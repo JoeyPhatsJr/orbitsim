@@ -47,6 +47,21 @@ def test_moon_transfer_preview_matches_converged_truth(de440):
     assert abs(moon.periapsis_epoch_s - REF_PERIAPSIS_EPOCH_S) <= 600.0
 
 
+def test_moon_transfer_preview_stays_cheap(de440, monkeypatch):
+    # Deterministic speed check (gravity evaluations, not wall time): the spec wants the
+    # exact preview in about a second. With the 4th-order step (flight-accuracy plan)
+    # divisor 300 costs ~5.3k evals (~0.6 s) at 0.02% error; 1000 cost ~17k (~2 s).
+    calls = {"n": 0}
+    real = nb.solar_system_accel
+
+    def counted(r, t):
+        calls["n"] += 1
+        return real(r, t)
+    monkeypatch.setattr(nb, "solar_system_accel", counted)
+    sample_preview(PINNED, True, PREVIEW_FLOOR_S)
+    assert calls["n"] <= 6_000, calls["n"]
+
+
 def test_escape_preview_is_finite_and_fast_enough(de440):
     esc = StateVector(r=PINNED.r, v=PINNED.v * 1.25, mu=PINNED.mu, epoch_s=PINNED.epoch_s)
     t0 = time.perf_counter()

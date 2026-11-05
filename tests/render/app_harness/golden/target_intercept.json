@@ -115,7 +115,7 @@
   "-38",
   "Altitude: 524.6 km",
   "Apoapsis: 2,465.2 km",
-  "Approach Moon: Pe 43,936 km  T-12d 08h  v-inf 1.2 km/s",
+  "Approach Moon: Pe 43,943 km  T-12d 08h  v-inf 1.2 km/s",
   "Fuel: 100%  (8,000 kg)",
   "Inclination: 8.1\u00b0",
   "Intercept planned (dV 3,130 m/s)",
@@ -214,7 +214,7 @@
    false
   ],
   [
-   "Moon Pe 43,936 km  T-12d 08h",
+   "Moon Pe 43,943 km  T-12d 08h",
    false
   ],
   [

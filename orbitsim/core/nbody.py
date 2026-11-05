@@ -551,9 +551,9 @@ def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0,
 
 # Drawn predictions (live trajectory + maneuver preview) only. Flight's periapsis-sized
 # steps with the old 120 s preview floor mispredicted a Moon flyby by 7x; stepping by the
-# *current* distance to each body at 1/1000 of its timescale matches the converged path
+# *current* distance to each body at 1/PREDICTION_SUBSTEP_DIVISOR of its timescale matches the converged path
 # within ~1% at ~6x the old speed. Never used by World.step (the flown sim).
-PREDICTION_SUBSTEP_DIVISOR = 1000.0
+PREDICTION_SUBSTEP_DIVISOR = 300.0   # 4th-order step: 0.02% Moon-pass error at ~0.6 s (1000 cost ~2 s)
 
 
 def _current_distance_m(r_rel, v_rel, mu):
