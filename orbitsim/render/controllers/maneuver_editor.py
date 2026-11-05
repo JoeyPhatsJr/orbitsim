@@ -195,6 +195,11 @@ class ManeuverEditor:
         self.app._dv_value_text[axis].setText(f"{value_mps:+.0f}")
         self.refresh_readout()
 
+    def place_node(self, epoch_s: float) -> None:
+        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept."""
+        self.app._auto_execute_node = False
+        self.set_node_epoch(snap_epoch(epoch_s))
+
     def set_node_epoch(self, epoch_s: float) -> None:
         """Schedule the burn at ``epoch_s`` (never in the past)."""
         now = self.app.clock.sim_time_s
@@ -249,8 +254,8 @@ class ManeuverEditor:
     def _release_jogs(self) -> None:
         """Spring all jog thumbs back to center so the value stops changing on release.
 
-        Also attempt a target pick: a left-click that didn't drag is a tap on a body."""
-        self.app.targeting.try_pick_target()
+        Also resolve a tap: a body (target it) or your orbit (the Add/Warp menu)."""
+        self.app.node_placement.on_mouse1_up()
         for slider in self.app._jog.values():
             slider["value"] = 0.0
         if hasattr(self.app, "_node_time_jog"):

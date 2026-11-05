@@ -52,3 +52,105 @@ def test_nudge_stops_when_key_no_longer_held():
     # not ramp forever once the device says it isn't held.
     a, b, c = _run(NUDGES)
     assert c[1] == b[1] + 1.0                                       # only the tap, no ramp
+
+
+# --- Hover ghost and the click-orbit menu (plan 3, Task 2) ---
+PRELUDE = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(30)
+def click(px):
+    hooks.set_mouse_px(app, px); h.step(1); h.send("mouse1"); h.send("mouse1-up"); h.step(1)
+"""
+
+
+def test_hover_shows_ghost_with_lead_time():
+    out = _run(PRELUDE + r"""
+hooks.set_mouse_px(app, hooks.orbit_point_px(app, 40)); h.step(2)
+labels = [np_.node().get_text() for np_ in app.render.find_all_matches("**/+TextNode")
+          if not np_.is_hidden() and np_.node().get_text().startswith("in ")]
+print("RESULT", labels)
+app.destroy()
+""")
+    assert len(out) == 1 and out[0].endswith(" min"), out
+
+
+def test_click_orbit_opens_menu_and_adds_burn():
+    labels, after, state, epoch = _run(PRELUDE + r"""
+click(hooks.orbit_point_px(app, 40))
+labels = hooks.orbit_menu_labels(app)
+epoch = hooks.orbit_point_epoch(app, 40)
+h.press("Add burn here"); h.step(1)
+print("RESULT", [labels, hooks.orbit_menu_labels(app), hooks.node_state(app), epoch])
+app.destroy()
+""")
+    assert labels == ["Add burn here", "Warp to here"] and after is None
+    assert abs(state[0] - epoch) < 60.0 and state[1:] == (0.0, 0.0, 0.0)
+
+
+def test_menu_says_move_when_a_burn_exists():
+    labels = _run(PRELUDE + r"""
+click(hooks.orbit_point_px(app, 40)); h.press("Add burn here"); h.step(1)
+click(hooks.orbit_point_px(app, 60))
+print("RESULT", hooks.orbit_menu_labels(app))
+app.destroy()
+""")
+    assert labels[0] == "Move burn here"
+
+
+def test_escape_closes_menu_not_settings():
+    menu, settings = _run(PRELUDE + r"""
+click(hooks.orbit_point_px(app, 40)); h.send("escape"); h.step(1)
+print("RESULT", [hooks.orbit_menu_labels(app), hooks.settings_visible(app)])
+app.destroy()
+""")
+    assert menu is None and settings is False
+
+
+def test_warp_to_here_coasts():
+    advanced = _run(PRELUDE + r"""
+t0 = app.clock.sim_time_s
+click(hooks.orbit_point_px(app, 40)); h.press("Warp to here"); h.step(3)
+print("RESULT", app.clock.sim_time_s - t0)
+app.destroy()
+""")
+    assert advanced >= 2000.0
+
+
+def test_warp_refused_while_thrusting():
+    advanced = _run(PRELUDE + r"""
+h.send("z"); h.step(2)
+t0 = app.clock.sim_time_s
+click(hooks.orbit_point_px(app, 40)); h.press("Warp to here"); h.step(2)
+print("RESULT", app.clock.sim_time_s - t0)
+app.destroy()
+""")
+    assert advanced < 10.0
+
+
+def test_add_burn_refused_once_passed():
+    state = _run(PRELUDE + r"""
+click(hooks.orbit_point_px(app, hooks.first_sample_after(app, 60.0)))
+h.step(80)                                  # ~130 s of sim time at x100: the point passes
+h.press("Add burn here"); h.step(1)
+print("RESULT", hooks.node_state(app))
+app.destroy()
+""")
+    assert state[0] is None
+
+
+def test_click_body_still_targets():
+    target, menu, target2, menu2 = _run(PRELUDE + r"""
+for _ in range(24):          # Plan 1 opening view: zoom out until the Moon is on screen
+    h.send("wheel_down")
+h.step(90)
+click(hooks.body_px(app, "Moon"))
+a = [hooks.current_target_name(app), hooks.orbit_menu_labels(app)]
+click((5.0, 5.0))
+print("RESULT", a + [hooks.current_target_name(app), hooks.orbit_menu_labels(app)])
+app.destroy()
+""")
+    assert target == "Moon" and menu is None and target2 == "Moon" and menu2 is None

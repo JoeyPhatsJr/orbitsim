@@ -18,6 +18,7 @@ SANDBOX_BINDINGS = [
     ("1-8", "SAS mode (pro/retro/normal/...)"),
     ("U", "Toggle unlimited dV"),
     ("I", "Plan intercept to target"),
+    ("Click orbit", "Add burn / warp to here"),
     ("H / J", "Burn retrograde / prograde"),
     ("K / L", "Burn anti-normal / normal"),
     ("; / '", "Burn radial in / out"),

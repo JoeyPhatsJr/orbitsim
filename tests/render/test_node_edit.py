@@ -34,3 +34,45 @@ def test_jog_rate_is_the_slider_curve():
 
 def test_snaps():
     assert snap_dv(12.345) == 12.3 and snap_epoch(2200.6) == 2201.0
+
+
+# --- Placement windows and screen sizing (plan 3, Task 2) ---
+from orbitsim.render.node_edit import (  # noqa: E402
+    menu_pos, node_epoch_ok, node_epoch_window, screen_constant_scale,
+)
+
+
+def test_window_is_one_period_for_a_bound_orbit():
+    assert node_epoch_window(100.0, 5000.0, [], 20000.0) == (110.0, 5100.0)
+
+
+def test_window_stops_at_first_encounter():
+    assert node_epoch_window(100.0, None, [9000.0, 3000.0], 40000.0) == (110.0, 3000.0)
+
+
+def test_window_runs_to_line_end_when_unbound():
+    assert node_epoch_window(100.0, None, [], 40000.0) == (110.0, 40000.0)
+
+
+def test_node_epoch_ok_needs_lead():
+    assert node_epoch_ok(110.0, 100.0) and not node_epoch_ok(109.9, 100.0)
+
+
+def test_screen_constant_scale():
+    assert screen_constant_scale(1000.0, 10.0, 30.0, 600) == pytest.approx(
+        10 * 2000 * math.tan(math.radians(15)) / 600)
+
+
+def test_menu_pos_centre_and_clamp():
+    assert menu_pos((480.0, 300.0), 960, 600) == pytest.approx((0.03, -0.03))
+    x, z = menu_pos((959.0, 2.0), 960, 600)
+    assert x == pytest.approx(1.6 - 0.46) and z == pytest.approx(-1 + 0.17)
+
+
+def test_menu_moves_above_a_rect_it_would_overlap():
+    # The navball has its own display region drawn over all 2D GUI: a menu under it
+    # is invisible, so the menu jumps above it.
+    from orbitsim.render.node_edit import menu_clear_of
+    nav = (-0.3, 0.3, -1.0, -0.4)                 # (left, right, bottom, top), aspect2d
+    assert menu_clear_of((-0.1, -0.5), nav) == pytest.approx((-0.1, -0.4 + 0.17 + 0.02))
+    assert menu_clear_of((0.5, -0.5), nav) == (0.5, -0.5)          # beside it: unchanged

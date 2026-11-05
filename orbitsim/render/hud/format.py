@@ -23,3 +23,18 @@ def fmt_countdown(seconds: float) -> str:
         return f"{h}h {m:02d}m"
     m, s = divmod(t, 60)
     return f"{m:02d}:{s:02d}"
+
+
+def fmt_lead(seconds) -> str:
+    """Time until something, for map labels: now / in 45 s / in 36 min / in 2 h 05 min /
+    in 3 d 04 h (whole seconds, floored)."""
+    s = int(seconds)
+    if s < 1:
+        return "now"
+    if s < 60:
+        return f"in {s} s"
+    if s < 3600:
+        return f"in {s // 60} min"
+    if s < 86400:
+        return f"in {s // 3600} h {s % 3600 // 60:02d} min"
+    return f"in {s // 86400} d {s % 86400 // 3600:02d} h"

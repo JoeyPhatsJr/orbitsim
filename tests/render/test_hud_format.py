@@ -37,3 +37,9 @@ def test_period_always_minutes_unit_agnostic():
 
 def test_no_warp_line():
     assert "Warp" not in "\n".join(_lines())
+
+
+def test_fmt_lead():
+    from orbitsim.render.hud.format import fmt_lead
+    assert [fmt_lead(s) for s in (0.4, 45, 36 * 60 + 10, 2 * 3600 + 300, 3 * 86400 + 4 * 3600)] == [
+        "now", "in 45 s", "in 36 min", "in 2 h 05 min", "in 3 d 04 h"]
