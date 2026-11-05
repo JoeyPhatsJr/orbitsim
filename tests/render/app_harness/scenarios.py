@@ -46,13 +46,14 @@ def node_edit_execute(h):
 
 def warp_keys(h):
     _launch_sandbox(h)
+    # Panda3D's real key names (",", "."), not "comma"/"period" (plan 3 warp-key fix).
     for _ in range(3):
-        h.send("period")
+        h.send(".")
         h.step(20)
     h.send("0")
     h.step(60)
-    h.send("comma")
-    h.send("comma")
+    h.send(",")
+    h.send(",")
     h.step(20)
 
 
@@ -106,9 +107,9 @@ def zoom_with_target_node(h):
 def solar_boot_warp(h):
     h.press("OPEN SOLAR VIEWER")
     h.step(60)
-    h.send("period")
+    h.send(".")                     # Panda3D's real key names (plan 3 warp-key fix)
     h.step(60)
-    h.send("comma")
+    h.send(",")
     h.step(30)
 
 
@@ -122,6 +123,103 @@ def solar_porkchop_key(h):
     h.step(10)
 
 
+def nudge_keys(h):
+    """Edit a burn with the keyboard: taps and holds on every nudge axis (plan 3)."""
+    _launch_sandbox(h)
+    h.step(10)
+    h.send("]")                     # tap: node 10 s ahead
+    h.send("]-up")
+    h.send("]")                     # hold: node later, ramping
+    h.step(90)
+    h.send("]-up")
+    h.send("j")                     # tap: +1 m/s prograde
+    h.send("j-up")
+    h.send("l")                     # hold: normal, ramping
+    h.step(60)
+    h.send("l-up")
+    h.send(";")                     # tap: -1 m/s radial
+    h.send(";-up")
+    h.step(30)
+
+
+def _click(h, px):
+    """A left-click tap at bottom-up pixel ``px`` (headless mouse via hooks)."""
+    hooks.set_mouse_px(h.app, px)
+    h.step(1)
+    h.send("mouse1")
+    h.send("mouse1-up")
+    h.step(1)
+
+
+def orbit_menu_add_burn(h):
+    """Click your orbit, choose "Add burn here" (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Add burn here")
+    h.step(30)
+
+
+def orbit_menu_warp_here(h):
+    """Open the orbit menu, dismiss it with Escape, reopen, "Warp to here" (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.send("escape")
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Warp to here")
+    h.step(10)
+
+
+def click_body_targets(h):
+    """Clicking a body targets it; clicking empty space changes nothing (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    for _ in range(24):
+        h.send("wheel_down")
+    h.step(90)
+    _click(h, hooks.body_px(h.app, "Moon"))
+    _click(h, (5.0, 5.0))
+    h.step(10)
+
+
+def handle_drag_prograde(h):
+    """Add a burn from the orbit menu, then pull its prograde handle (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Add burn here")
+    h.step(5)
+    start = hooks.handle_px(h.app, "pro+")
+    node = hooks.node_px(h.app)
+    hooks.set_mouse_px(h.app, start)
+    h.step(1)
+    h.send("mouse1")
+    hooks.set_mouse_px(h.app, (start[0] + 1.5 * (start[0] - node[0]),
+                               start[1] + 1.5 * (start[1] - node[1])))
+    h.step(60)
+    h.send("mouse1-up")
+    h.step(30)
+
+
+def node_drag_slides_time(h):
+    """Add a burn, nudge +1 m/s, then drag the node along the orbit (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Add burn here")
+    h.send("j")
+    h.send("j-up")
+    h.step(5)
+    hooks.set_mouse_px(h.app, hooks.node_px(h.app))
+    h.step(1)
+    h.send("mouse1")
+    hooks.set_mouse_px(h.app, hooks.orbit_point_px(h.app, 80))
+    h.step(10)
+    h.send("mouse1-up")
+    h.step(5)
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -132,6 +230,12 @@ SCENARIOS = {
     "porkchop_escape": ("sandbox", porkchop_escape),
     "quicksave_roundtrip": ("sandbox", quicksave_roundtrip),
     "zoom_with_target_node": ("sandbox", zoom_with_target_node),
+    "nudge_keys": ("sandbox", nudge_keys),
+    "orbit_menu_add_burn": ("sandbox", orbit_menu_add_burn),
+    "orbit_menu_warp_here": ("sandbox", orbit_menu_warp_here),
+    "click_body_targets": ("sandbox", click_body_targets),
+    "handle_drag_prograde": ("sandbox", handle_drag_prograde),
+    "node_drag_slides_time": ("sandbox", node_drag_slides_time),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
 }

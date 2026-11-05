@@ -68,7 +68,7 @@ controller `build_*` calls and `_update` an ordered list of `frame_*` calls. Con
 other objects call are public; a leading underscore means "internal to this controller". The behavior lives in
 **stateless controllers** in `render/controllers/` (`title_screen`, `solar_view`, `warp_controls`,
 `flight_input`, `quicksave`, `targeting`, `porkchop_modal`, `trajectory_view`, `maneuver_editor`,
-`bodies_view`, `vessel_view`, `readouts`). Each holds only `self.app`; **all state stays on
+`bodies_view`, `vessel_view`, `readouts`, `node_placement`, `node_handles`). Each holds only `self.app`; **all state stays on
 `OrbitApp`** (`self.app._node_epoch_s`, `self.app._target`, …). Cross-feature calls go through the
 owning controller (`self.app.maneuver_editor.current_node()`), never `self.app._current_node()`.
 
@@ -227,6 +227,24 @@ don't batch many changes into one late commit. Stage specific files by **explici
   The exact N-body job is submitted once the burn has been still `PREVIEW_SETTLE_S`, once per
   burn (`should_submit_exact`). Both lines rebuild from cached points on zoom; don't resubmit
   to rescale. Keep the live line cheap (1 orbit, 256 pts).
+- **Editing a burn: one state, three inputs.** The slider panel, the nudge keys (`node_edit.NUDGE_KEYS`)
+  and the 3D handles (`node_handles`) all write `app._dv` / `app._node_epoch_s` through
+  `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree. Clicking
+  your orbit opens `node_placement`'s "Add burn here / Warp to here" menu.
+- **Input gotchas:**
+  - Headless windows have no `mouseWatcherNode`. Read the mouse and keys only through
+    `flight_input.mouse_px` / `mouse1_held` / `mouse_over_gui` / `key_held`; the harness
+    patches them via `hooks.set_mouse_px` / `set_mouse1_held` / `set_key_held`.
+  - Panda3D names punctuation keys by the character (`","`, `"."`, `"["`), not `"comma"`.
+  - Modifiers prefix events (`shift-j`, `shift-j-up`), so a release can arrive under another
+    name. Held-key and drag state is re-checked each frame against the real button state.
+  - Every `accept()` changes the `events` field of every sandbox golden.
+  - The navball has its own display region, drawn over all 2D GUI; popups must keep clear of
+    it (`node_edit.menu_clear_of`).
+- **Burn radial sign (open issue):** `apply_maneuver`'s radial axis is `h_hat x v_hat`, which
+  points *toward* the central body, while SAS `RADIAL_OUT` is `v x h` (away). The planner and
+  `rtn_basis` use the same `h x v`, so burns are self-consistent; only the "radial in/out"
+  naming is inverted. Fixing it means flipping the sign in core and in stored burns.
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.

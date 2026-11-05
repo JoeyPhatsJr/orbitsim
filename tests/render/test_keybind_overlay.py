@@ -21,3 +21,30 @@ def test_every_binding_has_a_description():
     for k, desc in SANDBOX_BINDINGS + SOLAR_BINDINGS:
         assert isinstance(k, str) and k
         assert isinstance(desc, str) and desc
+
+
+def _accepted_literals():
+    import pathlib
+    import re
+    src = "".join(p.read_text() for p in pathlib.Path("orbitsim/render").rglob("*.py"))
+    return set(re.findall(r"accept\(\s*\"([^\"]+)\"", src))
+
+
+def test_nudge_keys_listed():
+    from orbitsim.render.node_edit import NUDGE_KEYS
+    keytext = " ".join(k for k, _ in SANDBOX_BINDINGS).lower()
+    assert all(k in keytext for k in NUDGE_KEYS)
+
+
+def test_nudge_keys_do_not_clash():
+    from orbitsim.render.node_edit import NUDGE_KEYS
+    assert not _accepted_literals() & (set(NUDGE_KEYS) | {f"{k}-up" for k in NUDGE_KEYS})
+
+
+def test_warp_keys_bound_by_their_panda_names():
+    # ',' / '.' were bound as "comma" / "period", which Panda3D never sends: the warp
+    # keys did nothing on a real keyboard.
+    from panda3d.core import KeyboardButton
+    names = {KeyboardButton.ascii_key(c).get_name() for c in ",."}
+    accepted = _accepted_literals()
+    assert names <= accepted and not {"comma", "period"} & accepted

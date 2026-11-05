@@ -55,6 +55,36 @@ def _node_setup(h):
     h.send("i")            # plan an intercept: node + closest approach + preview
 
 
+def _node_drag_setup(h):
+    """A burn added from the orbit menu, its prograde handle grabbed (plan 3)."""
+    _launch(h)
+    h.step(30)
+    for _ in range(600):                      # real pools sample the line asynchronously
+        if hooks.orbit_line_ready(h.app):
+            break
+        h.step(1)
+    hooks.set_mouse_px(h.app, hooks.orbit_point_px(h.app, 40))
+    h.step(1)
+    h.send("mouse1")
+    h.send("mouse1-up")
+    h.step(1)
+    h.press("Add burn here")
+    h.step(5)
+    start, node = hooks.handle_px(h.app, "pro+"), hooks.node_px(h.app)
+    length = ((start[0] - node[0]) ** 2 + (start[1] - node[1]) ** 2) ** 0.5
+    h._drag = (start, ((start[0] - node[0]) / length, (start[1] - node[1]) / length))
+    hooks.set_mouse_px(h.app, start)
+    h.step(1)
+    h.send("mouse1")
+
+
+def _node_drag_frame(h, i):
+    """Keep pulling the handle back and forth: the estimate redraws every frame."""
+    (sx, sy), (ux, uy) = h._drag
+    d = (i % 60) * 2.0
+    hooks.set_mouse_px(h.app, (sx + ux * d, sy + uy * d))
+
+
 def _solar_setup(h):
     h.press("OPEN SOLAR VIEWER")
 
@@ -68,6 +98,7 @@ WORKLOADS = {
     "node_planned": ("sandbox", _node_setup, _idle_frame),
     "zoom_node_planned": ("sandbox", _node_setup, _zoom_frame),
     "solar": ("solar", _solar_setup, _idle_frame),
+    "node_drag": ("sandbox", _node_drag_setup, _node_drag_frame),
 }
 
 

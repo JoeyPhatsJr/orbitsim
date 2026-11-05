@@ -18,6 +18,8 @@ from orbitsim.render.controllers.warp_controls import WarpControls
 from orbitsim.render.controllers.flight_input import FlightInput
 from orbitsim.render.controllers.quicksave import Quicksave
 from orbitsim.render.controllers.targeting import Targeting
+from orbitsim.render.controllers.node_placement import NodePlacement
+from orbitsim.render.controllers.node_handles import NodeHandles
 from orbitsim.render.controllers.porkchop_modal import PorkchopModal
 from orbitsim.render.controllers.trajectory_view import TrajectoryView
 from orbitsim.render.controllers.maneuver_editor import ManeuverEditor
@@ -63,6 +65,8 @@ class OrbitApp(ShowBase):
         self.trajectory_view = TrajectoryView(self)
         self.porkchop_modal = PorkchopModal(self)
         self.targeting = Targeting(self)
+        self.node_placement = NodePlacement(self)
+        self.node_handles = NodeHandles(self)
         self.quicksave = Quicksave(self)
         self.flight_input = FlightInput(self)
         self.warp_controls = WarpControls(self)
@@ -116,6 +120,8 @@ class OrbitApp(ShowBase):
         else:
             self.readouts.build_sandbox_controls()
             self.targeting.build_targeting()
+            self.node_placement.build_node_placement()
+            self.node_handles.build_node_handles()
             self.readouts.build_apsis_and_encounter_markers()
             self.bodies_view.build_moon_and_lagrange()
             self.bodies_view.build_sandbox_planets()
@@ -227,6 +233,8 @@ class OrbitApp(ShowBase):
 
         # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
         self.maneuver_editor.apply_jogs(real_dt)
+        self.maneuver_editor.apply_nudges(real_dt)
+        self.node_handles.apply_drag(real_dt)
 
         focus, scale = self._frame_origin()
         self.bodies_view.frame_moon_ring(scale)
@@ -244,6 +252,8 @@ class OrbitApp(ShowBase):
         self.bodies_view.update_starfield()
         self.rig.apply()
         self.readouts.update_marker_readability(focus)
+        self.node_handles.frame_handles()
+        self.node_placement.frame_hover()
 
         self.readouts.frame_readouts(target_pos, maneuver_dir)
         return task.cont

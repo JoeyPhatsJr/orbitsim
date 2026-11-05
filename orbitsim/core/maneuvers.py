@@ -87,6 +87,28 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
     )
 
 
+def rtn_basis(r: np.ndarray, v: np.ndarray) -> tuple:
+    """Burn frame at a point: (prograde v_hat, orbit-normal h_hat, radial axis r_hat).
+
+    The same formulas as apply_maneuver (r_hat = h_hat x v_hat, orthonormal -- not
+    r/|r|). Note: this radial axis points TOWARD the central body (SAS RADIAL_OUT is
+    v x h); a positive radial delta-V is a radial-in burn. Raises ValueError for zero velocity or zero angular momentum (a landed or
+    purely radial state), where the frame is undefined.
+    """
+    r = np.asarray(r, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    v_norm = np.linalg.norm(v)
+    if v_norm == 0.0:
+        raise ValueError("RTN basis undefined for zero velocity")
+    h = np.cross(r, v)
+    h_norm = np.linalg.norm(h)
+    if h_norm == 0.0:
+        raise ValueError("RTN basis undefined for zero angular momentum")
+    v_hat = v / v_norm
+    h_hat = h / h_norm
+    return v_hat, h_hat, np.cross(h_hat, v_hat)
+
+
 def maneuver_direction(state: StateVector, node: ManeuverNode) -> np.ndarray:
     """Inertial unit direction of a planned RTN burn (propagates to the node epoch first).
 

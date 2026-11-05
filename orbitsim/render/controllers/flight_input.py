@@ -32,8 +32,10 @@ class FlightInput:
         self.app.accept("arrow_right", lambda: self.app.rig.orbit(0.1, 0.0))
         self.app.accept("arrow_up", lambda: self.app.rig.orbit(0.0, 0.1))
         self.app.accept("arrow_down", lambda: self.app.rig.orbit(0.0, -0.1))
-        self.app.accept("period", self.app.warp_controls.warp_up_guarded)  # ">" key (blocked while thrusting)
-        self.app.accept("comma", self.app.clock.warp_down)  # "<" key
+        # Panda3D names punctuation keys by the character (KeyboardButton.ascii_key(".")
+        # is "."), not "period"/"comma" -- those never fired from a real keyboard.
+        self.app.accept(".", self.app.warp_controls.warp_up_guarded)  # warp up (blocked while thrusting)
+        self.app.accept(",", self.app.clock.warp_down)  # warp down
         self.app.accept("0", self.app.warp_controls.max_warp_guarded)
         self.app.accept("p", self.app.porkchop_modal.toggle_porkchop)  # porkchop delta-V plot
         self.app.accept("f1", self.app.keybind_overlay.toggle)  # keybind help overlay
@@ -45,7 +47,7 @@ class FlightInput:
                 self.app.accept(k, self._set_key, [k, True])
                 self.app.accept(f"{k}-up", self._set_key, [k, False])
             self.app._mouse1_down_px = None
-            self.app.accept("mouse1", self.app.targeting.on_mouse1_down)   # tap (no drag) picks a target
+            self.app.accept("mouse1", self.app.node_placement.on_mouse1_down)   # tap: body / orbit menu
             self.app.accept("z", self._throttle_full)
             self.app.accept("x", self._throttle_cut)
             self.app.accept("u", self.app.maneuver_editor.toggle_unlimited_dv)
@@ -56,8 +58,43 @@ class FlightInput:
             for i, mode in enumerate(sas_keys, start=1):
                 self.app.accept(str(i), self.set_sas, [mode])
             self.app.accept("i", self.app.targeting.plan_intercept)
+            # Burn nudges: tap for a step, hold to ramp (see render/node_edit.py).
+            from orbitsim.render.node_edit import NUDGE_KEYS
+            for key in NUDGE_KEYS:
+                self.app.accept(key, self.app.maneuver_editor.on_nudge_key, [key, True])
+                self.app.accept(f"{key}-up", self.app.maneuver_editor.on_nudge_key, [key, False])
             self.app.accept("f5", self.app.quicksave.save)
             self.app.accept("f9", self.app.quicksave.load)
+
+    def mouse_px(self):
+        """Mouse position in bottom-up pixels, or None if off-window / no mouse device."""
+        mw = getattr(self.app, "mouseWatcherNode", None)
+        if mw is None or not mw.has_mouse():
+            return None
+        w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
+        return ((mw.get_mouse_x() * 0.5 + 0.5) * w, (mw.get_mouse_y() * 0.5 + 0.5) * h)
+
+    def mouse_over_gui(self) -> bool:
+        """Whether the mouse is over a DirectGUI region (panels, buttons)."""
+        mw = getattr(self.app, "mouseWatcherNode", None)
+        return mw is not None and mw.get_over_region() is not None
+
+    def mouse1_held(self):
+        """Left button down per the device; None when there is no mouse device (headless)."""
+        mw = getattr(self.app, "mouseWatcherNode", None)
+        if mw is None:
+            return None
+        from panda3d.core import MouseButton
+        return bool(mw.is_button_down(MouseButton.one()))
+
+    def key_held(self, key: str):
+        """Whether the keyboard reports ``key`` down; None when there's no input
+        device to ask (headless/offscreen), so callers keep their own state."""
+        watcher = getattr(self.app, "mouseWatcherNode", None)
+        if watcher is None:
+            return None
+        from panda3d.core import KeyboardButton
+        return bool(watcher.is_button_down(KeyboardButton.ascii_key(key)))
 
     def _toggle_ship_view(self) -> None:
         """Snap the camera between remembered map and ship-view distances ('m')."""
@@ -82,6 +119,9 @@ class FlightInput:
         """Close the topmost transient surface before opening settings."""
         if self.app.operation.status.running:
             self.app.trajectory_view.cancel_operation()
+            return
+        if self.app.node_placement.menu_open():
+            self.app.node_placement.close_menu()
             return
         if getattr(self.app.keybind_overlay, "visible", False):
             self.app.keybind_overlay.hide()

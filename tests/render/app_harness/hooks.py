@@ -46,3 +46,87 @@ def preview_start_error_m(app) -> float:
         return float("inf")
     start = apply_maneuver(app.world.vessels[0].state, app.maneuver_editor.current_node()).r
     return float(np.linalg.norm(np.asarray(points[0]) - start))
+
+
+def set_key_held(app, key: str, held) -> None:
+    """Override what the keyboard reports for ``key`` (headless has no device);
+    held=None removes the override."""
+    overrides = app.__dict__.setdefault("_test_key_held", {})
+    if held is None:
+        overrides.pop(key, None)
+    else:
+        overrides[key] = held
+    real = type(app.flight_input).key_held
+    fi = app.flight_input
+    fi.key_held = lambda k, _o=overrides, _fi=fi: _o[k] if k in _o else real(_fi, k)
+
+
+def node_state(app) -> tuple:
+    """(node epoch or None, dV prograde, normal, radial) of the planned burn."""
+    return (app._node_epoch_s, app._dv["pro"], app._dv["nrm"], app._dv["rad"])
+
+
+def set_mouse_px(app, px) -> None:
+    """Put the (headless) mouse at bottom-up pixel ``px``; None = off-window."""
+    app.flight_input.mouse_px = lambda: px
+
+
+def orbit_point_epoch(app, i: int) -> float:
+    """Epoch of live-line sample ``i``."""
+    return float(app._traj_epoch_cache[0][i])
+
+
+def orbit_point_px(app, i: int):
+    """Pixel position of live-line sample ``i``."""
+    return app.targeting.marker_px(app._traj_world_cache[0][i])
+
+
+def first_sample_after(app, lead_s: float) -> int:
+    """First live-line sample at least ``lead_s`` ahead of now."""
+    epochs = app._traj_epoch_cache[0]
+    now = app.clock.sim_time_s
+    return next(i for i, e in enumerate(epochs) if e >= now + lead_s)
+
+
+def body_px(app, name: str):
+    """Pixel position of the named navigation target's marker."""
+    target = next(t for t in app._targets if t.name == name)
+    return app.targeting.marker_px(target.state_at(app.clock.sim_time_s).r)
+
+
+def orbit_menu_labels(app):
+    """Item labels of the open orbit menu, or None when closed."""
+    if getattr(app, "_orbit_menu", None) is None:
+        return None
+    return list(app._orbit_menu_labels)
+
+
+def settings_visible(app) -> bool:
+    return not app.settings_panel._frame.is_hidden()
+
+
+def node_px(app):
+    """Pixel position of the burn node marker, or None when there are no handles."""
+    return getattr(app, "_node_px", None)
+
+
+def handle_px(app, kind: str):
+    return app._handle_px.get(kind)
+
+
+def set_mouse1_held(app, held) -> None:
+    """Override what the mouse device reports for the left button; None restores it."""
+    if held is None:
+        vars(app.flight_input).pop("mouse1_held", None)
+    else:
+        app.flight_input.mouse1_held = lambda: held
+
+
+def dragging(app):
+    return app.node_handles.dragging()
+
+
+def orbit_line_ready(app) -> bool:
+    """Whether the live orbit line has been sampled (real pools compute it async)."""
+    cache = getattr(app, "_traj_world_cache", None)
+    return bool(cache) and cache[0] is not None

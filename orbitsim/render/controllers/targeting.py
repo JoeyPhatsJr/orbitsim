@@ -70,18 +70,6 @@ class Targeting:
         self.app._target_label.hide()
         self.app._target_label_position = None
 
-    def on_mouse1_down(self):
-        mw = self.app.mouseWatcherNode
-        self.app._mouse1_down_px = self._mouse_px() if (mw and mw.has_mouse()) else None
-
-    def _mouse_px(self):
-        """Current mouse position in pixels, or None if off-window."""
-        mw = self.app.mouseWatcherNode
-        if mw is None or not mw.has_mouse():
-            return None
-        w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
-        return ((mw.get_mouse_x() * 0.5 + 0.5) * w, (mw.get_mouse_y() * 0.5 + 0.5) * h)
-
     def marker_px(self, world_r):
         """Project an inertial position to pixels, or None if behind the camera/off-lens."""
         from panda3d.core import Point2
@@ -93,36 +81,42 @@ class Targeting:
         w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
         return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
 
-    def try_pick_target(self):
-        """On a left-click tap, select a body or coast to a future trajectory point."""
-        from orbitsim.render.picking import nearest_future_point, nearest_marker
-        down = getattr(self.app, "_mouse1_down_px", None)
-        self.app._mouse1_down_px = None
-        if down is None:
-            return
-        click = self._mouse_px()
-        if click is None:
-            return
-        if abs(click[0] - down[0]) > 6.0 or abs(click[1] - down[1]) > 6.0:
-            return  # was a drag, not a tap
+    def project_px(self, points_m):
+        """Geocentric positions [m], shape (N, 3), to bottom-up pixels (N, 2); NaN rows
+        are behind the camera. One matrix pass (matches marker_px to ~3e-5 px)."""
+        from orbitsim.render.picking import project_points_px
+        pts = (np.asarray(points_m, dtype=np.float64) - self.app.transform.origin_m) \
+            / self.app.transform.scale_m_per_unit
+
+        def m(lm):
+            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
+        render_to_clip = m(self.app.render.get_mat(self.app.cam)) @ m(
+            self.app.camLens.get_projection_mat())
+        return project_points_px(pts, render_to_clip,
+                                 self.app.win.get_x_size(), self.app.win.get_y_size())
+
+    def pick_body_at(self, click_px) -> bool:
+        """Target the body under ``click_px`` (22 px), as a tap on its marker; True on a hit."""
+        from orbitsim.render.picking import nearest_marker
         now = self.app.clock.sim_time_s
         proj = [self.marker_px(t.state_at(now).r) for t in self.app._targets]
         idxs = [i for i, p in enumerate(proj) if p is not None]
-        hit = nearest_marker(click, [proj[i] for i in idxs], tol_px=22.0)
-        if hit is not None:
-            self.clear_target()   # tear down any prior target's CA markers before switching
-            self.app._target = self.app._targets[idxs[hit]]
-            return
+        hit = nearest_marker(click_px, [proj[i] for i in idxs], tol_px=22.0)
+        if hit is None:
+            return False
+        self.clear_target()   # tear down any prior target's CA markers before switching
+        self.app._target = self.app._targets[idxs[hit]]
+        return True
 
-        points = self.app._traj_world_cache[0] if self.app._traj_world_cache else None
-        epochs = self.app._traj_epoch_cache[0] if self.app._traj_epoch_cache else None
-        if points is None or epochs is None or self.app.world.any_thrusting():
-            return
-        trajectory_px = [self.marker_px(point) for point in points]
-        point_idx = nearest_future_point(click, trajectory_px, epochs, now, tol_px=16.0)
-        if point_idx is None:
-            return
-        duration_s = float(epochs[point_idx] - now)
+    def coast_to(self, epoch_s: float) -> bool:
+        """Coast (time-skip with rollback) to ``epoch_s`` along the trajectory."""
+        if self.app.world.any_thrusting():
+            self.app._flash_message("Cut throttle before warping")
+            return False
+        duration_s = float(epoch_s - self.app.clock.sim_time_s)
+        if duration_s <= 0.0:
+            self.app._flash_message("That point has passed")
+            return False
         vessel = self.app.world.vessels[0]
         self.app.clock.warp = 1.0
         self.app._operation_rollback = (
@@ -133,6 +127,7 @@ class Targeting:
             self.app.trajectory_view.trajectory_coast_operation(duration_s),
         )
         self.app.operation_overlay.update(self.app.operation.status)
+        return True
 
     def plan_intercept(self):
         """Auto-plan an intercept/departure of the current target.

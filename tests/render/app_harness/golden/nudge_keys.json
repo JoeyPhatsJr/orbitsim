@@ -1,0 +1,246 @@
+{
+ "events": [
+  "'",
+  "'-up",
+  ",",
+  ".",
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  ";",
+  ";-up",
+  "[",
+  "[-up",
+  "]",
+  "]-up",
+  "a",
+  "a-up",
+  "adjust-pg*",
+  "adjust-pg*",
+  "adjust-pg*",
+  "adjust-pg*",
+  "arrow_down",
+  "arrow_left",
+  "arrow_right",
+  "arrow_up",
+  "async_loader_0",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "click-mouse1-pg*",
+  "control",
+  "control-up",
+  "d",
+  "d-up",
+  "e",
+  "e-up",
+  "escape",
+  "f1",
+  "f5",
+  "f9",
+  "h",
+  "h-up",
+  "i",
+  "j",
+  "j-up",
+  "k",
+  "k-up",
+  "l",
+  "l-up",
+  "m",
+  "mouse1",
+  "mouse1-up",
+  "mouse3",
+  "mouse3-up",
+  "p",
+  "q",
+  "q-up",
+  "render-texture-targets-changed",
+  "s",
+  "s-up",
+  "shift",
+  "shift-up",
+  "t",
+  "u",
+  "w",
+  "w-up",
+  "wheel_down",
+  "wheel_up",
+  "window-event",
+  "x",
+  "z"
+ ],
+ "rig": {
+  "azimuth": -1.261633917829836,
+  "distance_m": 88432714.28571446,
+  "elevation": -1.3595397369784044
+ },
+ "sim_time_s": 22.34999999999983,
+ "target": null,
+ "texts": [
+  "+1",
+  "+1",
+  "+13",
+  "Altitude: 500.3 km",
+  "Apoapsis: 2,465.2 km",
+  "Fuel: 100%  (8,000 kg)",
+  "Inclination: 8.1\u00b0",
+  "MANEUVER",
+  "Maneuver dV: 13.2 m/s   (dV left 5,633 m/s)",
+  "Mass: 10,000 kg",
+  "NODE T-01:49  /  13 m/s",
+  "Node T",
+  "Node in T-01:48   dV 13.2 m/s",
+  "Normal",
+  "ORBIT",
+  "Periapsis: 500.0 km",
+  "Period: 115.6 min",
+  "Prograde",
+  "Radial",
+  "SAS: OFF    HDG 082\u00b0   PIT +00\u00b0",
+  "Sim time: 22 s past J2000",
+  "Speed: 8.074 km/s",
+  "T+ 0.0 DAYS     WARP  x1",
+  "T+1.8m",
+  "Throttle: 0%",
+  "Thrust: 50.0 kN   TWR: 0.59",
+  "Total dV: 13.2 m/s",
+  "VESSEL",
+  "dV left: 5,633 m/s"
+ ],
+ "vessel": {
+  "fuel_mass_kg": 8000.0,
+  "nodes": [
+   "ManeuverNode(epoch_s=131.0, dv_prograde_mps=1.0, dv_normal_mps=13.1, dv_radial_mps=1.0)"
+  ],
+  "orientation": [
+   1.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "r": [
+   6875995.759209685,
+   178631.21928689905,
+   25518.745628958837
+  ],
+  "sas_mode": "OFF",
+  "throttle": 0.0,
+  "v": [
+   -188.28565971215343,
+   7990.814363662109,
+   1141.5449106053638
+  ]
+ },
+ "warp": 1.0,
+ "world_labels": [
+  [
+   "AP",
+   false
+  ],
+  [
+   "CA: SHIP",
+   true
+  ],
+  [
+   "CA: TARGET",
+   true
+  ],
+  [
+   "Jupiter",
+   false
+  ],
+  [
+   "L1",
+   true
+  ],
+  [
+   "L2",
+   true
+  ],
+  [
+   "L3",
+   true
+  ],
+  [
+   "L4",
+   true
+  ],
+  [
+   "L5",
+   true
+  ],
+  [
+   "Mars",
+   false
+  ],
+  [
+   "Mercury",
+   false
+  ],
+  [
+   "Neptune",
+   false
+  ],
+  [
+   "PE",
+   false
+  ],
+  [
+   "Saturn",
+   false
+  ],
+  [
+   "Sun",
+   false
+  ],
+  [
+   "TARGET",
+   true
+  ],
+  [
+   "Uranus",
+   false
+  ],
+  [
+   "Venus",
+   false
+  ],
+  [
+   "dV 13 m/s  T-01:48",
+   false
+  ]
+ ]
+}

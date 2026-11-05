@@ -202,3 +202,29 @@ def test_time_to_apsis_is_zero_on_the_apsis_for_any_geometry():
         apo = elements_to_state(KeplerianElements(nu=np.pi, **kw))
         assert time_to_periapsis(peri) < 1e-3, kw
         assert time_to_apoapsis(apo) < 1e-3, kw
+
+
+# --- The burn frame at a point (plan 3: drag handles) ---
+def test_rtn_basis_circular_equatorial():
+    # NOTE (plan 3, found while planning handles): apply_maneuver's radial axis is
+    # h_hat x v_hat, which points TOWARD the central body (-x here), while SAS
+    # RADIAL_OUT (core/attitude.py) is v x h, away from it. rtn_basis mirrors
+    # apply_maneuver so handles sit where the burn really pushes; the sign convention
+    # is flagged to the user to decide (fixing it changes stored burns).
+    from orbitsim.core.maneuvers import rtn_basis
+    pro, nrm, rad = rtn_basis(np.array([7e6, 0, 0]), np.array([0, 7.5e3, 0]))
+    np.testing.assert_allclose([pro, nrm, rad], [[0, 1, 0], [0, 0, 1], [-1, 0, 0]], atol=1e-15)
+
+
+def test_rtn_basis_matches_apply_maneuver():
+    from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver, rtn_basis
+    s = _periapsis_state()
+    for dv, i in (((10.0, 0, 0), 0), ((0, 10.0, 0), 1), ((0, 0, 10.0), 2)):
+        after = apply_maneuver(s, ManeuverNode(s.epoch_s, *dv))
+        np.testing.assert_allclose(after.v - s.v, 10.0 * rtn_basis(s.r, s.v)[i], atol=1e-9)
+
+
+def test_rtn_basis_raises_on_zero_velocity():
+    from orbitsim.core.maneuvers import rtn_basis
+    with pytest.raises(ValueError):
+        rtn_basis(np.array([7e6, 0, 0]), np.zeros(3))

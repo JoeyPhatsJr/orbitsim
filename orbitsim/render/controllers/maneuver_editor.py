@@ -9,6 +9,9 @@ from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
 from orbitsim.render.geometry import make_uv_sphere
 from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.line_style import ESTIMATE_STYLE, PLAN_STYLE
+from orbitsim.render.node_edit import (
+    NUDGE_DV, NUDGE_KEYS, NUDGE_TIME, jog_rate, nudge_rate, snap_dv, snap_epoch,
+)
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
     kepler_estimate_points, localize_polyline, maneuver_preview_key, preview_start_drifted,
@@ -42,6 +45,7 @@ class ManeuverEditor:
         mouse springs the thumb back to center and the value stops changing.
         """
         self.app._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
+        self.app._nudge_held = {}          # nudge key -> seconds held
         self.app._dv_line = self.app._node_line = self.app._target_line = self.app._encounter_line = ""
         self.app._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self.app._auto_execute_node = False
@@ -148,15 +152,13 @@ class ManeuverEditor:
         Zero at center, ``JOG_MAX_RATE_MPS`` at full deflection, exponential in between
         so small displacements give fine control and large ones change quickly.
         """
-        mag = abs(value)
-        if mag <= self.JOG_DEADZONE:
-            return 0.0
-        shaped = (np.exp(self.JOG_CURVE * mag) - 1.0) / (np.exp(self.JOG_CURVE) - 1.0)
-        return float(np.copysign(self.JOG_MAX_RATE_MPS * shaped, value))
+        return jog_rate(value, self.JOG_MAX_RATE_MPS, self.JOG_CURVE, self.JOG_DEADZONE)
 
     def apply_jogs(self, real_dt_s: float) -> None:
         """Integrate each jog slider's rate into its delta-V component for this frame."""
         changed = False
+        if not self.burn_editable(flash=False):
+            return
         for axis, slider in self.app._jog.items():
             rate = self._jog_rate_mps_per_s(slider["value"])
             if rate != 0.0:
@@ -174,21 +176,101 @@ class ManeuverEditor:
                 now = self.app.clock.sim_time_s
                 base = self.app._node_epoch_s if self.app._node_epoch_s is not None else now
                 self.app._node_epoch_s = max(now, base + rate * real_dt_s)
-                ttn = self.app._node_epoch_s - now
-                if ttn < 60:
-                    self.app._node_time_text.setText(f"T+{ttn:.0f}s")
-                elif ttn < 3600:
-                    self.app._node_time_text.setText(f"T+{ttn/60:.1f}m")
-                elif ttn < 86400:
-                    self.app._node_time_text.setText(f"T+{ttn/3600:.1f}h")
-                else:
-                    self.app._node_time_text.setText(f"T+{ttn/86400:.1f}d")
+                self.app._node_time_text.setText(self._fmt_node_t(self.app._node_epoch_s - now))
+
+    @staticmethod
+    def _fmt_node_t(ttn: float) -> str:
+        """Node lead time for the panel's time readout (T+42s / T+3.5m / T+1.2h / T+2.0d)."""
+        if ttn < 60:
+            return f"T+{ttn:.0f}s"
+        if ttn < 3600:
+            return f"T+{ttn/60:.1f}m"
+        if ttn < 86400:
+            return f"T+{ttn/3600:.1f}h"
+        return f"T+{ttn/86400:.1f}d"
+
+    # --- Burn editing API shared by the slider panel, nudge keys and (later) handles ---
+
+    def set_dv(self, axis: str, value_mps: float) -> None:
+        """Set one delta-V component ('pro'/'nrm'/'rad') of the planned burn [m/s]."""
+        self.app._dv[axis] = value_mps
+        self.app._dv_value_text[axis].setText(f"{value_mps:+.0f}")
+        self.refresh_readout()
+
+    def burn_editable(self, flash: bool = True) -> bool:
+        """Whether a burn can be planned now: not while landed / at zero velocity (the
+        burn frame and the node propagation are undefined there -- they crashed)."""
+        v0 = self.app.world.vessels[0]
+        ok = v0.landed_on is None and bool(np.any(v0.state.v))
+        if not ok and flash:
+            self.app._flash_message("Can't plan a burn while landed")
+        return ok
+
+    def place_node(self, epoch_s: float) -> None:
+        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept."""
+        if not self.burn_editable():
+            return
+        self.app._auto_execute_node = False
+        self.set_node_epoch(snap_epoch(epoch_s))
+
+    def set_node_epoch(self, epoch_s: float) -> None:
+        """Schedule the burn at ``epoch_s`` (never in the past)."""
+        now = self.app.clock.sim_time_s
+        self.app._node_epoch_s = max(now, float(epoch_s))
+        if hasattr(self.app, "_node_time_text"):
+            self.app._node_time_text.setText(self._fmt_node_t(self.app._node_epoch_s - now))
+
+    def _nudge(self, axis: str, delta: float) -> None:
+        if axis == "time":
+            base = self.app._node_epoch_s
+            if base is None:
+                base = self.app.clock.sim_time_s
+            self.set_node_epoch(base + delta)
+        else:
+            self.set_dv(axis, self.app._dv[axis] + delta)
+
+    def on_nudge_key(self, key: str, down: bool) -> None:
+        """Key down: apply the tap and start the hold ramp. Key up: stop and snap the axis."""
+        axis, sign = NUDGE_KEYS[key]
+        spec = NUDGE_TIME if axis == "time" else NUDGE_DV
+        if down:
+            if not self.burn_editable():
+                return
+            self._nudge(axis, sign * spec.tap)
+            self.app._nudge_held[key] = 0.0
+            return
+        if self.app._nudge_held.pop(key, None) is None:
+            return
+        self._snap_axis(axis)
+
+    def _snap_axis(self, axis: str) -> None:
+        if axis == "time":
+            if self.app._node_epoch_s is not None:
+                self.set_node_epoch(snap_epoch(self.app._node_epoch_s))
+        else:
+            self.set_dv(axis, snap_dv(self.app._dv[axis]))
+
+    def apply_nudges(self, real_dt: float) -> None:
+        """Ramp every held nudge key; drop keys the input device says aren't held
+        (a modifier pressed mid-hold turns the release into e.g. 'shift-j-up')."""
+        for key in list(self.app._nudge_held):
+            axis, sign = NUDGE_KEYS[key]
+            if self.app.flight_input.key_held(key) is False or not self.burn_editable(False):
+                del self.app._nudge_held[key]
+                self._snap_axis(axis)
+                continue
+            held = self.app._nudge_held[key] + real_dt
+            self.app._nudge_held[key] = held
+            spec = NUDGE_TIME if axis == "time" else NUDGE_DV
+            rate = nudge_rate(held, spec)
+            if rate:
+                self._nudge(axis, sign * rate * real_dt)
 
     def _release_jogs(self) -> None:
         """Spring all jog thumbs back to center so the value stops changing on release.
 
-        Also attempt a target pick: a left-click that didn't drag is a tap on a body."""
-        self.app.targeting.try_pick_target()
+        Also resolve a tap: a body (target it) or your orbit (the Add/Warp menu)."""
+        self.app.node_placement.on_mouse1_up()
         for slider in self.app._jog.values():
             slider["value"] = 0.0
         if hasattr(self.app, "_node_time_jog"):
@@ -508,7 +590,6 @@ class ManeuverEditor:
                 self.app._node_marker_np.reparent_to(self.app.render)
                 self.app._node_marker_np.set_color(0.3, 1.0, 1.0, 1.0)
                 self.app._node_marker_np.set_light_off()
-                self.app._node_marker_np.set_scale(6.0)
             self.app._node_marker_np.set_pos(mx, my, mz)
             if self.app._node_dv_label is None:
                 from orbitsim.render.world_labels import build_world_label
