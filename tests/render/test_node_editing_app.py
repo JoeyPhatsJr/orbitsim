@@ -209,3 +209,38 @@ print("RESULT", hooks.node_px(app))
 app.destroy()
 """)
     assert node is None
+
+
+# --- Drag the node along the orbit (plan 3, Task 4) ---
+SLIDE = PRELUDE + r"""
+click(hooks.orbit_point_px(app, 40)); h.press("Add burn here")
+h.send("j"); h.send("j-up"); h.step(5)                 # +1 m/s prograde
+def slide_to(i):
+    hooks.set_mouse_px(app, hooks.node_px(app)); h.step(1); h.send("mouse1")
+    target = hooks.orbit_point_px(app, i)
+    hooks.set_mouse_px(app, target); h.step(10)
+    h.send("mouse1-up"); h.step(5)
+"""
+
+
+def test_dragging_node_slides_its_time():
+    state, epoch80 = _run(SLIDE + r"""
+epoch80 = hooks.orbit_point_epoch(app, 80)
+slide_to(80)
+print("RESULT", [hooks.node_state(app), epoch80])
+app.destroy()
+""")
+    epoch, pro, nrm, rad = state
+    assert abs(epoch - epoch80) <= 60.0 and epoch == float(int(epoch))
+    assert (pro, nrm, rad) == (1.0, 0.0, 0.0)
+
+
+def test_node_drag_stays_on_current_orbit():
+    state, now, period = _run(SLIDE + r"""
+from orbitsim.core.elements import state_to_elements
+slide_to(250)                                          # second loop: past one period
+period = float(state_to_elements(app.world.vessels[0].state).period_s)
+print("RESULT", [hooks.node_state(app), app.clock.sim_time_s, period])
+app.destroy()
+""")
+    assert now + 10.0 <= state[0] <= now + period

@@ -202,6 +202,24 @@ def handle_drag_prograde(h):
     h.step(30)
 
 
+def node_drag_slides_time(h):
+    """Add a burn, nudge +1 m/s, then drag the node along the orbit (plan 3)."""
+    _launch_sandbox(h)
+    h.step(30)
+    _click(h, hooks.orbit_point_px(h.app, 40))
+    h.press("Add burn here")
+    h.send("j")
+    h.send("j-up")
+    h.step(5)
+    hooks.set_mouse_px(h.app, hooks.node_px(h.app))
+    h.step(1)
+    h.send("mouse1")
+    hooks.set_mouse_px(h.app, hooks.orbit_point_px(h.app, 80))
+    h.step(10)
+    h.send("mouse1-up")
+    h.step(5)
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -217,6 +235,7 @@ SCENARIOS = {
     "orbit_menu_warp_here": ("sandbox", orbit_menu_warp_here),
     "click_body_targets": ("sandbox", click_body_targets),
     "handle_drag_prograde": ("sandbox", handle_drag_prograde),
+    "node_drag_slides_time": ("sandbox", node_drag_slides_time),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
 }

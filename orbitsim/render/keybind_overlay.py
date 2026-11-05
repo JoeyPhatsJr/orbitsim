@@ -20,6 +20,7 @@ SANDBOX_BINDINGS = [
     ("I", "Plan intercept to target"),
     ("Click orbit", "Add burn / warp to here"),
     ("Drag handles", "Shape the burn"),
+    ("Drag node", "Slide the burn along the orbit"),
     ("H / J", "Burn retrograde / prograde"),
     ("K / L", "Burn anti-normal / normal"),
     ("; / '", "Burn radial in / out"),

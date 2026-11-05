@@ -1,10 +1,12 @@
 """3D drag handles on the burn node: prograde/normal/radial delta-V (and, in Task 4,
 dragging the node itself along the orbit)."""
 
+import math
+
 from orbitsim.render.node_edit import (
     DRAG_MAX_RATE_MPS, HANDLE_HIT_PX, HANDLE_OFFSET_PX, HANDLE_RADIUS_PX, HANDLES,
     MAX_DRAG_PX, MIN_AXIS_PX, NODE_HIT_PX, NODE_RADIUS_PX, HandleDrag, axis_unit_px,
-    handle_drag_value, jog_rate, screen_constant_scale, snap_dv,
+    handle_drag_value, jog_rate, screen_constant_scale, snap_dv, snap_epoch,
 )
 
 
@@ -122,7 +124,11 @@ class NodeHandles:
     def end_drag(self) -> None:
         drag = getattr(self.app, "_drag", None)
         self.app._drag = None
-        if drag is None or drag.kind == "node":
+        if drag is None:
+            return
+        if drag.kind == "node":
+            if self.app._node_epoch_s is not None:
+                self.app.maneuver_editor.set_node_epoch(snap_epoch(self.app._node_epoch_s))
             return
         axis = dict((k, a) for k, a, _s, _c in HANDLES)[drag.kind]
         self.app.maneuver_editor.set_dv(axis, snap_dv(self.app._dv[axis]))
@@ -142,7 +148,16 @@ class NodeHandles:
         if self.app.flight_input.mouse1_held() is False:
             self.end_drag()                  # released over a panel / outside the window
             return
-        if self.app.flight_input.mouse_px() is None or drag.kind == "node":
+        mouse = self.app.flight_input.mouse_px()
+        if mouse is None:
+            return
+        if drag.kind == "node":
+            # Slide the burn along the orbit under the mouse, clamped to the current
+            # orbit's window (never under MIN_NODE_LEAD_S, never past one orbit).
+            placement = self.app.node_placement
+            hit = placement.orbit_pick_at(mouse, math.inf, window=placement.node_window())
+            if hit is not None:
+                self.app.maneuver_editor.set_node_epoch(hit[0])
             return
         kind = dict((k, (a, s)) for k, a, s, _c in HANDLES)
         axis, sign = kind[drag.kind]
