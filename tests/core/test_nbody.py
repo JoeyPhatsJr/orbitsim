@@ -383,8 +383,8 @@ def test_max_safe_warp_caps_low_orbits_below_high_orbits():
     high = StateVector(r=np.array([1.5e8, 0.0, 0.0]),
                        v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
                        mu=MU_EARTH, epoch_s=0.0)
-    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_substeps=20)
-    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_substeps=20)
+    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_evals=60)
+    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_evals=60)
     assert w_low in WARP_STEPS and w_high in WARP_STEPS
     assert w_high > w_low                      # slower/farther orbit allows faster warp
     assert w_low >= 1.0                         # never below the floor
@@ -393,12 +393,78 @@ def test_max_safe_warp_caps_low_orbits_below_high_orbits():
 def test_max_safe_warp_respects_substep_budget():
     leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
                       v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
-    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
+    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_evals=200)
     n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
-    assert n <= 200
+    assert n * nb.EVALS_PER_STEP <= 200
 
 
-def test_solar_max_warp_reaches_one_hundred_million_in_deep_space():
+def test_flight_step_is_one_hundredth_of_the_periapsis_timescale():
+    # SUBSTEP_DIVISOR is 100 and the cap functions' divisor *defaults* (bound when the
+    # module loads) must carry it — patching the module constant at runtime would not.
+    st = _geocentric_leo()
+    t_circ = 2.0 * np.pi * np.sqrt(7.0e6**3 / MU_EARTH)
+    assert nb.SUBSTEP_DIVISOR == 100.0
+    assert nb._solar_cap_s(st.r, st.v, 0.0, 6.0 * 3600.0) == pytest.approx(t_circ / 100.0, rel=1e-9)
+    assert nb._earth_moon_cap_s(st.r, st.v, 0.0, 3600.0) == pytest.approx(t_circ / 100.0, rel=1e-9)
+
+
+def test_warp_budget_counts_gravity_evaluations():
+    # A frame at the returned max warp must cost at most 200 gravity evaluations: a
+    # coast step is EVALS_PER_STEP evaluations, not one. Circular geocentric orbits
+    # from LEO out to cislunar distance sweep every step-count regime.
+    from orbitsim.sim.clock import SimClock
+
+    for r in np.geomspace(6.6e6, 3.0e8, 40):
+        st = StateVector(r=np.array([r, 0.0, 0.0]),
+                         v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                         mu=MU_EARTH, epoch_s=0.0)
+        w = nb.max_safe_warp_solar(st, 0.0, SimClock.WARP_STEPS)
+        evals = nb._solar_system_substeps(st, w / 60.0, 6.0 * 3600.0) * nb.EVALS_PER_STEP
+        assert evals <= 200 or w == SimClock.WARP_STEPS[0], (r, w, evals)
+        w = nb.max_safe_warp(st, 0.0, SimClock.WARP_STEPS)
+        evals = nb._earth_moon_substeps(st, w / 60.0, 3600.0) * nb.EVALS_PER_STEP
+        assert evals <= 200 or w == SimClock.WARP_STEPS[0], (r, w, evals)
+
+
+# Post-burn state of the app's "I" Moon intercept and its converged closest approach,
+# copied from tests/render/test_preview_accuracy.py (PINNED / REF_PERIAPSIS_RADIUS_M) so
+# the core tests stay free of render imports.
+_MOON_TRANSFER = StateVector(
+    r=np.array([-8739999.637530766, -1247379.9275047905, -178197.13320472895]),
+    v=np.array([1496.0148216363118, -9205.571968293121, -1324.9368000308782]),
+    mu=398600400000000.0, epoch_s=3669.367180937791)
+_MOON_TRANSFER_CA_M = 45_670.0e3
+
+
+def _flown_moon_closest_approach_m(chunk_s):
+    """Fly the transfer with the flight propagator in fixed chunks (frames at warp);
+    closest approach to the Moon sampled at chunk ends."""
+    total_s = 296.6 * 3600.0 - _MOON_TRANSFER.epoch_s + 3.0 * 3600.0
+    cur, best = _MOON_TRANSFER, np.inf
+    with nb.stable_prediction_ephemeris():
+        for _ in range(int(total_s // chunk_s)):
+            cur = nb.propagate_solar_system(cur, chunk_s)
+            best = min(best, float(np.linalg.norm(cur.r - moon_state_at(cur.epoch_s).r)))
+    return best
+
+
+def test_flown_moon_transfer_matches_converged_truth():
+    import pytest
+
+    nb.refresh_ephemeris_cache(_MOON_TRANSFER.epoch_s)
+    if not nb.ephemeris_available():
+        pytest.skip("DE440 ephemeris not available offline")
+    coarse = _flown_moon_closest_approach_m(3600.0)
+    fine = _flown_moon_closest_approach_m(60.0)
+    for ca in (coarse, fine):
+        assert abs(ca - _MOON_TRANSFER_CA_M) <= 91.0e3, f"Moon CA {ca / 1e3:,.0f} km"
+    assert abs(coarse - fine) <= 50.0e3
+
+
+def test_solar_max_warp_reaches_ten_million_in_deep_space():
+    # In deep space the 6 h max step binds, not the divisor: at 100,000,000x a frame is
+    # 78 steps = 234 gravity evaluations (> 200), so the evaluation budget stops one
+    # level lower than the old step budget did (flight-accuracy plan, Task 2 warp report).
     from orbitsim.sim.clock import SimClock
 
     state = StateVector(
@@ -406,7 +472,7 @@ def test_solar_max_warp_reaches_one_hundred_million_in_deep_space():
         v=np.array([0.0, 3.0e4, 0.0]),
         mu=MU_EARTH,
     )
-    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 100_000_000
+    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 10_000_000
 
 
 def test_solar_max_warp_is_capped_near_earth():

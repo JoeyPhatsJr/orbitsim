@@ -91,7 +91,13 @@ def earth_moon_accel(r_m, t_s):
 # flight is over (sim/world.py clamps to the surface), so resolving deeper
 # is pointless. MAX_SUBSTEPS_PER_CALL is a safety bound (not a target) so a
 # pathological state can never hang the caller.
-SUBSTEP_DIVISOR = 200.0
+#
+# 100 with the 4th-order (Yoshida) step: on the pinned Moon transfer this flies
+# within ~25 km of the converged closest approach (Verlet at 200 missed by
+# ~2,500 km). NOTE: _timescale_cap_s / _solar_cap_s bind this value as a default
+# argument when the module loads — patching the constant at runtime changes nothing;
+# patch their __defaults__ (or pass divisor=) instead.
+SUBSTEP_DIVISOR = 100.0
 MAX_SUBSTEPS_PER_CALL = 100_000
 _MIN_SUBSTEP_S = 1e-6      # floor so a zero cap (r exactly at a body) can't stall
 
@@ -642,10 +648,12 @@ def osculating_elements_solar(state, t_s):
     return state_to_elements(rel)
 
 
-def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
-    """Largest warp whose per-frame integration stays within budget_substeps (solar system)."""
+def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
+    """Largest warp whose per-frame integration stays within budget_evals gravity
+    evaluations (solar system; a coast step costs EVALS_PER_STEP)."""
     allowed = [w for w in warp_steps
-               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) <= budget_substeps]
+               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) * EVALS_PER_STEP
+               <= budget_evals]
     return max(allowed) if allowed else min(warp_steps)
 
 
@@ -744,9 +752,11 @@ def earth_fixed_lagrange_points(t_s):
     }
 
 
-def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
-    """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
-    sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
+def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
+    """Largest warp in warp_steps whose frame integrates within budget_evals gravity
+    evaluations (EVALS_PER_STEP per coast step) at the current proximity (so
+    time-warp stays accurate and affordable near bodies)."""
     allowed = [w for w in warp_steps
-               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) * EVALS_PER_STEP
+               <= budget_evals]
     return max(allowed) if allowed else min(warp_steps)
