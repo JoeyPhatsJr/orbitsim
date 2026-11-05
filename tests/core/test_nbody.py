@@ -110,6 +110,78 @@ def test_propagation_is_reversible():
     assert np.linalg.norm(back.r - st.r) < 1.0
 
 
+# ---------------------------------------------------------------------------
+# The coast step is Yoshida's 4th-order symplectic composition of three Verlet
+# sub-steps (w1, w0, w1). Two-body checks against the analytic Kepler orbit, with a
+# point mass fixed at the origin and max_step_s set below the periapsis cap so the
+# step is exactly the one chosen (uniform along the orbit).
+# ---------------------------------------------------------------------------
+_EARTH_FIXED = nb._CircularBody(MU_EARTH, 0.0)
+_RP_M, _ECC = 7.0e6, 0.1
+_A_M = _RP_M / (1.0 - _ECC)
+_PERIOD_S = 2.0 * np.pi * np.sqrt(_A_M**3 / MU_EARTH)
+_AT_PERIAPSIS = StateVector(
+    r=np.array([_RP_M, 0.0, 0.0]),
+    v=np.array([0.0, np.sqrt(MU_EARTH * (2.0 / _RP_M - 1.0 / _A_M)), 0.0]),
+    mu=MU_EARTH, epoch_s=0.0)
+
+
+def _kepler_err(divisor_scale):
+    """Position error [m] after one period of a mildly eccentric LEO vs analytic Kepler.
+
+    The base step is period/512 (~13 s, below every periapsis cap) scaled by
+    divisor_scale, so halving divisor_scale halves the step.
+    """
+    h = _PERIOD_S / 512.0 * divisor_scale
+    out = nb.propagate_nbody(_AT_PERIAPSIS, _PERIOD_S, attractors=[_EARTH_FIXED], max_step_s=h)
+    return float(np.linalg.norm(out.r - propagate_kepler(_AT_PERIAPSIS, _PERIOD_S).r))
+
+
+def test_symplectic_step_is_fourth_order():
+    e1, e2 = _kepler_err(1.0), _kepler_err(0.5)
+    assert 10.0 < e1 / e2 < 22.0          # Verlet gives ~4; Yoshida ~16
+
+
+def test_symplectic_step_costs_three_gravity_evaluations():
+    # FSAL: each step's last acceleration starts the next, so N steps cost 1 + 3N.
+    calls = []
+
+    def accel(r, t):
+        calls.append(1)
+        return -MU_EARTH * r / np.linalg.norm(r) ** 3
+
+    nb._symplectic_adaptive(_AT_PERIAPSIS.r, _AT_PERIAPSIS.v, 0.0, 100.0, accel,
+                            lambda r, v, t: 1.0e9, base_step_s=10.0)
+    assert nb.EVALS_PER_STEP == 3
+    assert len(calls) == 1 + 10 * nb.EVALS_PER_STEP
+    assert nb.YOSHIDA_W1 * 2.0 + nb.YOSHIDA_W0 == pytest.approx(1.0, abs=1e-15)
+
+
+def test_yoshida_energy_bounded_over_100_orbits():
+    # Relative specific-energy error sampled 8x per orbit for 100 orbits (uniform
+    # period/1024 steps): tiny oscillation, no secular trend.
+    eps0 = 0.5 * _AT_PERIAPSIS.v @ _AT_PERIAPSIS.v - MU_EARTH / _RP_M
+    cur, errs = _AT_PERIAPSIS, []
+    for _ in range(800):
+        cur = nb.propagate_nbody(cur, _PERIOD_S / 8.0, attractors=[_EARTH_FIXED],
+                                 max_step_s=_PERIOD_S / 1024.0)
+        eps = 0.5 * cur.v @ cur.v - MU_EARTH / np.linalg.norm(cur.r)
+        errs.append((eps - eps0) / abs(eps0))
+    errs = np.array(errs)
+    assert errs.max() - errs.min() < 1e-9
+    assert abs(errs[-80:].mean() - errs[:80].mean()) < 1e-10   # first vs last 10 orbits
+
+
+def test_yoshida_forward_then_back_returns_home():
+    # The composition is symmetric (w1, w0, w1), so it stays time-reversible.
+    st = _leo_state()
+    T = 3600.0 * 3
+    fwd = nb.propagate_nbody(st, T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    back = nb.propagate_nbody(fwd, -T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    assert np.linalg.norm(back.r - st.r) < 1e-6
+    assert np.linalg.norm(back.v - st.v) < 1e-9
+
+
 def test_verlet_min_substep_floor_reduces_substep_count():
     """A larger min_substep_s floors the adaptive step, cutting substep (accel) calls.
 
