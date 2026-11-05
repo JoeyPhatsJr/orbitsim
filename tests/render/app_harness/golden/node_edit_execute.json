@@ -107,14 +107,14 @@
   "distance_m": 88432714.28571446,
   "elevation": -1.3595397369784044
  },
- "sim_time_s": 3482.906960185889,
+ "sim_time_s": 3482.90736814495,
  "target": null,
  "texts": [
   "+0",
   "+0",
   "+0",
-  "Altitude: 2,467.1 km",
-  "Apoapsis: 2,467.2 km",
+  "Altitude: 2,465.1 km",
+  "Apoapsis: 2,465.1 km",
   "COASTING TO MANEUVER   100%",
   "Fuel: 99%  (7,894 kg)",
   "Inclination: 8.1\u00b0",
@@ -126,13 +126,13 @@
   "Node in T-56:41   dV 37.4 m/s",
   "Normal",
   "ORBIT",
-  "Periapsis: 646.2 km",
+  "Periapsis: 647.5 km",
   "Period: 117.2 min",
   "Prograde",
   "Radial",
   "SAS: OFF    HDG 098\u00b0   PIT -00\u00b0",
   "Sim time: 3,483 s past J2000",
-  "Speed: 6.316 km/s",
+  "Speed: 6.318 km/s",
   "T+ 0.0 DAYS     WARP  x1",
   "T+0s",
   "Throttle: 0%",
@@ -150,16 +150,16 @@
    0.0
   ],
   "r": [
-   -8844758.943082307,
-   -89459.36911694691,
-   -12779.177952362135
+   -8842674.686489986,
+   -93684.74022576715,
+   -13382.802861097329
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   73.04286026923653,
-   -6252.2227176727565,
-   -893.1746840739415
+   76.3434673434455,
+   -6253.61799753891,
+   -893.3740102041589
   ]
  },
  "warp": 1.0,

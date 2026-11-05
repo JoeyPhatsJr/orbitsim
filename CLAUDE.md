@@ -189,10 +189,19 @@ don't batch many changes into one late commit. Stage specific files by **explici
   MUST return `None`/fall back and never crash offline (validate magic numbers — a CAPTCHA HTML
   page is not a JPEG). Texture source that works: three.js GitHub-raw maps.
 - **N-body substeps are sized by the osculating periapsis of the dominant body** (constant
-  along a coast → uniform steps → symplectic Verlet, no secular energy drift), block-quantized
-  to `max_step/2^k`. A single giant `world.step(period)` is now accurate even across periapsis
+  along a coast → uniform steps → symplectic, no secular energy drift), block-quantized
+  to `max_step/2^k`, at 1/`SUBSTEP_DIVISOR` (100) of the periapsis timescale. The coast step
+  (`nbody._symplectic_adaptive`, alias `_verlet_adaptive`) is **Yoshida 4th-order**: three
+  kick-drift-kick sub-steps weighted w1, w0, w1, so a step costs `EVALS_PER_STEP` (3) gravity
+  evaluations. `max_safe_warp[_solar]` budget **gravity evaluations** (`budget_evals=200` per
+  frame), not steps; in deep space the 6 h max step binds, so the top warp there is
+  10,000,000×. A single giant `world.step(period)` is accurate even across periapsis
   passages, but flight-cadence stepping remains the truest exercise of the sandbox loop. Don't
   switch the coast integrator to RK4 — it isn't symplectic and drifts on long coasts.
+- **The cap divisor is a default argument, bound at import.** `_timescale_cap_s` and
+  `_solar_cap_s` take `divisor=SUBSTEP_DIVISOR`; assigning `nbody.SUBSTEP_DIVISOR` at runtime
+  changes nothing. To experiment, patch their `__defaults__` (or pass `divisor=`). Powered
+  flight (`core/flight.py`) and the warp caps size substeps through the same caps.
 - **Vessels land, not sink.** `World.step` resolves surface contact after each tick: below the
   dominant body's surface a vessel is clamped to it with the body's velocity and `landed_on`
   set; TWR > 1 lifts off again. This (plus the surface-radius floor in the substep caps) is
@@ -217,11 +226,14 @@ don't batch many changes into one late commit. Stage specific files by **explici
   `core/transfers.py` import. That call must stay *before* the first Lambert call.
 - **Drawn predictions have their own stepper; never point `World.step` at it.** The live line
   and the maneuver preview integrate with `nbody.propagate_solar_prediction`: each body's
-  substep is sized by its *current* distance at 1/`PREDICTION_SUBSTEP_DIVISOR` (1000) of its
+  substep is sized by its *current* distance at 1/`PREDICTION_SUBSTEP_DIVISOR` (300, with the 4th-order step) of its
   timescale. Flight's periapsis-sized steps with the old 120 s preview floor mispredicted a
   Moon flyby by 7× (6,057 km vs ~45,670 km converged), taking 6 s. The prediction stepper
-  gets it within 1% in 0.75 s (`tests/render/test_preview_accuracy.py`). Flight itself is ~5%
-  off on that flyby; Moon flybys amplify departure errors, so be careful with tolerances.
+  (now on the same Yoshida step) gets it within 0.01% in ~1.9 s
+  (`tests/render/test_preview_accuracy.py`). Flight itself now flies that transfer within
+  ~25 km (+24 km in 3,600 s chunks, +9 km in 60 s chunks; velocity Verlet at divisor 200 was
+  −2,500 km), pinned by `test_flown_moon_transfer_matches_converged_truth`. Moon flybys
+  amplify departure errors, so be careful with tolerances.
 - **Maneuver preview: estimate while editing, exact once settled.** While the burn changes,
   a faint two-body estimate (`kepler_estimate_points`, `ESTIMATE_STYLE`) redraws every frame.
   The exact N-body job is submitted once the burn has been still `PREVIEW_SETTLE_S`, once per

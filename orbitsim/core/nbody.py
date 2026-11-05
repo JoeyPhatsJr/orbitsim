@@ -91,7 +91,13 @@ def earth_moon_accel(r_m, t_s):
 # flight is over (sim/world.py clamps to the surface), so resolving deeper
 # is pointless. MAX_SUBSTEPS_PER_CALL is a safety bound (not a target) so a
 # pathological state can never hang the caller.
-SUBSTEP_DIVISOR = 200.0
+#
+# 100 with the 4th-order (Yoshida) step: on the pinned Moon transfer this flies
+# within ~25 km of the converged closest approach (Verlet at 200 missed by
+# ~2,500 km). NOTE: _timescale_cap_s / _solar_cap_s bind this value as a default
+# argument when the module loads — patching the constant at runtime changes nothing;
+# patch their __defaults__ (or pass divisor=) instead.
+SUBSTEP_DIVISOR = 100.0
 MAX_SUBSTEPS_PER_CALL = 100_000
 _MIN_SUBSTEP_S = 1e-6      # floor so a zero cap (r exactly at a body) can't stall
 
@@ -151,11 +157,24 @@ def _substep_count(state, dt_s, attractors, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s,
-                     min_substep_s=_MIN_SUBSTEP_S):
-    """Velocity-Verlet (kick-drift-kick) with a block-quantized adaptive substep.
+# Yoshida (1990) 4th-order symplectic composition: one step of size h is three
+# velocity-Verlet sub-steps of w1*h, w0*h, w1*h (w0 < 0, 2*w1 + w0 = 1). The
+# composition is symmetric, so it stays symplectic and time-reversible, and the
+# error drops from O(h^2) to O(h^4). Each sub-step reuses the previous end
+# acceleration (FSAL), so a step costs EVALS_PER_STEP gravity evaluations.
+YOSHIDA_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
+YOSHIDA_W0 = -(2.0 ** (1.0 / 3.0)) * YOSHIDA_W1
+_YOSHIDA_WEIGHTS = (YOSHIDA_W1, YOSHIDA_W0, YOSHIDA_W1)
+EVALS_PER_STEP = len(_YOSHIDA_WEIGHTS)
 
-    cap_fn(r, v, t) returns the largest allowed substep [s] at that state.
+
+def _symplectic_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s,
+                         min_substep_s=_MIN_SUBSTEP_S):
+    """Yoshida 4th-order symplectic integrator with a block-quantized adaptive step.
+
+    Each step is three velocity-Verlet (kick-drift-kick) sub-steps weighted
+    YOSHIDA_W1, YOSHIDA_W0, YOSHIDA_W1. cap_fn(r, v, t) returns the largest
+    allowed step [s] at that state.
     With periapsis-based caps the cap is (nearly) constant along a coast, so
     the steps are uniform and the integrator keeps its symplectic
     bounded-energy behavior; when the cap does move (SOI hand-offs, thrust
@@ -186,13 +205,17 @@ def _verlet_adaptive(r, v, t, dt_s, accel_fn, cap_fn, base_step_s,
             k = max(0.0, np.ceil(np.log2(base_step_s / cap)))
             h_mag = min(remaining, base_step_s / 2.0**k)
         remaining -= h_mag
-        h = sign * h_mag
-        v_half = v + 0.5 * a * h
-        r = r + v_half * h
-        t = t + h
-        a = accel_fn(r, t)
-        v = v_half + 0.5 * a * h
+        for w in _YOSHIDA_WEIGHTS:
+            h = sign * h_mag * w
+            v_half = v + 0.5 * a * h
+            r = r + v_half * h
+            t = t + h
+            a = accel_fn(r, t)
+            v = v_half + 0.5 * a * h
     return r, v, t
+
+
+_verlet_adaptive = _symplectic_adaptive   # historical name; callers and tests keep it
 
 
 def propagate_nbody(state, dt_s, attractors=EARTH_MOON, max_step_s=3600.0,
@@ -528,9 +551,9 @@ def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0,
 
 # Drawn predictions (live trajectory + maneuver preview) only. Flight's periapsis-sized
 # steps with the old 120 s preview floor mispredicted a Moon flyby by 7x; stepping by the
-# *current* distance to each body at 1/1000 of its timescale matches the converged path
+# *current* distance to each body at 1/PREDICTION_SUBSTEP_DIVISOR of its timescale matches the converged path
 # within ~1% at ~6x the old speed. Never used by World.step (the flown sim).
-PREDICTION_SUBSTEP_DIVISOR = 1000.0
+PREDICTION_SUBSTEP_DIVISOR = 300.0   # 4th-order step: 0.02% Moon-pass error at ~0.6 s (1000 cost ~2 s)
 
 
 def _current_distance_m(r_rel, v_rel, mu):
@@ -625,10 +648,12 @@ def osculating_elements_solar(state, t_s):
     return state_to_elements(rel)
 
 
-def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
-    """Largest warp whose per-frame integration stays within budget_substeps (solar system)."""
+def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
+    """Largest warp whose per-frame integration stays within budget_evals gravity
+    evaluations (solar system; a coast step costs EVALS_PER_STEP)."""
     allowed = [w for w in warp_steps
-               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) <= budget_substeps]
+               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) * EVALS_PER_STEP
+               <= budget_evals]
     return max(allowed) if allowed else min(warp_steps)
 
 
@@ -727,9 +752,11 @@ def earth_fixed_lagrange_points(t_s):
     }
 
 
-def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_substeps=200):
-    """Largest warp in warp_steps whose frame integrates within budget_substeps Verlet
-    sub-steps at the current proximity (so time-warp stays accurate near bodies)."""
+def max_safe_warp(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
+    """Largest warp in warp_steps whose frame integrates within budget_evals gravity
+    evaluations (EVALS_PER_STEP per coast step) at the current proximity (so
+    time-warp stays accurate and affordable near bodies)."""
     allowed = [w for w in warp_steps
-               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) <= budget_substeps]
+               if _earth_moon_substeps(state, real_dt_s * w, 3600.0) * EVALS_PER_STEP
+               <= budget_evals]
     return max(allowed) if allowed else min(warp_steps)

@@ -110,6 +110,78 @@ def test_propagation_is_reversible():
     assert np.linalg.norm(back.r - st.r) < 1.0
 
 
+# ---------------------------------------------------------------------------
+# The coast step is Yoshida's 4th-order symplectic composition of three Verlet
+# sub-steps (w1, w0, w1). Two-body checks against the analytic Kepler orbit, with a
+# point mass fixed at the origin and max_step_s set below the periapsis cap so the
+# step is exactly the one chosen (uniform along the orbit).
+# ---------------------------------------------------------------------------
+_EARTH_FIXED = nb._CircularBody(MU_EARTH, 0.0)
+_RP_M, _ECC = 7.0e6, 0.1
+_A_M = _RP_M / (1.0 - _ECC)
+_PERIOD_S = 2.0 * np.pi * np.sqrt(_A_M**3 / MU_EARTH)
+_AT_PERIAPSIS = StateVector(
+    r=np.array([_RP_M, 0.0, 0.0]),
+    v=np.array([0.0, np.sqrt(MU_EARTH * (2.0 / _RP_M - 1.0 / _A_M)), 0.0]),
+    mu=MU_EARTH, epoch_s=0.0)
+
+
+def _kepler_err(divisor_scale):
+    """Position error [m] after one period of a mildly eccentric LEO vs analytic Kepler.
+
+    The base step is period/512 (~13 s, below every periapsis cap) scaled by
+    divisor_scale, so halving divisor_scale halves the step.
+    """
+    h = _PERIOD_S / 512.0 * divisor_scale
+    out = nb.propagate_nbody(_AT_PERIAPSIS, _PERIOD_S, attractors=[_EARTH_FIXED], max_step_s=h)
+    return float(np.linalg.norm(out.r - propagate_kepler(_AT_PERIAPSIS, _PERIOD_S).r))
+
+
+def test_symplectic_step_is_fourth_order():
+    e1, e2 = _kepler_err(1.0), _kepler_err(0.5)
+    assert 10.0 < e1 / e2 < 22.0          # Verlet gives ~4; Yoshida ~16
+
+
+def test_symplectic_step_costs_three_gravity_evaluations():
+    # FSAL: each step's last acceleration starts the next, so N steps cost 1 + 3N.
+    calls = []
+
+    def accel(r, t):
+        calls.append(1)
+        return -MU_EARTH * r / np.linalg.norm(r) ** 3
+
+    nb._symplectic_adaptive(_AT_PERIAPSIS.r, _AT_PERIAPSIS.v, 0.0, 100.0, accel,
+                            lambda r, v, t: 1.0e9, base_step_s=10.0)
+    assert nb.EVALS_PER_STEP == 3
+    assert len(calls) == 1 + 10 * nb.EVALS_PER_STEP
+    assert nb.YOSHIDA_W1 * 2.0 + nb.YOSHIDA_W0 == pytest.approx(1.0, abs=1e-15)
+
+
+def test_yoshida_energy_bounded_over_100_orbits():
+    # Relative specific-energy error sampled 8x per orbit for 100 orbits (uniform
+    # period/1024 steps): tiny oscillation, no secular trend.
+    eps0 = 0.5 * _AT_PERIAPSIS.v @ _AT_PERIAPSIS.v - MU_EARTH / _RP_M
+    cur, errs = _AT_PERIAPSIS, []
+    for _ in range(800):
+        cur = nb.propagate_nbody(cur, _PERIOD_S / 8.0, attractors=[_EARTH_FIXED],
+                                 max_step_s=_PERIOD_S / 1024.0)
+        eps = 0.5 * cur.v @ cur.v - MU_EARTH / np.linalg.norm(cur.r)
+        errs.append((eps - eps0) / abs(eps0))
+    errs = np.array(errs)
+    assert errs.max() - errs.min() < 1e-9
+    assert abs(errs[-80:].mean() - errs[:80].mean()) < 1e-10   # first vs last 10 orbits
+
+
+def test_yoshida_forward_then_back_returns_home():
+    # The composition is symmetric (w1, w0, w1), so it stays time-reversible.
+    st = _leo_state()
+    T = 3600.0 * 3
+    fwd = nb.propagate_nbody(st, T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    back = nb.propagate_nbody(fwd, -T, attractors=nb.EARTH_MOON, max_step_s=10.0)
+    assert np.linalg.norm(back.r - st.r) < 1e-6
+    assert np.linalg.norm(back.v - st.v) < 1e-9
+
+
 def test_verlet_min_substep_floor_reduces_substep_count():
     """A larger min_substep_s floors the adaptive step, cutting substep (accel) calls.
 
@@ -311,8 +383,8 @@ def test_max_safe_warp_caps_low_orbits_below_high_orbits():
     high = StateVector(r=np.array([1.5e8, 0.0, 0.0]),
                        v=np.array([0.0, np.sqrt(MU_EARTH / 1.5e8), 0.0]),
                        mu=MU_EARTH, epoch_s=0.0)
-    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_substeps=20)
-    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_substeps=20)
+    w_low = nb.max_safe_warp(low, 0.0, WARP_STEPS, budget_evals=60)
+    w_high = nb.max_safe_warp(high, 0.0, WARP_STEPS, budget_evals=60)
     assert w_low in WARP_STEPS and w_high in WARP_STEPS
     assert w_high > w_low                      # slower/farther orbit allows faster warp
     assert w_low >= 1.0                         # never below the floor
@@ -321,12 +393,78 @@ def test_max_safe_warp_caps_low_orbits_below_high_orbits():
 def test_max_safe_warp_respects_substep_budget():
     leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
                       v=np.array([0.0, 7546.0, 0.0]), mu=MU_EARTH, epoch_s=0.0)
-    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_substeps=200)
+    w = nb.max_safe_warp(leo, 0.0, WARP_STEPS, real_dt_s=1 / 60, budget_evals=200)
     n = nb._earth_moon_substeps(leo, (1 / 60) * w, max_step_s=3600.0)
-    assert n <= 200
+    assert n * nb.EVALS_PER_STEP <= 200
 
 
-def test_solar_max_warp_reaches_one_hundred_million_in_deep_space():
+def test_flight_step_is_one_hundredth_of_the_periapsis_timescale():
+    # SUBSTEP_DIVISOR is 100 and the cap functions' divisor *defaults* (bound when the
+    # module loads) must carry it — patching the module constant at runtime would not.
+    st = _geocentric_leo()
+    t_circ = 2.0 * np.pi * np.sqrt(7.0e6**3 / MU_EARTH)
+    assert nb.SUBSTEP_DIVISOR == 100.0
+    assert nb._solar_cap_s(st.r, st.v, 0.0, 6.0 * 3600.0) == pytest.approx(t_circ / 100.0, rel=1e-9)
+    assert nb._earth_moon_cap_s(st.r, st.v, 0.0, 3600.0) == pytest.approx(t_circ / 100.0, rel=1e-9)
+
+
+def test_warp_budget_counts_gravity_evaluations():
+    # A frame at the returned max warp must cost at most 200 gravity evaluations: a
+    # coast step is EVALS_PER_STEP evaluations, not one. Circular geocentric orbits
+    # from LEO out to cislunar distance sweep every step-count regime.
+    from orbitsim.sim.clock import SimClock
+
+    for r in np.geomspace(6.6e6, 3.0e8, 40):
+        st = StateVector(r=np.array([r, 0.0, 0.0]),
+                         v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
+                         mu=MU_EARTH, epoch_s=0.0)
+        w = nb.max_safe_warp_solar(st, 0.0, SimClock.WARP_STEPS)
+        evals = nb._solar_system_substeps(st, w / 60.0, 6.0 * 3600.0) * nb.EVALS_PER_STEP
+        assert evals <= 200 or w == SimClock.WARP_STEPS[0], (r, w, evals)
+        w = nb.max_safe_warp(st, 0.0, SimClock.WARP_STEPS)
+        evals = nb._earth_moon_substeps(st, w / 60.0, 3600.0) * nb.EVALS_PER_STEP
+        assert evals <= 200 or w == SimClock.WARP_STEPS[0], (r, w, evals)
+
+
+# Post-burn state of the app's "I" Moon intercept and its converged closest approach,
+# copied from tests/render/test_preview_accuracy.py (PINNED / REF_PERIAPSIS_RADIUS_M) so
+# the core tests stay free of render imports.
+_MOON_TRANSFER = StateVector(
+    r=np.array([-8739999.637530766, -1247379.9275047905, -178197.13320472895]),
+    v=np.array([1496.0148216363118, -9205.571968293121, -1324.9368000308782]),
+    mu=398600400000000.0, epoch_s=3669.367180937791)
+_MOON_TRANSFER_CA_M = 45_670.0e3
+
+
+def _flown_moon_closest_approach_m(chunk_s):
+    """Fly the transfer with the flight propagator in fixed chunks (frames at warp);
+    closest approach to the Moon sampled at chunk ends."""
+    total_s = 296.6 * 3600.0 - _MOON_TRANSFER.epoch_s + 3.0 * 3600.0
+    cur, best = _MOON_TRANSFER, np.inf
+    with nb.stable_prediction_ephemeris():
+        for _ in range(int(total_s // chunk_s)):
+            cur = nb.propagate_solar_system(cur, chunk_s)
+            best = min(best, float(np.linalg.norm(cur.r - moon_state_at(cur.epoch_s).r)))
+    return best
+
+
+def test_flown_moon_transfer_matches_converged_truth():
+    import pytest
+
+    nb.refresh_ephemeris_cache(_MOON_TRANSFER.epoch_s)
+    if not nb.ephemeris_available():
+        pytest.skip("DE440 ephemeris not available offline")
+    coarse = _flown_moon_closest_approach_m(3600.0)
+    fine = _flown_moon_closest_approach_m(60.0)
+    for ca in (coarse, fine):
+        assert abs(ca - _MOON_TRANSFER_CA_M) <= 91.0e3, f"Moon CA {ca / 1e3:,.0f} km"
+    assert abs(coarse - fine) <= 50.0e3
+
+
+def test_solar_max_warp_reaches_ten_million_in_deep_space():
+    # In deep space the 6 h max step binds, not the divisor: at 100,000,000x a frame is
+    # 78 steps = 234 gravity evaluations (> 200), so the evaluation budget stops one
+    # level lower than the old step budget did (flight-accuracy plan, Task 2 warp report).
     from orbitsim.sim.clock import SimClock
 
     state = StateVector(
@@ -334,7 +472,7 @@ def test_solar_max_warp_reaches_one_hundred_million_in_deep_space():
         v=np.array([0.0, 3.0e4, 0.0]),
         mu=MU_EARTH,
     )
-    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 100_000_000
+    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 10_000_000
 
 
 def test_solar_max_warp_is_capped_near_earth():
@@ -618,13 +756,15 @@ def test_cross3_is_bit_identical_to_numpy_cross():
         np.testing.assert_array_equal(nb._cross3(x, y), np.cross(x, y))
 
 
-_PINNED_LEO_COAST_R = np.array([6187681.564042751, -3199764.8583145365, -218377.55608006936])
-_PINNED_LEO_COAST_V = np.array([3543.5991237698718, 6652.946383964098, 894.7065215485318])
+# Re-pinned for the Yoshida 4th-order step at SUBSTEP_DIVISOR 100 (flight-accuracy plan).
+# Against a Yoshida/divisor-1000 reference: |dr| 105.8 m (was 6,170.5 m with Verlet/200).
+_PINNED_LEO_COAST_R = np.array([6190491.628957393, -3194202.3732476626, -217633.5987026762])
+_PINNED_LEO_COAST_V = np.array([3537.937754715665, 6656.031690958849, 894.9252775313337])
 
 
 def test_substep_trajectory_unchanged_bit_for_bit():
-    # Pinned output of the solar-system substepper for a LEO coast (recorded before the
-    # 3-vector helpers were introduced): any change to the hot loop's arithmetic shows.
+    # Pinned output of the solar-system substepper for a LEO coast: any change to the
+    # hot loop's arithmetic shows.
     st = StateVector(r=np.array([7.0e6, 1.0e5, 2.0e5]), v=np.array([-50.0, 7.5e3, 900.0]),
                      mu=MU_EARTH, epoch_s=86400.0)
     out = nb.propagate_solar_system(st, 5400.0, max_step_s=600.0)
