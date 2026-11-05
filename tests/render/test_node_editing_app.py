@@ -42,7 +42,7 @@ app.destroy()
 
 def test_nudge_taps_set_exact_steps():
     a, b, c = _run(NUDGES)
-    assert a[1:] == (1.0, 0.0, -1.0) and a[0] is not None          # node created, +1 pro, -1 rad
+    assert a[1:] == (1.0, 0.0, 1.0) and a[0] is not None           # node created, +1 pro, ';' = +1 rad (in)
     ramp = 10 * 0.5 / math.log(2) * (2 ** 1.4 - 1)
     assert b[2] == pytest.approx(ramp + 1.0, abs=0.5)               # tap + 0.7 s ramp
 
@@ -180,7 +180,7 @@ app.destroy()
     assert pro > 0 and nrm == 0.0 and rad == 0.0 and epoch == epoch0 and pro == round(pro, 1)
 
 
-def test_radial_in_handle_lowers_radial():
+def test_rad_minus_handle_lowers_radial_component():
     state = _run(DRAG + r"""
 drag("rad-")
 print("RESULT", hooks.node_state(app))
@@ -233,6 +233,34 @@ app.destroy()
     epoch, pro, nrm, rad = state
     assert abs(epoch - epoch80) <= 60.0 and epoch == float(int(epoch))
     assert (pro, nrm, rad) == (1.0, 0.0, 0.0)
+
+
+LANDED = r"""
+import numpy as np
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+from orbitsim.core.state import StateVector
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(10)
+v = app.world.vessels[0]
+v.state = StateVector(r=np.array([6.371e6, 0.0, 0.0]), v=np.zeros(3), mu=v.state.mu,
+                      epoch_s=v.state.epoch_s)
+v.landed_on = "Earth"
+app.clock.warp = 1.0
+h.step(10)
+for key in ("j", "]"):
+    h.send(key); h.send(key + "-up"); h.step(10)
+print("RESULT", hooks.node_state(app))
+app.destroy()
+"""
+
+
+def test_burn_editing_refused_while_landed():
+    # Review: one nudge while landed crashed the frame task (Kepler on v = 0).
+    state = _run(LANDED)
+    assert state == (None, 0.0, 0.0, 0.0)
 
 
 def test_node_drag_stays_on_current_orbit():

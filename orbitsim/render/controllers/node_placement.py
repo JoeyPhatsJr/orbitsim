@@ -60,10 +60,12 @@ class NodePlacement:
         except ValueError:
             period = None
         encs = self.app._traj_encounters[0] if getattr(self.app, "_traj_encounters", None) else None
-        entries = [e.entry_epoch_s for e in (encs or []) if e.body_name not in ("Earth", "Sun")]
+        others = [e for e in (encs or []) if e.body_name not in ("Earth", "Sun")]
+        entries = [e.entry_epoch_s for e in others]
+        in_other_soi = any(e.start_index == 0 for e in others)   # line starts inside it
         epochs = self.app._traj_epoch_cache[0] if getattr(self.app, "_traj_epoch_cache", None) else None
         line_end = float(epochs[-1]) if epochs is not None else now + MIN_NODE_LEAD_S
-        return node_epoch_window(now, period, entries, line_end)
+        return node_epoch_window(now, period, entries, line_end, in_other_soi=in_other_soi)
 
     # --- mouse ---------------------------------------------------------------
 

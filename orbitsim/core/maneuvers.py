@@ -88,10 +88,11 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
 
 
 def rtn_basis(r: np.ndarray, v: np.ndarray) -> tuple:
-    """Burn frame at a point: (prograde v_hat, orbit-normal h_hat, radial-out r_hat).
+    """Burn frame at a point: (prograde v_hat, orbit-normal h_hat, radial axis r_hat).
 
     The same formulas as apply_maneuver (r_hat = h_hat x v_hat, orthonormal -- not
-    r/|r|). Raises ValueError for zero velocity or zero angular momentum (a landed or
+    r/|r|). Note: this radial axis points TOWARD the central body (SAS RADIAL_OUT is
+    v x h); a positive radial delta-V is a radial-in burn. Raises ValueError for zero velocity or zero angular momentum (a landed or
     purely radial state), where the frame is undefined.
     """
     r = np.asarray(r, dtype=np.float64)

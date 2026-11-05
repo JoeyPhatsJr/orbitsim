@@ -34,7 +34,9 @@ NUDGE_TIME = NudgeSpec(10.0, 30.0, 0.5, 21600.0, 0.3)   # s, s per s
 NUDGE_KEYS: dict = {
     "j": ("pro", 1), "h": ("pro", -1),
     "l": ("nrm", 1), "k": ("nrm", -1),
-    "'": ("rad", 1), ";": ("rad", -1),
+    # Radial: the burn's radial axis (apply_maneuver / rtn_basis) points TOWARD the
+    # central body, so ";" (radial in) is +1 and "'" (radial out) is -1.
+    ";": ("rad", 1), "'": ("rad", -1),
     "]": ("time", 1), "[": ("time", -1),
 }
 
@@ -75,15 +77,20 @@ import math  # noqa: E402
 MIN_NODE_LEAD_S = 10.0   # a new/moved burn must be at least this far in the future
 
 
-def node_epoch_window(now_s, period_s, encounter_entry_epochs, line_end_s):
+def node_epoch_window(now_s, period_s, encounter_entry_epochs, line_end_s, in_other_soi=False):
     """(earliest, latest) epoch a burn may be placed: from now + MIN_NODE_LEAD_S to the
-    end of the current orbit -- one period, the first non-Earth SOI entry, or the line's
-    end, whichever comes first (None period = unbound)."""
+    end of the current orbit -- one period, the next non-Earth SOI entry, or the line's
+    end, whichever comes first (None period = unbound).
+
+    An encounter already in progress (entered at or before now: you're orbiting the
+    Moon) doesn't close the window, and inside another body's SOI the geocentric
+    period means nothing, so it's ignored (``in_other_soi``)."""
     end = line_end_s
-    if period_s is not None:
+    if period_s is not None and not in_other_soi:
         end = min(end, now_s + period_s)
-    if encounter_entry_epochs:
-        end = min(end, min(encounter_entry_epochs))
+    upcoming = [e for e in encounter_entry_epochs if e > now_s]
+    if upcoming:
+        end = min(end, min(upcoming))
     return (now_s + MIN_NODE_LEAD_S, end)
 
 

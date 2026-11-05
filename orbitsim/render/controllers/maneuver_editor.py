@@ -157,6 +157,8 @@ class ManeuverEditor:
     def apply_jogs(self, real_dt_s: float) -> None:
         """Integrate each jog slider's rate into its delta-V component for this frame."""
         changed = False
+        if not self.burn_editable(flash=False):
+            return
         for axis, slider in self.app._jog.items():
             rate = self._jog_rate_mps_per_s(slider["value"])
             if rate != 0.0:
@@ -195,8 +197,19 @@ class ManeuverEditor:
         self.app._dv_value_text[axis].setText(f"{value_mps:+.0f}")
         self.refresh_readout()
 
+    def burn_editable(self, flash: bool = True) -> bool:
+        """Whether a burn can be planned now: not while landed / at zero velocity (the
+        burn frame and the node propagation are undefined there -- they crashed)."""
+        v0 = self.app.world.vessels[0]
+        ok = v0.landed_on is None and bool(np.any(v0.state.v))
+        if not ok and flash:
+            self.app._flash_message("Can't plan a burn while landed")
+        return ok
+
     def place_node(self, epoch_s: float) -> None:
         """Schedule the (one) burn at ``epoch_s``; its delta-V is kept."""
+        if not self.burn_editable():
+            return
         self.app._auto_execute_node = False
         self.set_node_epoch(snap_epoch(epoch_s))
 
@@ -221,6 +234,8 @@ class ManeuverEditor:
         axis, sign = NUDGE_KEYS[key]
         spec = NUDGE_TIME if axis == "time" else NUDGE_DV
         if down:
+            if not self.burn_editable():
+                return
             self._nudge(axis, sign * spec.tap)
             self.app._nudge_held[key] = 0.0
             return
@@ -240,7 +255,7 @@ class ManeuverEditor:
         (a modifier pressed mid-hold turns the release into e.g. 'shift-j-up')."""
         for key in list(self.app._nudge_held):
             axis, sign = NUDGE_KEYS[key]
-            if self.app.flight_input.key_held(key) is False:
+            if self.app.flight_input.key_held(key) is False or not self.burn_editable(False):
                 del self.app._nudge_held[key]
                 self._snap_axis(axis)
                 continue

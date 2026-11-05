@@ -99,3 +99,26 @@ def test_handle_drag_value_along_against_and_across():
 def test_handles_cover_each_axis_both_ways():
     assert sorted((a, s) for _k, a, s, _c in HANDLES) == sorted(
         (a, s) for a in ("pro", "nrm", "rad") for s in (1, -1))
+
+
+# --- Review fixes (plan 3) ---
+def test_window_ignores_an_encounter_already_in_progress():
+    # Orbiting the Moon: the line starts inside its SOI, reported as an "encounter"
+    # entered ~now. That must not close the window (review: no click placement there).
+    assert node_epoch_window(100.0, None, [99.85, 3000.0], 40000.0) == (110.0, 3000.0)
+
+
+def test_window_ignores_earth_period_inside_another_soi():
+    # The geocentric period means nothing in lunar orbit.
+    assert node_epoch_window(100.0, 5000.0, [], 40000.0, in_other_soi=True) == (110.0, 40000.0)
+
+
+def test_radial_keys_push_the_way_their_labels_say():
+    # F1 says "; / '  Burn radial in / out". apply_maneuver's radial axis (rtn_basis[2])
+    # points toward the central body, so "out" needs a negative radial component.
+    import numpy as np
+    from orbitsim.core.maneuvers import rtn_basis
+    r, v = np.array([7e6, 0.0, 0.0]), np.array([0.0, 7.5e3, 0.0])
+    radial_axis = rtn_basis(r, v)[2]
+    push = {key: sign * radial_axis for key, (axis, sign) in NUDGE_KEYS.items() if axis == "rad"}
+    assert np.dot(push["'"], r) > 0 and np.dot(push[";"], r) < 0      # ' = out, ; = in

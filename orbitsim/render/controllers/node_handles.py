@@ -112,6 +112,8 @@ class NodeHandles:
         return None
 
     def begin_drag(self, kind, px) -> None:
+        if not self.app.maneuver_editor.burn_editable():
+            return
         axis = None
         if kind != "node":
             axis = axis_unit_px(self.app._node_px, self.app._handle_px[kind], self._pt(MIN_AXIS_PX))
