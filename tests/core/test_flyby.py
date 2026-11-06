@@ -126,3 +126,77 @@ class TestMaxDeflection:
         delta = max_deflection(5e3, MU_MARS, 2 * R_MARS)
         delta_jup = max_deflection(5e3, MU_JUPITER, 2 * R_JUPITER)
         assert delta < delta_jup
+
+
+# --- Conic periapsis and B-plane (flyby targeting, map-readability plan 4) ---------------
+from orbitsim.core.constants import MU_MOON, R_MOON
+from orbitsim.core.elements import KeplerianElements, elements_to_state
+from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.flyby import conic_periapsis, b_plane
+
+
+def _hyperbola(rp, v_inf, i=0.4, raan=0.3, argp=1.1, nu=-1.2):
+    a = -MU_MOON / v_inf**2
+    e = 1.0 - rp / a
+    return elements_to_state(KeplerianElements(a=a, e=e, i=i, raan=raan, argp=argp, nu=nu,
+                                               mu=MU_MOON, epoch_s=0.0))
+
+
+def _ellipse():
+    return elements_to_state(KeplerianElements(a=5e6, e=0.3, i=0.2, raan=0.0, argp=0.5,
+                                               nu=2.0, mu=MU_MOON, epoch_s=0.0))
+
+
+def test_conic_periapsis_recovers_rp_and_time():
+    st = _hyperbola(R_MOON + 200e3, 1050.0)
+    pe = conic_periapsis(st.r, st.v, MU_MOON)
+    assert abs(pe.radius_m - (R_MOON + 200e3)) < 1e-3
+    assert pe.time_to_periapsis_s > 0.0
+    at_pe = propagate_kepler(st, pe.time_to_periapsis_s)
+    assert abs(np.linalg.norm(at_pe.r) - pe.radius_m) < 1e-2
+    np.testing.assert_allclose(at_pe.r, pe.point_rel_m, atol=1.0)
+
+
+def test_conic_periapsis_time_is_negative_after_passing():
+    st = _hyperbola(R_MOON + 200e3, 1050.0, nu=+0.8)
+    pe = conic_periapsis(st.r, st.v, MU_MOON)
+    assert pe.time_to_periapsis_s < 0.0
+    at_pe = propagate_kepler(st, pe.time_to_periapsis_s)
+    np.testing.assert_allclose(at_pe.r, pe.point_rel_m, atol=1.0)
+
+
+def test_conic_periapsis_elliptic():
+    st = _ellipse()
+    pe = conic_periapsis(st.r, st.v, MU_MOON)
+    assert abs(pe.radius_m - 3.5e6) < 1e-3
+    at_pe = propagate_kepler(st, pe.time_to_periapsis_s)
+    np.testing.assert_allclose(at_pe.r, pe.point_rel_m, atol=1.0)
+
+
+def test_conic_periapsis_raises_for_radial_line():
+    with pytest.raises(ValueError):
+        conic_periapsis(np.array([5e6, 0.0, 0.0]), np.array([-1000.0, 0.0, 0.0]), MU_MOON)
+
+
+def test_b_plane_magnitude_matches_impact_parameter():
+    rp, v_inf = R_MOON + 200e3, 1050.0
+    st = _hyperbola(rp, v_inf)
+    B, vinf = b_plane(st.r, st.v, MU_MOON)
+    assert B.shape == (2,)
+    assert abs(vinf - v_inf) < 1e-6
+    assert abs(np.linalg.norm(B) - rp * np.sqrt(1 + 2 * MU_MOON / (rp * v_inf**2))) < 1e-3
+
+
+def test_b_plane_is_invariant_along_the_hyperbola():
+    # B, S, T, R are properties of the conic, not of where on it the state sits.
+    st = _hyperbola(R_MOON + 200e3, 1050.0)
+    B0, _ = b_plane(st.r, st.v, MU_MOON)
+    later = propagate_kepler(st, 3600.0)
+    B1, _ = b_plane(later.r, later.v, MU_MOON)
+    np.testing.assert_allclose(B1, B0, atol=1e-3)
+
+
+def test_b_plane_raises_for_bound_state():
+    st = _ellipse()
+    with pytest.raises(ValueError):
+        b_plane(st.r, st.v, MU_MOON)

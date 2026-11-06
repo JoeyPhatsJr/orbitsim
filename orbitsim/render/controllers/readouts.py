@@ -94,10 +94,8 @@ class Readouts:
                 candidates.append((label, marker, np.asarray(world_pos), priority, minimum))
 
         add(self.app._target_label, None, self.app._target_label_position, 100, 0.55)
-        add(self.app._ca_labels["ship"], self.app._ca_marker_ship,
-            self.app._ca_label_positions["ship"], 90, 0.40)
-        add(self.app._ca_labels["target"], self.app._ca_marker_moon,
-            self.app._ca_label_positions["target"], 85, 0.40)
+        add(self.app._aim_ghost_label, self.app._aim_ghost_np,
+            self.app._aim_ghost_position, 85, 0.40)
         add(self.app._apsis_labels["PE"], self.app._apsis_nps["PE"],
             self.app._apsis_positions["PE"], 70)
         add(self.app._apsis_labels["AP"], self.app._apsis_nps["AP"],

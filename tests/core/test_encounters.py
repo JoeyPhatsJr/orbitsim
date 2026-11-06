@@ -182,3 +182,83 @@ def test_translunar_arc_detects_a_moon_encounter():
     assert enc.periapsis_radius_m < b0
     # v_inf is positive and below the approach speed (vis-viva at the SOI edge).
     assert 0.0 < enc.v_inf_mps < v_rel
+
+
+# ---------------------------------------------------------------------------
+# Conic refinement (map-readability plan 4): coarse samples of a low flyby.
+# ---------------------------------------------------------------------------
+from orbitsim.core.constants import MU_MOON, R_MOON
+from orbitsim.core.elements import KeplerianElements, elements_to_state
+from orbitsim.core.propagate import propagate_kepler
+from orbitsim.core.state import StateVector
+from orbitsim.core.encounters import TargetApproach, closest_approach_on_path
+
+
+def _moon_hyperbola(rp, v_inf, before_pe_s=6 * 3600.0):
+    """Moon-relative Kepler state ``before_pe_s`` before periapsis, epoch 0."""
+    a = -MU_MOON / v_inf**2
+    e = 1.0 - rp / a
+    at_pe = elements_to_state(KeplerianElements(a=a, e=e, i=0.4, raan=0.3, argp=1.1, nu=0.0,
+                                                mu=MU_MOON, epoch_s=0.0))
+    back = propagate_kepler(at_pe, -before_pe_s)
+    return StateVector(back.r, back.v, MU_MOON, 0.0)
+
+
+def _fixed_moon(name, t):
+    return StateVector(np.zeros(3), np.zeros(3), MU_MOON, t)
+
+
+def _moon_dominant(r, t):
+    if np.linalg.norm(r) < 6.6e7:
+        return "Moon", np.zeros(3), MU_MOON, R_MOON
+    return "Earth", np.zeros(3), 0.0, 0.0
+
+
+def test_conic_refinement_beats_parabola_on_coarse_samples():
+    st0 = _moon_hyperbola(rp=R_MOON + 200e3, v_inf=1050.0)
+    epochs = np.arange(0.0, 12 * 3600.0, 2.8 * 3600.0)             # preview-like 2.8 h spacing
+    states = [propagate_kepler(st0, t) for t in epochs]
+    pts = np.array([s.r for s in states])
+    vels = np.array([s.v for s in states])
+    old = find_encounters(pts, epochs, _moon_dominant)[0]
+    new = find_encounters(pts, epochs, _moon_dominant, velocities=vels,
+                          body_state_fn=_fixed_moon)[0]
+    assert abs(new.periapsis_radius_m - (R_MOON + 200e3)) < 1.0
+    assert abs(new.periapsis_epoch_s - 6 * 3600.0) < 1.0
+    np.testing.assert_allclose(new.periapsis_point_m,
+                               propagate_kepler(st0, 6 * 3600.0).r, atol=10.0)
+    assert not new.impact
+    assert abs(old.periapsis_radius_m - (R_MOON + 200e3)) > 1e6       # documents the old failure
+
+
+def test_conic_refinement_flags_an_impact_between_samples():
+    st0 = _moon_hyperbola(rp=R_MOON - 500e3, v_inf=1050.0)
+    epochs = np.arange(0.0, 5.0 * 3600.0, 2.8 * 3600.0)              # stops before Pe
+    states = [propagate_kepler(st0, t) for t in epochs]
+    pts = np.array([s.r for s in states])
+    vels = np.array([s.v for s in states])
+    enc = find_encounters(pts, epochs, _moon_dominant, velocities=vels,
+                          body_state_fn=_fixed_moon)[0]
+    assert enc.impact and enc.periapsis_radius_m < R_MOON
+
+
+def test_closest_approach_on_path_reports_centre_distance():
+    pts, epochs = _straight_line(v_mps=1000.0, b_m=1.2e8, t0=-1e5, t1=1e5, n=201)
+    ap = closest_approach_on_path(pts, epochs, "Moon", _fixed_moon)
+    assert isinstance(ap, TargetApproach)
+    assert ap.body_name == "Moon" and abs(ap.distance_m - 1.2e8) < 1e3 and abs(ap.epoch_s) < 1e3
+    np.testing.assert_allclose(ap.body_point_m, np.zeros(3))
+    assert abs(np.linalg.norm(ap.ship_point_m) - ap.distance_m) < 1e-6
+
+
+def test_closest_approach_uses_the_encounter_periapsis_when_given():
+    st0 = _moon_hyperbola(rp=R_MOON + 200e3, v_inf=1050.0)
+    epochs = np.arange(0.0, 12 * 3600.0, 2.8 * 3600.0)
+    states = [propagate_kepler(st0, t) for t in epochs]
+    pts = np.array([s.r for s in states])
+    vels = np.array([s.v for s in states])
+    encs = find_encounters(pts, epochs, _moon_dominant, velocities=vels,
+                           body_state_fn=_fixed_moon)
+    ap = closest_approach_on_path(pts, epochs, "Moon", _fixed_moon, encounters=encs)
+    assert abs(ap.distance_m - (R_MOON + 200e3)) < 1.0
+    assert abs(ap.epoch_s - 6 * 3600.0) < 1.0

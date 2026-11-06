@@ -6,8 +6,100 @@ v-infinity vector at the planet (patched-conic approximation for planning;
 the actual N-body trajectory handles the real physics during flight).
 """
 from __future__ import annotations
+from dataclasses import dataclass
+
 import numpy as np
 from orbitsim.core.constants import MU_SUN
+
+
+@dataclass(frozen=True)
+class ConicPeriapsis:
+    """Periapsis of the osculating conic through a body-relative state.
+
+    radius_m : periapsis distance from the body's centre [m].
+    time_to_periapsis_s : signed; negative once periapsis has passed. For an ellipse it is
+        the nearest periapsis (mean anomaly taken in (-pi, pi]).
+    point_rel_m : periapsis position relative to the body [m], shape (3,).
+    """
+
+    radius_m: float
+    time_to_periapsis_s: float
+    point_rel_m: np.ndarray
+
+
+def _conic_frame(r_rel_m, v_rel_mps, mu):
+    """(r, v, h_vec, e, P_hat, Q_hat, p) of the osculating conic; ValueError on h = 0."""
+    r = np.asarray(r_rel_m, dtype=np.float64)
+    v = np.asarray(v_rel_mps, dtype=np.float64)
+    r_mag = float(np.linalg.norm(r))
+    if r_mag == 0.0:
+        raise ValueError("state at the body's centre has no conic")
+    h_vec = np.cross(r, v)
+    h_mag = float(np.linalg.norm(h_vec))
+    if h_mag <= 1e-12 * r_mag * max(float(np.linalg.norm(v)), 1e-300):
+        raise ValueError("zero angular momentum (radial line): no periapsis direction")
+    # Curtis: e = (1/mu)[(v^2 - mu/r) r - r v_r v], v_r = (r.v)/r  =>  r v_r = r.v
+    e_vec = ((float(v @ v) - mu / r_mag) * r - float(r @ v) * v) / mu
+    e = float(np.linalg.norm(e_vec))
+    h_hat = h_vec / h_mag
+    if e < 1e-12:   # circular: periapsis direction undefined, take the current point
+        p_hat = r / r_mag
+    else:
+        p_hat = e_vec / e
+    q_hat = np.cross(h_hat, p_hat)
+    p = h_mag * h_mag / mu
+    return r, v, h_vec, e, p_hat, q_hat, p
+
+
+def conic_periapsis(r_rel_m, v_rel_mps, mu: float) -> ConicPeriapsis:
+    """Periapsis radius, signed time to it, and its body-relative point (any conic).
+
+    Raises ValueError for zero angular momentum (radial line, no periapsis direction).
+    """
+    r, _v, _h, e, p_hat, q_hat, p = _conic_frame(r_rel_m, v_rel_mps, mu)
+    rp = p / (1.0 + e)
+    nu = float(np.arctan2(r @ q_hat, r @ p_hat))     # true anomaly, (-pi, pi]
+    if abs(e - 1.0) < 1e-12:                          # parabola: Barker's equation
+        d = np.tan(0.5 * nu)
+        t_since = 0.5 * np.sqrt(p**3 / mu) * (d + d**3 / 3.0)
+    elif e < 1.0:
+        a = p / (1.0 - e * e)
+        ecc_anom = np.arctan2(np.sqrt(1.0 - e * e) * np.sin(nu), e + np.cos(nu))
+        mean_anom = ecc_anom - e * np.sin(ecc_anom)
+        t_since = mean_anom / np.sqrt(mu / a**3)
+    else:
+        a = p / (1.0 - e * e)                         # negative
+        sinh_f = np.sqrt(e * e - 1.0) * np.sin(nu) / (1.0 + e * np.cos(nu))
+        hyp_anom = np.arcsinh(sinh_f)
+        mean_anom = e * np.sinh(hyp_anom) - hyp_anom
+        t_since = mean_anom / np.sqrt(mu / (-a) ** 3)
+    return ConicPeriapsis(radius_m=float(rp), time_to_periapsis_s=float(-t_since),
+                          point_rel_m=rp * p_hat)
+
+
+def b_plane(r_rel_m, v_rel_mps, mu: float) -> tuple[np.ndarray, float]:
+    """B-plane coordinates ``([B.T, B.R] [m], v_inf [m/s])`` of a hyperbolic flyby.
+
+    S is the incoming asymptote, T = unit(S x z), R = S x T, B = (S x h) / v_inf
+    (|B| is the impact parameter h / v_inf). Raises ValueError unless the state is
+    hyperbolic relative to ``mu``.
+    """
+    r = np.asarray(r_rel_m, dtype=np.float64)
+    v = np.asarray(v_rel_mps, dtype=np.float64)
+    energy = 0.5 * float(v @ v) - mu / float(np.linalg.norm(r))
+    if energy <= 0.0:
+        raise ValueError("state is bound to the body: no B-plane")
+    v_inf = float(np.sqrt(2.0 * energy))
+    _r, _v, h_vec, e, p_hat, q_hat, _p = _conic_frame(r, v, mu)
+    s_hat = p_hat / e + (np.sqrt(e * e - 1.0) / e) * q_hat
+    s_hat = s_hat / np.linalg.norm(s_hat)
+    t_vec = np.cross(s_hat, np.array([0.0, 0.0, 1.0]))
+    if np.linalg.norm(t_vec) < 1e-12:                # asymptote along z: any T works
+        t_vec = np.cross(s_hat, np.array([1.0, 0.0, 0.0]))
+    t_hat = t_vec / np.linalg.norm(t_vec)
+    r_hat = np.cross(s_hat, t_hat)
+    b_vec = np.cross(s_hat, h_vec) / v_inf
+    return np.array([float(b_vec @ t_hat), float(b_vec @ r_hat)]), v_inf
 
 
 def v_infinity(v_ship: np.ndarray, v_planet: np.ndarray) -> np.ndarray:

@@ -49,7 +49,7 @@ def trajectory_horizon_s(state, solar_system: bool) -> float:
 def sample_trajectory(
     state, solar_system: bool, min_substep_s: float,
     n_pts=256, max_horizon_s=7 * 86400, n_orbits=1,
-    with_times=False, with_encounters=False,
+    with_times=False, with_encounters=False, approach_body: str | None = None,
 ):
     """Forward-integrate ``state`` under N-body and return ~n_pts positions [m].
 
@@ -62,6 +62,10 @@ def sample_trajectory(
     ``solar_system`` selects the full solar propagator (with a stable-prediction
     ephemeris context) vs. the Earth-Moon two-body-plus-Moon propagator;
     ``min_substep_s`` is the coarse substep floor for the solar visual prediction.
+
+    Encounters read their periapsis from the body-relative conic at the nearest sample
+    (velocities are kept per sample). With ``approach_body`` the result gains a trailing
+    ``TargetApproach`` to that body, computed inside the same ephemeris context.
     """
     if solar_system:
         from orbitsim.core.nbody import (
@@ -84,7 +88,9 @@ def sample_trajectory(
             horizon_s = float(max_horizon_s)
         dt = horizon_s / n_pts
         pts = np.empty((n_pts, 3), dtype=np.float64)
+        vels = np.empty((n_pts, 3), dtype=np.float64)
         pts[0] = state.r
+        vels[0] = state.v
         cur = state
         for i in range(1, n_pts):
             if solar_system:
@@ -97,28 +103,47 @@ def sample_trajectory(
             else:
                 cur = prop_fn(cur, dt)
             pts[i] = cur.r
+            vels[i] = cur.v
         epochs = state.epoch_s + np.arange(n_pts, dtype=np.float64) * dt
         encounters = []
-        if with_encounters:
+        approach = None
+        if with_encounters or approach_body is not None:
             # Classify inside the same ephemeris context that produced the
             # path, so far-future planet positions match what was integrated.
             from orbitsim.core.encounters import (
-                find_encounters, solar_dominant, earth_moon_dominant,
+                closest_approach_on_path, find_encounters, solar_dominant,
+                earth_moon_dominant,
             )
+            from orbitsim.core.nbody import geocentric_body_state
             dominant = solar_dominant if solar_system else earth_moon_dominant
-            encounters = find_encounters(pts, epochs, dominant, primary_name="Earth")
+            encounters = find_encounters(pts, epochs, dominant, primary_name="Earth",
+                                         velocities=vels,
+                                         body_state_fn=geocentric_body_state)
+            if approach_body is not None:
+                approach = closest_approach_on_path(pts, epochs, approach_body,
+                                                    geocentric_body_state, encounters)
     if with_encounters:
-        return pts, epochs, encounters
-    if with_times:
-        return pts, epochs
-    return pts
+        out = (pts, epochs, encounters)
+    elif with_times:
+        out = (pts, epochs)
+    else:
+        out = (pts,)
+    if approach_body is not None:
+        out = out + (approach,)
+    return out if len(out) > 1 else pts
 
 
-def sample_preview(state, solar_system: bool, min_substep_s: float):
-    """Compute preview points + encounters without touching Panda3D scene objects."""
+def sample_preview(state, solar_system: bool, min_substep_s: float,
+                   target_name: str | None = None):
+    """Preview ``(points, encounters, approach)`` without touching Panda3D scene objects.
+
+    ``approach`` is the ``TargetApproach`` to ``target_name``, or None without one.
+    """
     horizon = trajectory_horizon_s(state, solar_system)
-    pts, _epochs, encounters = sample_trajectory(
+    out = sample_trajectory(
         state, solar_system, min_substep_s,
         n_pts=256, max_horizon_s=horizon, n_orbits=2, with_encounters=True,
+        approach_body=target_name,
     )
-    return pts, encounters
+    approach = out[3] if target_name is not None else None
+    return out[0], out[2], approach

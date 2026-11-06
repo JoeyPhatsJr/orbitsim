@@ -94,6 +94,18 @@ def node_epoch_window(now_s, period_s, encounter_entry_epochs, line_end_s, in_ot
     return (now_s + MIN_NODE_LEAD_S, end)
 
 
+# Auto-plans search departures from this far ahead: planning takes real seconds (warp is
+# dropped to 1x for it), and a departure in the past would be clamped to "now" -- a
+# Moon flyby burned 10 s late impacts, 250 s late misses the Moon entirely.
+PLAN_LEAD_S = 60.0
+
+
+def departure_grid_s(span_s, n, lead_s=PLAN_LEAD_S):
+    """Departure offsets [s] from now for an auto-plan: ``n`` evenly over ``span_s``,
+    starting ``lead_s`` ahead."""
+    return np.linspace(lead_s, span_s + lead_s, n)
+
+
 def node_epoch_ok(epoch_s, now_s) -> bool:
     """Whether a burn may still be placed at ``epoch_s`` (enough lead time left)."""
     return epoch_s >= now_s + MIN_NODE_LEAD_S

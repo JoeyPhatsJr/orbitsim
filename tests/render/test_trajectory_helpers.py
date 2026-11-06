@@ -77,3 +77,27 @@ def test_refresh_only_for_the_drawn_burn_when_idle_and_paced():
     assert not should_refresh_exact(k, k, None, drifted=True, now=1.0, last_submit_t=0.9, refresh_s=0.2)
     assert not should_refresh_exact(k, k, k, drifted=True, now=1.0, last_submit_t=0.0, refresh_s=0.2)
     assert not should_refresh_exact(k, None, None, drifted=True, now=1.0, last_submit_t=0.0, refresh_s=0.2)
+
+
+def test_preview_key_changes_with_target():
+    from orbitsim.core.maneuvers import ManeuverNode
+    from orbitsim.render.trajectory_helpers import maneuver_preview_key
+    n = ManeuverNode(10.0, 1.0, 0.0, 0.0)
+    assert maneuver_preview_key(n, 10.0, "Moon") != maneuver_preview_key(n, 10.0, None)
+    assert maneuver_preview_key(n, 10.0, "Moon") != maneuver_preview_key(n, 10.0, "Mars")
+
+
+def test_encounter_source_exact_preview():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(True, True, ["p"], ["l"]) == ["p"]
+
+
+def test_encounter_source_editing_shows_none():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(True, False, ["p"], ["l"]) == []
+
+
+def test_encounter_source_no_burn_uses_live():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(False, False, [], ["l"]) == ["l"]
+    assert encounter_source(False, False, [], None) == []

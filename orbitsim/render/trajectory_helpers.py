@@ -2,13 +2,17 @@
 import numpy as np
 
 
-def maneuver_preview_key(node, scheduled_epoch_s):
-    """Stable preview identity; burn-now epochs move with the vessel and are ignored."""
+def maneuver_preview_key(node, scheduled_epoch_s, target_name=None):
+    """Stable preview identity; burn-now epochs move with the vessel and are ignored.
+
+    The target is part of it: the exact preview also measures the approach to the
+    target, so switching targets makes the drawn result stale."""
     return (
         node.dv_prograde_mps,
         node.dv_normal_mps,
         node.dv_radial_mps,
         scheduled_epoch_s,
+        target_name,
     )
 
 
@@ -80,3 +84,16 @@ def should_refresh_exact(current_key, exact_key, inflight_key, drifted, now, las
     """
     return (current_key == exact_key and inflight_key is None and drifted
             and now - last_submit_t >= refresh_s)
+
+
+def encounter_source(burn_exists: bool, exact_current: bool, preview_encounters,
+                     live_encounters) -> list:
+    """Which encounters the map's cues show.
+
+    With a burn: the exact preview's, but only while it is for the current burn (none
+    while the burn is being edited -- never the un-burned path's). Without one: the live
+    trajectory's.
+    """
+    if burn_exists:
+        return list(preview_encounters or []) if exact_current else []
+    return list(live_encounters or [])

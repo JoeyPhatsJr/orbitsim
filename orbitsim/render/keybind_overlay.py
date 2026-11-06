@@ -17,7 +17,7 @@ SANDBOX_BINDINGS = [
     ("M", "Toggle ship view / map"),
     ("1-8", "SAS mode (pro/retro/normal/...)"),
     ("U", "Toggle unlimited dV"),
-    ("I", "Plan intercept to target"),
+    ("I", "Plan transfer to target"),
     ("Click orbit", "Add burn / warp to here"),
     ("Drag handles", "Shape the burn"),
     ("Drag node", "Slide the burn along the orbit"),

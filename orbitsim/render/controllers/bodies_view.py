@@ -96,6 +96,7 @@ class BodiesView:
         self.app._traj_render_scale = [None for _ in world.vessels]
         self.app._traj_render_origin = [None for _ in world.vessels]
         self.app._traj_encounters = [None for _ in world.vessels]
+        self.app._traj_approach = [None for _ in world.vessels]   # TargetApproach or None
 
     def build_moon_and_lagrange(self):
         """Moon marker, SOI shell, Lagrange markers."""

@@ -107,45 +107,46 @@
   "distance_m": 15714863.298664957,
   "elevation": -1.3595397369784044
  },
- "sim_time_s": 233.3333333333329,
+ "sim_time_s": 18.833333333333208,
  "target": "Moon",
  "texts": [
-  "+3129",
-  "-10",
-  "-38",
-  "Altitude: 528.5 km",
+  "+3131",
+  "-25",
+  "-81",
+  "Altitude: 500.2 km",
   "Apoapsis: 2,465.2 km",
-  "Approach Moon: Pe 43,943 km  T-12d 08h  v-inf 1.2 km/s",
+  "Approach Moon: Pe 198 km  T-12d 12h  v-inf 1.1 km/s",
   "Fuel: 100%  (8,000 kg)",
   "Inclination: 8.1\u00b0",
   "MANEUVER",
-  "Maneuver dV: 3,129.6 m/s   (dV left 5,633 m/s)",
+  "Maneuver dV: 3,132.6 m/s   (dV left 5,633 m/s)",
   "Mass: 10,000 kg",
-  "NODE T-1h 00m  /  3,130 m/s",
+  "Moon encounter \u00b7 Pe 198 km",
+  "NODE T-1h 00m  /  3,133 m/s",
   "Node T",
-  "Node in T-57:16   dV 3,129.6 m/s",
+  "Node in T-1h 00m   dV 3,132.6 m/s",
   "Normal",
   "ORBIT",
   "Periapsis: 500.0 km",
   "Period: 115.6 min",
   "Prograde",
   "Radial",
-  "SAS: OFF    HDG 082\u00b0   PIT +02\u00b0",
-  "Sim time: 233 s past J2000",
-  "Speed: 8.045 km/s",
-  "T+ 0.0 DAYS     WARP  x100",
-  "T+0s",
-  "Target: Moon   CA T-12d 09h   sep 229 km   rel 1,106 m/s",
+  "SAS: OFF    HDG 082\u00b0   PIT +00\u00b0",
+  "Sim time: 19 s past J2000",
+  "Speed: 8.074 km/s",
+  "T+ 0.0 DAYS     WARP  x1",
+  "T+1.0h",
+  "TARGET  MOON",
   "Throttle: 0%",
-  "Thrust: 50.0 kN   TWR: 0.60",
-  "Total dV: 3,129.6 m/s",
+  "Thrust: 50.0 kN   TWR: 0.59",
+  "Total dV: 3,132.6 m/s",
   "VESSEL",
   "dV left: 5,633 m/s"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,
   "nodes": [
-   "ManeuverNode(epoch_s=3669.3724940036805, dv_prograde_mps=3129.318838880518, dv_normal_mps=-9.776302237516973, dv_radial_mps=-38.1405454593298)"
+   "ManeuverNode(epoch_s=3669.3678337444985, dv_prograde_mps=3131.4826099482625, dv_normal_mps=-25.12577989314082, dv_radial_mps=-81.39097532821069)"
   ],
   "orientation": [
    1.0,
@@ -154,30 +155,22 @@
    0.0
   ],
   "r": [
-   6650476.077494452,
-   1844507.9049327488,
-   263501.1317490292
+   6876605.817912752,
+   150528.82273891263,
+   21504.117545805475
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   -1936.263616506074,
-   7729.82056726005,
-   1104.2601052930504
+   -158.6663045340805,
+   7991.523283816693,
+   1141.6461846635348
   ]
  },
- "warp": 100.0,
+ "warp": 1.0,
  "world_labels": [
   [
    "AP",
-   true
-  ],
-  [
-   "CA: MOON",
-   true
-  ],
-  [
-   "CA: SHIP",
    true
   ],
   [
@@ -213,8 +206,12 @@
    false
   ],
   [
-   "Moon Pe 43,943 km  T-12d 08h",
+   "Moon Pe 198 km  T-12d 12h",
    false
+  ],
+  [
+   "Moon when you arrive",
+   true
   ],
   [
    "Neptune",
@@ -245,7 +242,7 @@
    false
   ],
   [
-   "dV 3,130 m/s  T-57:16",
+   "dV 3,133 m/s  T-1h 00m",
    false
   ]
  ]

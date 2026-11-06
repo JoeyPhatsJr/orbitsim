@@ -138,6 +138,7 @@ class OrbitApp(ShowBase):
         self._preview_future = None
         self._preview_future_key = None
         self._preview_encounters = []
+        self._preview_approach = None          # TargetApproach of the drawn exact preview
         self._preview_points = None            # cached exact preview samples [m]
         self._preview_built_scale = None       # zoom scale the exact line was built at
         self._preview_exact_key = None         # burn the drawn exact line belongs to
@@ -246,7 +247,7 @@ class OrbitApp(ShowBase):
         self.targeting.frame_target_label()
         self.bodies_view.frame_lagrange()
         self.bodies_view.frame_planets(scale)
-        self.targeting.frame_closest_approach(node)
+        self.targeting.frame_aim(node)
 
         self.flight_input.apply_mouse_orbit()
         self.bodies_view.update_starfield()
