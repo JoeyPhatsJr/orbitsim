@@ -2,6 +2,7 @@
 
 import numpy as np
 from orbitsim.core.moon import moon_state_at
+from orbitsim.render.hud.format import apsis_label
 from orbitsim.render.world_markers import distance_fade
 
 
@@ -31,17 +32,20 @@ class Readouts:
 
     def build_apsis_and_encounter_markers(self):
         """PE/AP markers + encounter periapsis cues."""
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
+        from orbitsim.render.world_labels import (
+            build_labeled_marker, build_tick_marker, build_world_label,
+        )
         self.app._apsis_positions = {"PE": None, "AP": None}
+        self.app._apsis_altitudes = {"PE": None, "AP": None}   # above the surface [m]
         self.app._apsis_nps = {}
         self.app._apsis_labels = {}
         for name, color in (
             ("PE", (0.30, 1.0, 0.58, 1.0)),
             ("AP", (0.38, 0.68, 1.0, 1.0)),
         ):
-            marker, label = build_labeled_marker(
-                self.app.render, name, color=color, marker_scale=5.5, label_scale=11.0
-            )
+            marker = build_tick_marker(self.app.render, color=color, length=7.0,
+                                       thickness_px=3.5 * self.app.line_px_scale())
+            label = build_world_label(self.app.render, "", color=color, scale=11.0)
             marker.hide()
             label.hide()
             self.app._apsis_nps[name] = marker
@@ -73,6 +77,10 @@ class Readouts:
             rx, ry, rz = self.app.transform.to_render(world_pos)
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 7.0)
+            altitude = self.app._apsis_altitudes[name]
+            text = apsis_label(name, altitude) if altitude is not None else ""
+            if label.node().get_text() != text:
+                label.node().set_text(text)
             marker.show()
 
     def update_marker_readability(self, focus_m) -> None:
@@ -89,14 +97,27 @@ class Readouts:
         add(self.app._target_label, None, self.app._target_label_position, 100, 0.55)
         add(self.app._aim_ghost_label, self.app._aim_ghost_np,
             self.app._aim_ghost_position, 85, 0.40)
+        if getattr(self.app, "_node_dv_label", None) is not None:   # the burn's one line
+            add(self.app._node_dv_label, None,
+                getattr(self.app, "_node_label_position", None), 90, 0.55)
         add(self.app._apsis_labels["PE"], self.app._apsis_nps["PE"],
             self.app._apsis_positions["PE"], 70)
         add(self.app._apsis_labels["AP"], self.app._apsis_nps["AP"],
             self.app._apsis_positions["AP"], 65)
+        # Lagrange points fade into the background unless one is the target: their
+        # labels don't compete for space, their markers dim (after the distance fade).
+        from orbitsim.render.controllers.bodies_view import BodiesView
+        target = getattr(self.app, "_target", None)
+        targeted = getattr(target, "name", None)
+        idle_markers = []
         for name, marker, label in zip(
             ("L1", "L2", "L3", "L4", "L5"), self.app._lagrange_nps, self.app._lagrange_labels
         ):
-            add(label, marker, self.app._lagrange_positions.get(name), 20)
+            if name == targeted:
+                add(label, marker, self.app._lagrange_positions.get(name), 20)
+            else:
+                label.hide()
+                idle_markers.append(marker)
 
         points_px = [self.app.targeting.marker_px(item[2]) for item in candidates]
         visible = declutter_indices(
@@ -116,6 +137,9 @@ class Readouts:
             if marker is not None and not marker.is_empty():
                 marker.set_transparency(TransparencyAttrib.M_alpha)
                 marker.set_alpha_scale(alpha)
+        for marker in idle_markers:
+            marker.set_transparency(TransparencyAttrib.M_alpha)
+            marker.set_alpha_scale(BodiesView.LAGRANGE_IDLE_ALPHA)
 
     def panel_rects_px(self):
         """Pixel rects (x0, y0, x1, y1), bottom-up, of the HUD panels drawn now: each

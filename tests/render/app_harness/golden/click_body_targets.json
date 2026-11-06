@@ -136,7 +136,7 @@
  "warp": 100.0,
  "world_labels": [
   [
-   "AP",
+   "Ap 2,464 km",
    true
   ],
   [
@@ -153,15 +153,15 @@
   ],
   [
    "L3",
-   false
+   true
   ],
   [
    "L4",
-   false
+   true
   ],
   [
    "L5",
-   false
+   true
   ],
   [
    "Mars",
@@ -180,7 +180,7 @@
    false
   ],
   [
-   "PE",
+   "Pe 498 km",
    false
   ],
   [

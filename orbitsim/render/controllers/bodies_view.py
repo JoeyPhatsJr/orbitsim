@@ -41,6 +41,7 @@ class BodiesView:
 
     MOON_RING_REFRESH_S = 6 * 3600.0  # sim-seconds between osculating Moon-ring rebuilds
     LAGRANGE_REFRESH_S = 10.0     # sim-seconds between L-point recomputes
+    LAGRANGE_IDLE_ALPHA = 0.25    # an L-point that isn't the target fades to this
     SOI_COLOR = (0.45, 0.65, 1.0, 1.0)         # cool blue tint (outside)
     SOI_INSIDE_COLOR = (0.45, 1.0, 0.65, 1.0)  # greenish "captured by the Moon"
     SOI_BASE_ALPHA = 0.10                       # faint translucent shell

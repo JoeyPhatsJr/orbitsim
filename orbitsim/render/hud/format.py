@@ -94,3 +94,15 @@ def burn_summary(dv_mps, ttn_s, duration_s) -> str:
     if duration_s is not None:
         parts.append(fmt_burn_duration(duration_s))
     return " · ".join(parts)
+
+
+def apsis_label(kind: str, altitude_m: float) -> str:
+    """Map label of an apsis tick: Pe 500 km / Ap 2,465 km (whole km above the surface)."""
+    return f"{'Pe' if kind == 'PE' else 'Ap'} {altitude_m / 1000.0:,.0f} km"
+
+
+def encounter_label(body_name: str, periapsis_alt_m: float, impact: bool) -> str:
+    """Map label of a predicted encounter: Moon encounter \u00b7 Pe 4,317 km / Moon impact."""
+    if impact:
+        return f"{body_name} impact"
+    return f"{body_name} encounter \u00b7 Pe {periapsis_alt_m / 1000.0:,.0f} km"

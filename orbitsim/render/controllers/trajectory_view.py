@@ -1,7 +1,8 @@
 """Live trajectory lines, encounter patches/cues, and teleport-coast operations."""
 
 from orbitsim.core.elements import state_to_elements
-from orbitsim.render.hud.format import fmt_countdown
+import numpy as np
+from orbitsim.render.hud.format import encounter_label
 from orbitsim.render.line_style import ENCOUNTER_STYLE, ORBIT_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
@@ -105,9 +106,15 @@ class TrajectoryView:
                 pe_point, ap_point = apsis_points_on_path(world_pts)
                 self.app._apsis_positions["PE"] = pe_point
                 self.app._apsis_positions["AP"] = ap_point
+                # Same points the ticks sit on; the line is Earth-centred.
+                radius = self.app.world.central.radius_m
+                self.app._apsis_altitudes["PE"] = float(np.linalg.norm(pe_point)) - radius
+                self.app._apsis_altitudes["AP"] = float(np.linalg.norm(ap_point)) - radius
             except ValueError:
                 self.app._apsis_positions["PE"] = None
                 self.app._apsis_positions["AP"] = None
+                self.app._apsis_altitudes["PE"] = None
+                self.app._apsis_altitudes["AP"] = None
 
     def rebuild_trajectory(self, idx, vessel, now_real) -> None:
         """Poll/submit N-body prediction work without blocking the render thread."""
@@ -191,9 +198,9 @@ class TrajectoryView:
             rx, ry, rz = self.app.transform.to_render(enc.periapsis_point_m)
             marker.set_pos(rx, ry, rz)
             marker.show()
-            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
-            tag = "IMPACT" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
-            countdown = max(0.0, enc.periapsis_epoch_s - now)
-            label.node().set_text(f"{enc.body_name} {tag}  T-{fmt_countdown(countdown)}")
+            text = encounter_label(enc.body_name, enc.periapsis_radius_m - enc.body_radius_m,
+                                   enc.impact)
+            if label.node().get_text() != text:
+                label.node().set_text(text)
             label.set_pos(rx, ry, rz + 8.0)
             label.show()

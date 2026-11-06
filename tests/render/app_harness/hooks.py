@@ -221,3 +221,16 @@ def orbit_points_under_navball(app) -> int:
         if px is not None and l * w <= px[0] <= r * w and b * h <= px[1] <= t * h:
             count += 1
     return count
+
+
+def world_label_texts(app):
+    """Texts of every world (render) label, shown or hidden."""
+    return sorted(np_.node().get_text() for np_ in app.render.find_all_matches("**/+TextNode")
+                  if np_.node().get_text().strip())
+
+
+def lagrange_state(app):
+    """{L-point: (marker alpha scale, label shown)}."""
+    return {name: (float(marker.get_color_scale()[3]), not label.is_hidden())
+            for name, marker, label in zip(("L1", "L2", "L3", "L4", "L5"),
+                                           app._lagrange_nps, app._lagrange_labels)}

@@ -4,8 +4,7 @@ import numpy as np
 from direct.gui.DirectButton import DirectButton
 from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
-from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.hud.format import burn_summary, fmt_countdown
+from orbitsim.render.hud.format import burn_summary
 from orbitsim.render.line_style import ESTIMATE_STYLE, PLAN_STYLE
 from orbitsim.render.node_edit import (
     NUDGE_DV, NUDGE_KEYS, NUDGE_TIME, nudge_rate, snap_dv, snap_epoch,
@@ -46,6 +45,7 @@ class ManeuverEditor:
         self.app._auto_execute_node = False
         self.app._node_marker_np = None
         self.app._node_dv_label = None
+        self.app._node_label_position = None   # world position of the burn's map label
         from orbitsim.render.ui.hud_layout import PANELS
         from orbitsim.render.ui.theme import THEME, button_options
         from orbitsim.render.ui.widgets import layout_panel_frame
@@ -476,22 +476,24 @@ class ManeuverEditor:
             npos = apply_maneuver(v0.state, node).r
             mx, my, mz = self.app.transform.to_render(npos)
             if self.app._node_marker_np is None:
-                self.app._node_marker_np = make_uv_sphere(1.0, 8, 12)
-                self.app._node_marker_np.reparent_to(self.app.render)
-                self.app._node_marker_np.set_color(0.3, 1.0, 1.0, 1.0)
-                self.app._node_marker_np.set_light_off()
+                # A ring on the orbit (node_handles sizes it to NODE_RADIUS_PX).
+                from orbitsim.render.world_labels import build_ring_marker
+                self.app._node_marker_np = build_ring_marker(
+                    self.app.render, color=(0.3, 1.0, 1.0, 1.0),
+                    thickness_px=2.5 * self.app.line_px_scale())
             self.app._node_marker_np.set_pos(mx, my, mz)
             if self.app._node_dv_label is None:
                 from orbitsim.render.world_labels import build_world_label
                 self.app._node_dv_label = build_world_label(
                     self.app.render, "", color=(0.3, 1.0, 1.0, 1.0), scale=11.0)
-            dv_text = f"dV {node.magnitude_mps:,.0f} m/s"
-            if ttn > 0:
-                dv_text += f"  T-{fmt_countdown(ttn)}"
-            self.app._node_dv_label.node().set_text(dv_text)
+            text = self.burn_summary_text(node)   # the burn panel's readout, word for word
+            if self.app._node_dv_label.node().get_text() != text:
+                self.app._node_dv_label.node().set_text(text)
             self.app._node_dv_label.set_pos(mx, my, mz + 8.0)
             self.app._node_dv_label.show()
+            self.app._node_label_position = np.asarray(npos, dtype=np.float64).copy()
         elif self.app._node_marker_np is not None:
+            self.app._node_label_position = None
             self.app._node_marker_np.remove_node()
             self.app._node_marker_np = None
             if self.app._node_dv_label is not None:

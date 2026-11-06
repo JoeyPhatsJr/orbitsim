@@ -139,7 +139,11 @@
  "warp": 1.0,
  "world_labels": [
   [
-   "AP",
+   "Ap 2,463 km",
+   true
+  ],
+  [
+   "Burn 3,133 m/s \u00b7 in 1h 00m \u00b7 6m 54s burn",
    true
   ],
   [
@@ -175,7 +179,7 @@
    false
   ],
   [
-   "Moon Pe 198 km  T-12d 12h",
+   "Moon encounter \u00b7 Pe 198 km",
    false
   ],
   [
@@ -187,7 +191,7 @@
    false
   ],
   [
-   "PE",
+   "Pe 500 km",
    false
   ],
   [
@@ -208,10 +212,6 @@
   ],
   [
    "Venus",
-   false
-  ],
-  [
-   "dV 3,133 m/s  T-1h 00m",
    false
   ]
  ]

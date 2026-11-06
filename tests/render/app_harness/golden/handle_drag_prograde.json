@@ -137,7 +137,11 @@
  "warp": 100.0,
  "world_labels": [
   [
-   "AP",
+   "Ap 2,464 km",
+   false
+  ],
+  [
+   "Burn 25 m/s \u00b7 in 32 min \u00b7 5s burn",
    false
   ],
   [
@@ -177,7 +181,7 @@
    false
   ],
   [
-   "PE",
+   "Pe 498 km",
    false
   ],
   [
@@ -198,10 +202,6 @@
   ],
   [
    "Venus",
-   false
-  ],
-  [
-   "dV 25 m/s  T-32:34",
    false
   ]
  ]

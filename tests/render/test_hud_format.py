@@ -115,3 +115,14 @@ def test_fmt_burn_duration():
 def test_burn_summary_without_duration():
     from orbitsim.render.hud.format import burn_summary
     assert burn_summary(12.0, 90.0, None) == "Burn 12 m/s · in 1 min"
+
+
+def test_apsis_label():
+    from orbitsim.render.hud.format import apsis_label
+    assert apsis_label("PE", 500.0e3) == "Pe 500 km" and apsis_label("AP", 2_465.2e3) == "Ap 2,465 km"
+
+
+def test_encounter_label():
+    from orbitsim.render.hud.format import encounter_label
+    assert encounter_label("Moon", 4_317.4e3, False) == "Moon encounter \u00b7 Pe 4,317 km"
+    assert encounter_label("Moon", -10.0, True) == "Moon impact"

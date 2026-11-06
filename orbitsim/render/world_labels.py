@@ -51,3 +51,37 @@ def build_labeled_marker(
     marker.set_transparency(TransparencyAttrib.M_alpha)
     label = build_world_label(parent, text, color=color, scale=label_scale)
     return marker, label
+
+
+def _billboard_unlit(np_, color):
+    from panda3d.core import TransparencyAttrib
+    np_.set_color(*color)
+    np_.set_billboard_point_eye()
+    np_.set_light_off()
+    np_.set_depth_write(False)
+    np_.set_transparency(TransparencyAttrib.M_alpha)
+    return np_
+
+
+def build_tick_marker(parent, *, color, length: float = 6.0, thickness_px: float = 3.0):
+    """A short screen-facing bar ``length`` render units long (the camera rig keeps a
+    render unit a constant on-screen size), for apsis ticks on an orbit line."""
+    from panda3d.core import LineSegs
+    segs = LineSegs("tick")
+    segs.set_thickness(thickness_px)
+    segs.move_to(-0.5 * length, 0.0, 0.0)
+    segs.draw_to(0.5 * length, 0.0, 0.0)
+    return _billboard_unlit(parent.attach_new_node(segs.create()), color)
+
+
+def build_ring_marker(parent, *, color, segments: int = 32, thickness_px: float = 2.5):
+    """A screen-facing unit ring (scale it to the on-screen radius): a planned burn."""
+    import math
+    from panda3d.core import LineSegs
+    segs = LineSegs("ring")
+    segs.set_thickness(thickness_px)
+    segs.move_to(1.0, 0.0, 0.0)
+    for i in range(1, segments + 1):
+        a = 2.0 * math.pi * i / segments
+        segs.draw_to(math.cos(a), 0.0, math.sin(a))
+    return _billboard_unlit(parent.attach_new_node(segs.create()), color)
