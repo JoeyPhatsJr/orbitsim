@@ -59,3 +59,38 @@ def fmt_warp(warp: float, locked: bool) -> str:
     """Warp factor: ×100, ×1,000,000; ×1 LOCKED while thrusting."""
     text = f"×{warp:,.0f}"
     return f"{text} LOCKED" if locked else text
+
+
+def fmt_until(seconds) -> str:
+    """Time until a burn: now (<= 2 s) / in 45 s / in 23 min / in 2h 05m / in 3d 04h."""
+    s = int(seconds)
+    if seconds <= 2.0:
+        return "now"
+    if s < 60:
+        return f"in {s} s"
+    if s < 3600:
+        return f"in {s // 60} min"
+    if s < 86400:
+        return f"in {s // 3600}h {s % 3600 // 60:02d}m"
+    return f"in {s // 86400}d {s % 86400 // 3600:02d}h"
+
+
+def fmt_burn_duration(seconds) -> str:
+    """Burn length, nearest second: 35s burn / 6m 54s burn / 1h 02m burn."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s burn"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s burn"
+    return f"{s // 3600}h {s % 3600 // 60:02d}m burn"
+
+
+def burn_summary(dv_mps, ttn_s, duration_s) -> str:
+    """One line for a planned burn: Burn 3,130 m/s · in 23 min · 6m 54s burn.
+    No time part for a burn-now node (ttn_s None), no duration part when unknown."""
+    parts = [f"Burn {dv_mps:,.0f} m/s"]
+    if ttn_s is not None:
+        parts.append(fmt_until(ttn_s))
+    if duration_s is not None:
+        parts.append(fmt_burn_duration(duration_s))
+    return " · ".join(parts)

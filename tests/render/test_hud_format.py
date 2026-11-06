@@ -89,3 +89,29 @@ def test_warp_formats():
     from orbitsim.render.hud.format import fmt_warp
     assert fmt_warp(100.0, False) == "×100" and fmt_warp(1e6, False) == "×1,000,000"
     assert fmt_warp(1.0, True) == "×1 LOCKED"
+
+
+def test_burn_summary():
+    from orbitsim.render.hud.format import burn_summary, fmt_until
+    assert burn_summary(3130.0, 23 * 60, 413.8) == "Burn 3,130 m/s · in 23 min · 6m 54s burn"
+    # (Ruling: the plan's 7.5 s case reads 7.4 here -- 7.5 s rounds to 8 s at
+    # 'nearest second', which the interface states.)
+    assert burn_summary(37.4, None, 7.4) == "Burn 37 m/s · 7s burn"
+    assert fmt_until(1.0) == "now" and fmt_until(2 * 3600 + 5 * 60) == "in 2h 05m"
+
+
+def test_fmt_until():
+    from orbitsim.render.hud.format import fmt_until
+    assert [fmt_until(s) for s in (2.0, 45.0, 23 * 60 + 5, 3 * 86400 + 4 * 3600 + 59)] == [
+        "now", "in 45 s", "in 23 min", "in 3d 04h"]
+
+
+def test_fmt_burn_duration():
+    from orbitsim.render.hud.format import fmt_burn_duration
+    assert [fmt_burn_duration(s) for s in (35.2, 413.8, 3720.0)] == [
+        "35s burn", "6m 54s burn", "1h 02m burn"]
+
+
+def test_burn_summary_without_duration():
+    from orbitsim.render.hud.format import burn_summary
+    assert burn_summary(12.0, 90.0, None) == "Burn 12 m/s · in 1 min"

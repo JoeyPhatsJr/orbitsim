@@ -17,12 +17,12 @@ h = Harness(app)
 h.press("LAUNCH SANDBOX")
 h.step(5)
 out = []
-hooks.set_jog(app, "pro", 0.6)          # player drags the prograde control
+hooks.set_burn(app, pro=5.0)            # player shapes the burn (handle / nudge)
 h.step(1)
 out.append(hooks.preview_lines(app))    # editing: estimate only
+hooks.set_burn(app, pro=6.0)            # still shaping it
 h.step(3)
 out.append(hooks.preview_lines(app))    # still editing: estimate only
-hooks.set_jog(app, "pro", 0.0)          # released
 h.step(30)                              # 0.5 s at 60 fps: settled, exact computed + drawn
 out.append(hooks.preview_lines(app))
 h.send("wheel_up")                      # zoom: the (no longer resubmitted) line must rescale
@@ -61,7 +61,7 @@ install_determinism()
 app = build_app("sandbox")
 h = Harness(app)
 h.press("LAUNCH SANDBOX"); h.step(5)
-hooks.set_jog(app, "pro", 0.6); h.step(3); hooks.set_jog(app, "pro", 0.0)
+hooks.set_burn(app, pro=10.0); h.step(3)
 h.step(30)                               # settled: exact drawn
 settled = hooks.preview_start_error_m(app)
 h.step(600)                              # ~1,000 s of sim time at x100: the ship moves on
@@ -85,7 +85,7 @@ app = build_app("sandbox")
 h = Harness(app)
 h.press("LAUNCH SANDBOX"); h.step(5)
 h.press("Next Ap")                       # schedule the node at the next apoapsis
-hooks.set_jog(app, "pro", 0.6); h.step(3); hooks.set_jog(app, "pro", 0.0)
+hooks.set_burn(app, pro=10.0); h.step(3)
 h.step(30)                               # settled: exact drawn
 h.send("z"); h.step(120); h.send("x")    # 2 s of manual full-throttle thrust
 h.step(30)

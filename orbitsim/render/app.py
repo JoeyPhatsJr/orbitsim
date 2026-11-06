@@ -214,9 +214,6 @@ class OrbitApp(ShowBase):
         self._ui_scale = scale
         for name, frame in self._hud_panels.items():
             scale_panel(frame, PANELS[name], scale)
-        if hasattr(self, "_maneuver_frame"):
-            self._maneuver_frame.set_scale(scale)
-            self._action_frame.set_scale(scale)
 
     def _update(self, task):
         real_dt = _global_clock.get_dt()
@@ -241,8 +238,7 @@ class OrbitApp(ShowBase):
 
         target_pos, maneuver_dir = self._frame_flight(real_dt)
 
-        # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
-        self.maneuver_editor.apply_jogs(real_dt)
+        # Held nudge keys and handle drags change delta-V at a real-time rate.
         self.maneuver_editor.apply_nudges(real_dt)
         self.node_handles.apply_drag(real_dt)
 

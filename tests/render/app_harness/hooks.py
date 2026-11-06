@@ -19,11 +19,6 @@ def current_target_name(app):
     return None if target is None else target.name
 
 
-def set_jog(app, axis: str, value: float) -> None:
-    """Deflect a maneuver jog slider ('pro', 'nrm', 'rad') to ``value`` in [-1, 1]."""
-    app._jog[axis]["value"] = value
-
-
 def preview_lines(app):
     """(estimate_shown, exact_shown) for the maneuver preview line."""
     return (getattr(app, "_preview_estimate_np", None) is not None,
@@ -143,7 +138,15 @@ def encounter_marker_count(app) -> int:
     return sum(1 for m in app._encounter_marker_nps if not m.is_hidden())
 
 
-def set_burn(app, pro: float, nrm: float, rad: float) -> None:
+def set_burn(app, pro: float = 0.0, nrm: float = 0.0, rad: float = 0.0) -> None:
     """Set the planned burn's delta-V [m/s], as the handles or nudge keys would."""
     for axis, value in (("pro", pro), ("nrm", nrm), ("rad", rad)):
         app.maneuver_editor.set_dv(axis, value)
+
+
+def burn_panel(app):
+    """(readout text or None, labels of the shown buttons in order) of the burn panel."""
+    readout = app._burn_readout_text
+    text = None if readout.is_hidden() else readout.getText()
+    labels = [str(b["text"]).strip() for b in app._burn_buttons if not b.is_hidden()]
+    return text, labels
