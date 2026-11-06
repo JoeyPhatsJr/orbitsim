@@ -126,3 +126,23 @@ def test_planner_never_uses_flight_propagators(monkeypatch, seed, plan):
         monkeypatch.setattr(nb, name, lambda *a, **k: pytest.fail("planner used flight physics"))
     again = moon_flyby_node(_leo(), seed)
     assert again.node == plan.node
+
+
+def test_with_an_executor_no_evaluation_runs_on_the_calling_thread(monkeypatch, seed, plan):
+    # The app calls the planner from its planning *thread*; any evaluation run there
+    # holds the render process's GIL for ~0.3 s (node_planned frame time +47%). With an
+    # executor (the app's process pool) every evaluation must go to it.
+    import threading
+    from orbitsim.core import flyby_targeting as ft
+    caller = threading.get_ident()
+    threads = []
+    real = ft.first_moon_pass
+
+    def recorded(*a, **k):
+        threads.append(threading.get_ident())
+        return real(*a, **k)
+    monkeypatch.setattr(ft, "first_moon_pass", recorded)
+    with ThreadPoolExecutor(3) as ex:
+        pooled = moon_flyby_node(_leo(), seed, executor=ex)
+    assert threads and caller not in threads
+    assert pooled.node == plan.node

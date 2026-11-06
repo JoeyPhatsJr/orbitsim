@@ -151,15 +151,24 @@ def moon_flyby_node(ship_state, seed: ManeuverNode, target_alt_m=FLYBY_TARGET_AL
     ``target_alt_m`` above the surface, within ``FLYBY_TOL_M`` of the prediction model.
 
     Returns the best iterate seen; ``converged`` says whether it met the tolerance.
-    ``executor`` fans the three finite-difference evaluations out (ordered map, so
-    pooled and serial results are bit-identical). Raises ValueError when the seed
-    never gets near the Moon.
+    ``executor`` fans the three finite-difference evaluations out (ordered map) and runs
+    every other evaluation on it too; pooled and serial results are bit-identical.
+    Raises ValueError when the seed never gets near the Moon.
     """
     epoch_s = float(seed.epoch_s)
     rp_target = R_MOON + float(target_alt_m)
     x = np.array([seed.dv_prograde_mps, seed.dv_normal_mps, seed.dv_radial_mps],
                  dtype=np.float64)
-    p = _pass_for_dv(ship_state, epoch_s, tuple(x))
+
+    def evaluate(dv_rtn):
+        # With an executor, even the sequential evaluations run there: the app calls
+        # this from its planning *thread*, where ~0.3 s of CPU per evaluation would hold
+        # the render process's GIL (frame time +47% while planning).
+        if executor is None:
+            return _pass_for_dv(ship_state, epoch_s, dv_rtn)
+        return executor.submit(_pass_for_dv, ship_state, epoch_s, dv_rtn).result()
+
+    p = evaluate(tuple(x))
 
     # Jacobian dB/d(dv) at the seed, by forward differences.
     probes = _map_rows(partial(_pass_for_axis, ship_state, epoch_s, tuple(x), FD_STEP_MPS),
@@ -179,7 +188,7 @@ def moon_flyby_node(ship_state, seed: ManeuverNode, target_alt_m=FLYBY_TARGET_AL
         new_p = None
         for _half in range(MAX_HALVINGS + 1):
             try:
-                cand = _pass_for_dv(ship_state, epoch_s, tuple(x + step))
+                cand = evaluate(tuple(x + step))
             except ValueError:
                 cand = None
             if cand is not None and float(np.linalg.norm(b_star - cand.b_plane_m)) < err:
