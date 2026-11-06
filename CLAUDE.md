@@ -239,6 +239,29 @@ don't batch many changes into one late commit. Stage specific files by **explici
   The exact N-body job is submitted once the burn has been still `PREVIEW_SETTLE_S`, once per
   burn (`should_submit_exact`). Both lines rebuild from cached points on zoom; don't resubmit
   to rescale. Keep the live line cheap (1 orbit, 256 pts).
+- **Encounter periapsis comes from the conic, not the samples.** Drawn paths are sampled
+  hours apart (2.8 h on a Moon transfer). A parabola through the samples read a grazing
+  (-26 km) Moon pass as 3,298 km. `find_encounters(..., velocities=, body_state_fn=)` takes
+  the body-relative conic at the nearest sample (`core.flyby.conic_periapsis`) for the
+  radius, epoch, Pe point and impact test. Without those arguments it falls back to the
+  parabola (synthetic tests).
+- **Where to aim: status box + "when you arrive" ghost (`render/aim_status.py`,
+  `targeting.frame_aim`).** The box takes a colour only from an exact N-body result for
+  the *current* burn and target: `maneuver_editor.exact_preview_current(node)` (the preview
+  key includes the target name), or with no burn the live line's `_traj_approach[0]` for
+  that target. Otherwise it is grey "checking…" with the Earth-only Kepler estimate.
+  While a burn is being edited the encounter cues show nothing (`encounter_source`), never
+  the un-burned path. Rajdhani has no ✓/✗ glyphs, so the icons are LineSegs.
+- **Moon auto-plan = Lambert seed + B-plane correction (`core/flyby_targeting.py`).**
+  `intercept_node` aims at the Moon's centre. In N-body that seed passes ~44,000 km from
+  the Moon. `moon_flyby_node` keeps the burn epoch and corrects the dV on the B-plane to a
+  200 km periapsis: FD Jacobian through `_map_rows` (pooled == serial), damped Newton,
+  Broyden updates. About 8 evaluations, ~2 s. With an executor *every* evaluation runs on
+  it, not just the FD fan-out. On the planning thread the serial ones held the GIL, and
+  `node_planned` frame time rose 47%. It runs on the *prediction* propagator, so
+  the plan matches the drawn preview (198 km). The flight integrator flies that plan to a
+  147–165 km pass (3600 / 600 / 60 s chunks), safe but about 40 km low. The pre-Yoshida
+  flight crashed it.
 - **Editing a burn: one state, three inputs.** The slider panel, the nudge keys (`node_edit.NUDGE_KEYS`)
   and the 3D handles (`node_handles`) all write `app._dv` / `app._node_epoch_s` through
   `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree. Clicking
