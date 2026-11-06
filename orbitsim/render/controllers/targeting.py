@@ -2,7 +2,7 @@
 the "when you arrive" ghost."""
 
 import numpy as np
-from orbitsim.core.constants import MU_SUN
+from orbitsim.core.constants import MU_SUN, R_MOON
 from orbitsim.core.elements import state_to_elements
 from orbitsim.core.maneuvers import apply_maneuver
 from orbitsim.core.planets import (
@@ -106,6 +106,14 @@ class Targeting:
             icon = panel.attach_new_node(segs.create())
             icon.hide()
             self.app._aim_icon_nps[kind] = icon
+        from direct.gui.DirectButton import DirectButton
+        from orbitsim.render.ui.theme import button_options
+        self.app._plan_transfer_btn = DirectButton(
+            text="Plan transfer", scale=0.040, pos=(-0.70, 0.0, self.BUTTONS_Z),
+            command=self.plan_intercept, parent=panel, **button_options())
+        self.app._clear_target_btn = DirectButton(
+            text="Clear target", scale=0.040, pos=(-0.22, 0.0, self.BUTTONS_Z),
+            command=self.clear_target, parent=panel, **button_options())
         panel.hide()
 
     def aim_target_name(self):
@@ -187,7 +195,7 @@ class Targeting:
         """
         import numpy as np
         from orbitsim.core.elements import state_to_elements
-        from orbitsim.render.targets import PlanetTarget
+        from orbitsim.render.targets import MoonTarget, PlanetTarget
         if self.app._target is None:
             self.app._flash_message("No target selected")
             return
@@ -200,7 +208,7 @@ class Targeting:
         if isinstance(self.app._target, PlanetTarget):
             from orbitsim.core.optimize import interplanetary_departure_node_by_name
             from orbitsim.core.planets import A_EARTH, _N_EARTH
-            from orbitsim.core.constants import MU_SUN
+            from orbitsim.core.constants import MU_SUN, R_MOON
             target_a = {
                 "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
                 "Jupiter": A_JUPITER, "Saturn": A_SATURN,
@@ -240,25 +248,45 @@ class Targeting:
             ship_state = v0.state
             target_now = self.app._target.state_at(now)
             mu = self.app.world.central.mu
+            if isinstance(self.app._target, MoonTarget):
+                from orbitsim.core.flyby_targeting import moon_flyby_node
 
-            def job():
-                return intercept_node(
-                    ship_state, target_now, mu, dep, tof, executor=grid_executor)
+                def job():
+                    # The Lambert seed aims at the Moon's centre; correct it onto a
+                    # ~200 km pass on the same propagator the preview draws.
+                    seed = intercept_node(
+                        ship_state, target_now, mu, dep, tof, executor=grid_executor)
+                    return moon_flyby_node(ship_state, seed, executor=grid_executor)
+            else:
+                def job():
+                    return intercept_node(
+                        ship_state, target_now, mu, dep, tof, executor=grid_executor)
 
-        self.app._flash_message(f"Planning {self.app._target.name} intercept...")
+        self.app._flash_message(f"Planning {self.app._target.name} transfer...")
         self.app._planning_future = self.app._planning_executor.submit(job)
 
-    def _apply_planned_node(self, node) -> None:
-        """Install a freshly-planned maneuver node into the editor (render thread only)."""
-        self.app._node_epoch_s = node.epoch_s
+    def _apply_planned_node(self, result) -> None:
+        """Install a freshly-planned burn (ManeuverNode, or a FlybyPlan for the Moon)
+        into the editor (render thread only)."""
+        from orbitsim.core.flyby_targeting import FLYBY_TARGET_ALT_M, FlybyPlan
+        node = result.node if isinstance(result, FlybyPlan) else result
+        editor = self.app.maneuver_editor
         self.app._auto_execute_node = False
-        self.app._dv["pro"] = node.dv_prograde_mps
-        self.app._dv["nrm"] = node.dv_normal_mps
-        self.app._dv["rad"] = node.dv_radial_mps
-        for axis in ("pro", "nrm", "rad"):
-            self.app._dv_value_text[axis].setText(f"{self.app._dv[axis]:+.0f}")
-        self.app.maneuver_editor.refresh_readout()
-        self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
+        editor.set_node_epoch(node.epoch_s)
+        editor.set_dv("pro", node.dv_prograde_mps)
+        editor.set_dv("nrm", node.dv_normal_mps)
+        editor.set_dv("rad", node.dv_radial_mps)
+        if not isinstance(result, FlybyPlan):
+            self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
+            return
+        alt_km = (result.moon_pass.periapsis_radius_m - R_MOON) / 1000.0
+        if result.converged:
+            self.app._flash_message(
+                f"Moon transfer planned · Pe {alt_km:,.0f} km · dV {node.magnitude_mps:,.0f} m/s")
+        else:
+            self.app._flash_message(
+                f"Moon transfer planned · closest Pe {alt_km:,.0f} km "
+                f"(couldn't reach {FLYBY_TARGET_ALT_M / 1000.0:,.0f} km)")
 
     def poll_planning(self) -> None:
         """Apply an intercept plan once its background job finishes."""
@@ -267,7 +295,7 @@ class Targeting:
             return
         self.app._planning_future = None
         try:
-            node = future.result()
+            result = future.result()
         except ValueError:
             self.app._flash_message("No intercept found")
             return
@@ -276,7 +304,7 @@ class Targeting:
             traceback.print_exc()
             self.app._flash_message("Planning failed")
             return
-        self._apply_planned_node(node)
+        self._apply_planned_node(result)
 
     def clear_target(self):
         """Deselect the current target; hide its panel, ghost and readout."""
@@ -314,6 +342,7 @@ class Targeting:
             return
         app._target_panel.show()
         app._target_title_text.setText(f"TARGET  {target.name.upper()}")
+        self._sync_plan_button(target)
         name = self.aim_target_name()
         if name is None:
             self._frame_live_distance(target)
@@ -338,6 +367,17 @@ class Targeting:
         else:
             ghost_pos = estimate_pos
         self._place_ghost(name, ghost_pos, status, exact)
+
+    def _sync_plan_button(self, target) -> None:
+        """"Plan {name} transfer" for the current target; none for the Sun."""
+        btn = self.app._plan_transfer_btn
+        if target.name == "Sun":
+            btn.hide()
+            return
+        label = f"Plan {target.name} transfer"
+        if btn["text"] != label:            # re-setting text rebuilds the button geometry
+            btn["text"] = label
+        btn.show()
 
     def _frame_live_distance(self, target) -> None:
         """Lagrange point / Sun: live distance + relative speed, no status box or ghost."""

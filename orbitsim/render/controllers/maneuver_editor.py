@@ -130,9 +130,7 @@ class ManeuverEditor:
             ("Next Pe", self._node_to_pe),
             ("Next Ap", self._node_to_ap),
             ("Clear", self._clear_node),
-            ("Clear Tgt", self.app.targeting.clear_target),
-            ("Intercept", self.app.targeting.plan_intercept),
-        ]
+        ]   # "Clear target" / "Plan {target} transfer" live in the target panel
         for i, (label, cmd) in enumerate(node_btns):
             DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
                          command=cmd, parent=self.app._maneuver_frame, **button_options())

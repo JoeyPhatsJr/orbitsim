@@ -24,6 +24,9 @@ h.send("i")                                   # plan the transfer
 h.step(30)                                    # applied, settled (0.25 s), exact drawn
 out["planned"] = hooks.aim_status(app)
 out["planned_markers"] = hooks.encounter_marker_count(app)
+h.press("Plan Moon transfer")                 # the panel button re-plans the same state
+h.step(30)
+out["replanned"] = hooks.aim_status(app)
 pro, nrm, rad = hooks.node_state(app)[1:]
 hooks.set_burn(app, pro + 25.0, nrm, rad)     # the player reshapes the burn
 h.step(1)
@@ -32,6 +35,11 @@ out["editing_markers"] = hooks.encounter_marker_count(app)
 print("RESULT", repr(out))
 app.destroy()
 """
+
+
+def _pe_km(text):
+    """The Pe altitude [km] in 'Moon encounter · Pe 1,234 km'."""
+    return float(text.split("Pe ")[1].split(" km")[0].replace(",", ""))
 
 
 def _run(probe):
@@ -46,6 +54,10 @@ def test_status_follows_the_exact_path():
     out = _run(PROBE)
     assert out["no_burn"][0] == "miss", out           # LEO never reaches the Moon
     assert out["no_burn"][1].startswith("No encounter · closest "), out
-    assert out["planned"][0] in ("encounter", "miss", "impact"), out   # coloured = exact
+    assert out["planned"][0] == "encounter", out       # the plan aims a ~200 km pass
+    assert 150.0 <= _pe_km(out["planned"][1]) <= 250.0, out
+    assert out["planned_markers"] == 1, out
+    assert out["replanned"][0] == "encounter", out     # re-planning is idempotent
+    assert 150.0 <= _pe_km(out["replanned"][1]) <= 250.0, out
     assert out["editing"][0] == "checking", out       # new burn: grey until its exact result
     assert out["editing_markers"] == 0, out           # never the un-burned path's markers

@@ -220,6 +220,15 @@ def node_drag_slides_time(h):
     h.step(5)
 
 
+def moon_transfer_status(h):
+    """Target the Moon (amber status), press Plan Moon transfer (green, ~200 km pass)."""
+    _launch_sandbox(h)
+    hooks.select_target(h.app, "Moon")
+    h.step(150)
+    h.press("Plan Moon transfer")
+    h.step(30)          # applied, settled (PREVIEW_SETTLE_S = 0.25 s), exact preview in
+
+
 SCENARIOS = {
     "boot_idle": ("sandbox", boot_idle),
     "burn": ("sandbox", burn),
@@ -236,6 +245,7 @@ SCENARIOS = {
     "click_body_targets": ("sandbox", click_body_targets),
     "handle_drag_prograde": ("sandbox", handle_drag_prograde),
     "node_drag_slides_time": ("sandbox", node_drag_slides_time),
+    "moon_transfer_status": ("sandbox", moon_transfer_status),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
 }
