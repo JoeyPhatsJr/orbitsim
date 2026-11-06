@@ -130,3 +130,20 @@ def orbit_line_ready(app) -> bool:
     """Whether the live orbit line has been sampled (real pools compute it async)."""
     cache = getattr(app, "_traj_world_cache", None)
     return bool(cache) and cache[0] is not None
+
+
+def aim_status(app):
+    """(kind, text) of the target status box, or None when it isn't shown."""
+    status = getattr(app, "_aim_status", None)
+    return None if status is None else (status.kind, status.text)
+
+
+def encounter_marker_count(app) -> int:
+    """How many predicted-encounter markers are shown on the map."""
+    return sum(1 for m in app._encounter_marker_nps if not m.is_hidden())
+
+
+def set_burn(app, pro: float, nrm: float, rad: float) -> None:
+    """Set the planned burn's delta-V [m/s], as the handles or nudge keys would."""
+    for axis, value in (("pro", pro), ("nrm", nrm), ("rad", rad)):
+        app.maneuver_editor.set_dv(axis, value)

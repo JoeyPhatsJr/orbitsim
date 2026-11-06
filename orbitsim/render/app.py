@@ -247,7 +247,7 @@ class OrbitApp(ShowBase):
         self.targeting.frame_target_label()
         self.bodies_view.frame_lagrange()
         self.bodies_view.frame_planets(scale)
-        self.targeting.frame_closest_approach(node)
+        self.targeting.frame_aim(node)
 
         self.flight_input.apply_mouse_orbit()
         self.bodies_view.update_starfield()

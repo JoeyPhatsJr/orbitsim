@@ -5,7 +5,9 @@ from orbitsim.core.elements import state_to_elements
 from orbitsim.render.hud.format import fmt_countdown
 from orbitsim.render.line_style import ENCOUNTER_STYLE, ORBIT_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
-from orbitsim.render.trajectory_helpers import coast_chunks, localize_polyline
+from orbitsim.render.trajectory_helpers import (
+    coast_chunks, encounter_source, localize_polyline,
+)
 from orbitsim.render.trajectory_sampling import (
     sample_trajectory,
     trajectory_horizon_s as _trajectory_horizon_s,
@@ -163,15 +165,18 @@ class TrajectoryView:
     def update_encounter_cues(self) -> None:
         """Place predicted-flyby periapsis markers and set the HUD approach line.
 
-        Shows the post-burn preview's encounters while a maneuver is planned,
-        otherwise the live trajectory's. The HUD line is only set when the vessel
+        Shows the exact post-burn preview's encounters while a maneuver is planned (none
+        while it is being edited and the exact result is stale), otherwise the live
+        trajectory's. The HUD line is only set when the vessel
         is not already inside an SOI (the live flyby readout takes that slot)."""
         if not hasattr(self.app, "_encounter_marker_nps"):
             return
         now = self.app.clock.sim_time_s
-        source = (self.app._preview_encounters
-                  if (self.app._preview_np is not None and self.app._preview_encounters)
-                  else (self.app._traj_encounters[0] or []))
+        node = self.app.maneuver_editor.current_node()
+        burn = node.magnitude_mps > 0.0
+        source = encounter_source(
+            burn, burn and self.app.maneuver_editor.exact_preview_current(node),
+            self.app._preview_encounters, self.app._traj_encounters[0])
         flybys = sorted(
             (e for e in source
              if e.body_name not in ("Earth", "Sun")

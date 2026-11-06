@@ -287,6 +287,12 @@ class ManeuverEditor:
             dv_radial_mps=self.app._dv["rad"],
         )
 
+    def exact_preview_current(self, node) -> bool:
+        """Whether the drawn exact preview is for this burn and the current target."""
+        key = maneuver_preview_key(node, self.app._node_epoch_s,
+                                   self.app.targeting.aim_target_name())
+        return self.app._preview_exact_key == key
+
     def time_to_node(self):
         """Seconds until the scheduled node, or None if no node is scheduled."""
         if self.app._node_epoch_s is None:

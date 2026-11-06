@@ -85,3 +85,19 @@ def test_preview_key_changes_with_target():
     n = ManeuverNode(10.0, 1.0, 0.0, 0.0)
     assert maneuver_preview_key(n, 10.0, "Moon") != maneuver_preview_key(n, 10.0, None)
     assert maneuver_preview_key(n, 10.0, "Moon") != maneuver_preview_key(n, 10.0, "Mars")
+
+
+def test_encounter_source_exact_preview():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(True, True, ["p"], ["l"]) == ["p"]
+
+
+def test_encounter_source_editing_shows_none():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(True, False, ["p"], ["l"]) == []
+
+
+def test_encounter_source_no_burn_uses_live():
+    from orbitsim.render.trajectory_helpers import encounter_source
+    assert encounter_source(False, False, [], ["l"]) == ["l"]
+    assert encounter_source(False, False, [], None) == []

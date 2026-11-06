@@ -1,4 +1,5 @@
-"""Target selection (click-pick), intercept planning, closest-approach markers and readout."""
+"""Target selection (click-pick), transfer planning, the target panel (status box) and
+the "when you arrive" ghost."""
 
 import numpy as np
 from orbitsim.core.constants import MU_SUN
@@ -26,7 +27,7 @@ class Targeting:
         self.app = app
 
     def build_targeting(self):
-        """Targetable bodies, CA labels, target label."""
+        """Targetable bodies, the target panel (status box) and the target label."""
         # Targetable bodies. Click a marker to select.
         from orbitsim.render.targets import MoonTarget, LagrangePointTarget, PlanetTarget
         from orbitsim.core.nbody import (
@@ -46,29 +47,66 @@ class Targeting:
             PlanetTarget("Neptune", _cneptune, "NEPTUNE"),
         ]
         self.app._target = None     # current Target or None
+        # Earth-only Kepler closest approach: the "checking..." estimate (throttled).
         self.app._ca_recompute_t = 0.0
         self.app._ca = None
         self.app._ca_traj = None
         self.app._ca_abs_epoch = 0.0
-        self.app._ca_marker_ship = None
-        self.app._ca_marker_moon = None
-        self.app._ca_label_positions = {"ship": None, "target": None}
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
-        self.app._ca_labels = {
-            "ship": build_world_label(
-                self.app.render, "CA: SHIP", color=(1.0, 0.55, 0.25, 1.0), scale=11.0
-            ),
-            "target": build_world_label(
-                self.app.render, "CA: TARGET", color=(1.0, 0.82, 0.30, 1.0), scale=11.0
-            ),
-        }
-        for label in self.app._ca_labels.values():
-            label.hide()
+        self.app._aim_status = None             # AimStatus shown in the target panel
+        self.app._aim_ghost_np = None           # "{Target} when you arrive" sphere
+        self.app._aim_ghost_position = None     # its world position [m], None = hidden
+        from orbitsim.render.world_labels import build_world_label
+        self.app._aim_ghost_label = build_world_label(
+            self.app.render, "", color=(0.85, 0.90, 0.95, 1.0), scale=11.0)
+        self.app._aim_ghost_label.hide()
+        self._build_target_panel()
         self.app._target_label = build_world_label(
             self.app.render, "TARGET", color=(1.0, 0.35, 0.95, 1.0), scale=12.0
         )
         self.app._target_label.hide()
         self.app._target_label_position = None
+
+    # Target panel rows (a2dTopRight; Task 9 of plan 4 moves the panel to the top).
+    PANEL_FRAME = (-0.98, -0.04, -0.90, -0.60)
+    TITLE_Z = -0.655
+    STATUS_Z = -0.745
+    BUTTONS_Z = -0.845
+    GHOST_MIN_UNITS = 6.0          # smallest on-screen ghost radius [render units]
+
+    def _build_target_panel(self) -> None:
+        """Title row, status row (icon + text) and a buttons row; hidden with no target."""
+        from direct.gui.DirectFrame import DirectFrame
+        from direct.gui.OnscreenText import OnscreenText
+        from panda3d.core import LineSegs, TextNode
+        from orbitsim.render.ui.theme import THEME
+        panel = DirectFrame(frameColor=THEME.panel, frameSize=self.PANEL_FRAME,
+                            parent=self.app.a2dTopRight)
+        self.app._target_panel = panel
+        self.app._target_title_text = OnscreenText(
+            text="", pos=(-0.94, self.TITLE_Z), scale=0.042, fg=THEME.text_muted,
+            align=TextNode.ALeft, mayChange=True, parent=panel)
+        self.app._aim_status_text = OnscreenText(
+            text="", pos=(-0.87, self.STATUS_Z), scale=0.045, fg=THEME.text,
+            align=TextNode.ALeft, mayChange=True, parent=panel)
+        # The bundled font has no tick/cross glyphs: draw them (2 segments each).
+        x, z = -0.915, self.STATUS_Z + 0.012
+        shapes = {
+            "check": [((x - 0.020, z), (x - 0.006, z - 0.016), (x + 0.022, z + 0.020))],
+            "cross": [((x - 0.018, z - 0.018), (x + 0.018, z + 0.018)),
+                      ((x - 0.018, z + 0.018), (x + 0.018, z - 0.018))],
+        }
+        self.app._aim_icon_nps = {}
+        for kind, strokes in shapes.items():
+            segs = LineSegs(f"aim_icon_{kind}")
+            segs.set_thickness(2.5)
+            for stroke in strokes:
+                segs.move_to(stroke[0][0], 0.0, stroke[0][1])
+                for px, pz in stroke[1:]:
+                    segs.draw_to(px, 0.0, pz)
+            icon = panel.attach_new_node(segs.create())
+            icon.hide()
+            self.app._aim_icon_nps[kind] = icon
+        panel.hide()
 
     def aim_target_name(self):
         """The target the exact previews measure an approach to: the Moon or a planet.
@@ -114,7 +152,7 @@ class Targeting:
         hit = nearest_marker(click_px, [proj[i] for i in idxs], tol_px=22.0)
         if hit is None:
             return False
-        self.clear_target()   # tear down any prior target's CA markers before switching
+        self.clear_target()   # tear down the prior target's panel/ghost before switching
         self.app._target = self.app._targets[idxs[hit]]
         return True
 
@@ -241,36 +279,16 @@ class Targeting:
         self._apply_planned_node(node)
 
     def clear_target(self):
-        """Deselect the current target; remove its closest-approach markers + readout."""
+        """Deselect the current target; hide its panel, ghost and readout."""
         self.app._target = None
-        for attr in ("_ca_marker_ship", "_ca_marker_moon"):
-            np_ = getattr(self.app, attr, None)
-            if np_ is not None:
-                np_.remove_node()
-                setattr(self.app, attr, None)
         self.app._ca = None
+        self.app._aim_status = None
+        self.app._target_panel.hide()
+        self._hide_ghost()
         self.app._target_label_position = None
         self.app._target_label.hide()
-        for key, label in self.app._ca_labels.items():
-            self.app._ca_label_positions[key] = None
-            label.hide()
         self.app._target_line = ""
         self.app.maneuver_editor.sync_maneuver_hud()
-
-    def _ca_marker(self, attr, color):
-        """Lazily create/reuse a closest-approach marker NodePath."""
-        np_ = getattr(self.app, attr, None)
-        if np_ is None:
-            np_ = make_uv_sphere(1.0, 8, 12)
-            np_.reparent_to(self.app.render)
-            np_.set_color(*color)
-            np_.set_light_off()
-            np_.set_scale(5.0)
-            from panda3d.core import TransparencyAttrib
-            np_.set_transparency(TransparencyAttrib.M_alpha)
-            np_.set_depth_write(False)
-            setattr(self.app, attr, np_)
-        return np_
 
     def frame_target_label(self):
         """Billboard label on the selected target."""
@@ -284,74 +302,136 @@ class Targeting:
             self.app._target_label_position = None
             self.app._target_label.hide()
 
-    def frame_closest_approach(self, node):
-        """Closest-approach markers + target readout."""
-        v0 = self.app.world.vessels[0]
-        # Closest approach to the current target (throttled recompute). Both the ship
-        # trajectory and the target are referenced to the same base epoch (the node epoch
-        # when a burn is planned, else now) so they are compared at matching absolute times;
-        # the absolute CA epoch is cached so the markers hold steady between recomputes (warp).
-        if self.app._target is not None and not self.app._target.supports_closest_approach:
-            # Lagrange-point target: live distance + relative speed, no closest-approach
-            # prediction (an L-point is not Keplerian — you fly to it and null relative velocity).
-            self.app._ca = None
-            for key, label in self.app._ca_labels.items():
-                self.app._ca_label_positions[key] = None
-                label.hide()
-            L = self.app._target.state_at(self.app.clock.sim_time_s)
-            dist = float(np.linalg.norm(v0.state.r - L.r))
-            relsp = float(np.linalg.norm(v0.state.v - L.v))
-            self.app._target_line = (
-                f"Target: {self.app._target.name}   dist {fmt_dist(dist)}"
-                f"   rel {relsp:,.0f} m/s"
-            )
-            self.app.maneuver_editor.sync_maneuver_hud()
-        elif self.app._target is not None:
-            import time as _time
-            now_real = _time.monotonic()
-            if self.app._ca is None or now_real - self.app._ca_recompute_t > 0.5:
-                self.app._ca_recompute_t = now_real
-                if self.app._node_epoch_s is not None and node.magnitude_mps > 0.0:
-                    base_epoch = self.app._node_epoch_s
-                    traj = apply_maneuver(v0.state, node)
-                else:
-                    base_epoch = self.app.clock.sim_time_s
-                    traj = v0.state
-                try:
-                    period = state_to_elements(traj).period_s
-                except ValueError:
-                    period = 14.0 * 86400.0
-                window = min(period, 14.0 * 86400.0)
-                # CA stays Keplerian. The target is the on-rails Moon — propagating it under
-                # earth_moon_accel is singular (it sits at its own gravity source) — and a
-                # per-sample N-body re-integration over a multi-day window is O(samples x window),
-                # which would freeze the loop. The live N-body trajectory line already shows the
-                # true perturbed path; this readout is an approximate planning aid, consistent
-                # with the (also Keplerian) intercept/porkchop seeds.
-                self.app._ca = closest_approach(
-                    traj, self.app._target.state_at(base_epoch), window_s=window, coarse_samples=720)
-                self.app._ca_traj = traj
-                self.app._ca_abs_epoch = base_epoch + self.app._ca.t_ca_s
-            ca = self.app._ca
-            from orbitsim.core.propagate import propagate_kepler
-            ship_at = propagate_kepler(self.app._ca_traj, ca.t_ca_s).r
-            tgt_at = self.app._target.state_at(self.app._ca_abs_epoch).r
-            self._ca_marker("_ca_marker_ship", (1.0, 0.5, 0.2, 1.0)).set_pos(
-                *self.app.transform.to_render(ship_at))
-            self._ca_marker("_ca_marker_moon", (1.0, 0.8, 0.3, 1.0)).set_pos(
-                *self.app.transform.to_render(tgt_at))
-            self.app._ca_label_positions["ship"] = np.asarray(ship_at).copy()
-            self.app._ca_label_positions["target"] = np.asarray(tgt_at).copy()
-            for key, world_pos in self.app._ca_label_positions.items():
-                rx, ry, rz = self.app.transform.to_render(world_pos)
-                label = self.app._ca_labels[key]
-                label.node().set_text(
-                    "CA: SHIP" if key == "ship" else f"CA: {self.app._target.name.upper()}"
-                )
-                label.set_pos(rx, ry, rz + 8.0)
-            countdown = max(0.0, self.app._ca_abs_epoch - self.app.clock.sim_time_s)
-            self.app._target_line = (
-                f"Target: {self.app._target.name}   CA T-{fmt_countdown(countdown)}"
-                f"   sep {ca.separation_m / 1000:,.0f} km   rel {ca.rel_speed_mps:,.0f} m/s"
-            )
-            self.app.maneuver_editor.sync_maneuver_hud()
+    def frame_aim(self, node):
+        """Target panel: the status box + "when you arrive" ghost for the Moon/planets;
+        today's live distance readout for Lagrange points and the Sun."""
+        app = self.app
+        target = app._target
+        if target is None:
+            app._aim_status = None
+            app._target_panel.hide()
+            self._hide_ghost()
+            return
+        app._target_panel.show()
+        app._target_title_text.setText(f"TARGET  {target.name.upper()}")
+        name = self.aim_target_name()
+        if name is None:
+            self._frame_live_distance(target)
+            return
+        if app._target_line:
+            app._target_line = ""
+            app.maneuver_editor.sync_maneuver_hud()
+        estimate_m, estimate_pos = self._kepler_estimate(target, node)
+        if node.magnitude_mps > 0.0:
+            exact = app.maneuver_editor.exact_preview_current(node)
+            encounters, approach = app._preview_encounters, app._preview_approach
+        else:
+            approach = app._traj_approach[0]
+            exact = approach is not None and approach.body_name == name
+            encounters = app._traj_encounters[0] or []
+        from orbitsim.render.aim_status import aim_status
+        status = aim_status(name, encounters, approach, exact, estimate_m)
+        app._aim_status = status
+        self._show_status(status)
+        if exact:
+            ghost_pos = None if approach is None else approach.body_point_m
+        else:
+            ghost_pos = estimate_pos
+        self._place_ghost(name, ghost_pos, status, exact)
+
+    def _frame_live_distance(self, target) -> None:
+        """Lagrange point / Sun: live distance + relative speed, no status box or ghost."""
+        app = self.app
+        app._aim_status = None
+        self._show_status(None)
+        self._hide_ghost()
+        v0 = app.world.vessels[0]
+        here = target.state_at(app.clock.sim_time_s)
+        dist = float(np.linalg.norm(v0.state.r - here.r))
+        relsp = float(np.linalg.norm(v0.state.v - here.v))
+        app._target_line = (
+            f"Target: {target.name}   dist {fmt_dist(dist)}"
+            f"   rel {relsp:,.0f} m/s"
+        )
+        app.maneuver_editor.sync_maneuver_hud()
+
+    def _kepler_estimate(self, target, node):
+        """(separation [m], target position [m]) of the Earth-only Kepler closest
+        approach, recomputed at most every 0.5 s; (None, None) where it isn't defined
+        (planets are not Keplerian about Earth)."""
+        app = self.app
+        if not target.supports_closest_approach:
+            return None, None
+        import time as _time
+        now_real = _time.monotonic()
+        if app._ca is None or now_real - app._ca_recompute_t > 0.5:
+            app._ca_recompute_t = now_real
+            v0 = app.world.vessels[0]
+            if app._node_epoch_s is not None and node.magnitude_mps > 0.0:
+                base_epoch = app._node_epoch_s
+                traj = apply_maneuver(v0.state, node)
+            else:
+                base_epoch = app.clock.sim_time_s
+                traj = v0.state
+            try:
+                period = state_to_elements(traj).period_s
+            except ValueError:
+                period = 14.0 * 86400.0
+            window = min(period, 14.0 * 86400.0)
+            # Keplerian on purpose: a cheap planning estimate shown greyed out until the
+            # exact N-body preview for this burn is in.
+            app._ca = closest_approach(
+                traj, target.state_at(base_epoch), window_s=window, coarse_samples=720)
+            app._ca_traj = traj
+            app._ca_abs_epoch = base_epoch + app._ca.t_ca_s
+        return app._ca.separation_m, target.state_at(app._ca_abs_epoch).r
+
+    def _show_status(self, status) -> None:
+        app = self.app
+        for kind, icon in app._aim_icon_nps.items():
+            if status is not None and status.icon == kind:
+                icon.set_color(*status.color)
+                icon.show()
+            else:
+                icon.hide()
+        if status is None:
+            app._aim_status_text.setText("")
+            return
+        app._aim_status_text.setText(status.text)
+        app._aim_status_text["fg"] = status.color
+
+    def _place_ghost(self, name, world_pos, status, exact) -> None:
+        """Translucent target sphere where the target will be at closest approach."""
+        app = self.app
+        if world_pos is None:
+            self._hide_ghost()
+            return
+        if app._aim_ghost_np is None:
+            from panda3d.core import TransparencyAttrib
+            ghost = make_uv_sphere(1.0, 16, 24)
+            ghost.reparent_to(app.render)
+            ghost.set_light_off()
+            ghost.set_transparency(TransparencyAttrib.M_alpha)
+            ghost.set_depth_write(False)
+            app._aim_ghost_np = ghost
+        from orbitsim.core.bodies import MOON, PLANETS
+        radius_m = next(b.radius_m for b in (MOON, *PLANETS) if b.name == name)
+        scale = app.transform.scale_m_per_unit
+        r, g, b, _a = status.color
+        app._aim_ghost_np.set_color(r, g, b, 0.35 if exact else 0.18)
+        app._aim_ghost_np.set_scale(max(radius_m / scale, self.GHOST_MIN_UNITS))
+        rx, ry, rz = app.transform.to_render(world_pos)
+        app._aim_ghost_np.set_pos(rx, ry, rz)
+        app._aim_ghost_np.show()
+        app._aim_ghost_position = np.asarray(world_pos, dtype=np.float64).copy()
+        label = app._aim_ghost_label
+        label.node().set_text(f"{name} when you arrive")
+        label.node().set_text_color(r, g, b, 1.0)
+        label.set_pos(rx, ry, rz + 9.0)
+
+    def _hide_ghost(self) -> None:
+        app = self.app
+        if app._aim_ghost_np is not None:
+            app._aim_ghost_np.hide()
+        app._aim_ghost_position = None
+        app._aim_ghost_label.hide()
