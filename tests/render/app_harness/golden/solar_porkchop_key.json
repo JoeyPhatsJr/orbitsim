@@ -32,7 +32,8 @@
  "target": null,
  "texts": [
   "Solar system (JPL DE440)\nDate: 2030-01-04\n',' / '.' or the buttons change warp",
-  "T+ 10,961.4 DAYS     WARP  x1,000,000"
+  "T+ 10,961d 08h",
+  "\u00d71,000,000"
  ],
  "vessel": null,
  "warp": 1000000.0,

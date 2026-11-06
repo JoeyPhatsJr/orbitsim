@@ -38,3 +38,24 @@ def fmt_lead(seconds) -> str:
     if s < 86400:
         return f"in {s // 3600} h {s % 3600 // 60:02d} min"
     return f"in {s // 86400} d {s % 86400 // 3600:02d} h"
+
+
+def fmt_mission_time(sim_time_s: float) -> str:
+    """Mission clock (seconds past J2000): T+ 03:20:15 under a day, T+ 12d 03h 20m under
+    1,000 days, T+ 969,100d 03h beyond; negative times read T− with the same fields."""
+    sign = "T+ " if sim_time_s >= 0.0 else "T− "
+    t = int(abs(sim_time_s))
+    d, rem = divmod(t, 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d == 0:
+        return f"{sign}{h:02d}:{m:02d}:{s:02d}"
+    if d < 1000:
+        return f"{sign}{d}d {h:02d}h {m:02d}m"
+    return f"{sign}{d:,}d {h:02d}h"
+
+
+def fmt_warp(warp: float, locked: bool) -> str:
+    """Warp factor: ×100, ×1,000,000; ×1 LOCKED while thrusting."""
+    text = f"×{warp:,.0f}"
+    return f"{text} LOCKED" if locked else text

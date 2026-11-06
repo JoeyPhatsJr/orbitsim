@@ -4,7 +4,7 @@ from orbitsim.render.hud import orbit_panel_lines
 
 def _lines(**over):
     base = dict(
-        sim_time_s=0.0, altitude_m=500_000.0, speed_mps=7600.0,
+        altitude_m=500_000.0, speed_mps=7600.0,
         periapsis_m=400_000.0, apoapsis_m=600_000.0, period_s=5400.0,
         inclination_rad=0.5, units="km",
     )
@@ -43,3 +43,23 @@ def test_fmt_lead():
     from orbitsim.render.hud.format import fmt_lead
     assert [fmt_lead(s) for s in (0.4, 45, 36 * 60 + 10, 2 * 3600 + 300, 3 * 86400 + 4 * 3600)] == [
         "now", "in 45 s", "in 36 min", "in 2 h 05 min", "in 3 d 04 h"]
+
+
+def test_no_sim_time_row():
+    # Mission time lives in the time + warp panel now.
+    assert not any("Sim time" in line for line in _lines())
+
+
+def test_mission_time_formats():
+    from orbitsim.render.hud.format import fmt_mission_time
+    assert fmt_mission_time(12015.0) == "T+ 03:20:15"
+    assert fmt_mission_time(12 * 86400 + 3 * 3600 + 20 * 60) == "T+ 12d 03h 20m"
+    assert fmt_mission_time(969_100 * 86400 + 3 * 3600) == "T+ 969,100d 03h"
+    assert fmt_mission_time(0.0) == "T+ 00:00:00"
+    assert fmt_mission_time(-12015.0) == "T\u2212 03:20:15"
+
+
+def test_warp_formats():
+    from orbitsim.render.hud.format import fmt_warp
+    assert fmt_warp(100.0, False) == "\u00d7100" and fmt_warp(1e6, False) == "\u00d71,000,000"
+    assert fmt_warp(1.0, True) == "\u00d71 LOCKED"

@@ -27,13 +27,12 @@ def _speed(mps: float, units: str) -> str:
 
 
 def orbit_panel_lines(
-    *, sim_time_s: float, altitude_m: float, speed_mps: float,
+    *, altitude_m: float, speed_mps: float,
     periapsis_m: float, apoapsis_m: float, period_s: float,
     inclination_rad: float, units: str, dominant_body: str = "Earth",
 ) -> list[str]:
     """Build the orbit-info panel text lines. Pure (no DirectGUI) so it is unit-testable."""
     lines = [
-        f"Sim time: {sim_time_s:,.0f} s past J2000",
         f"Altitude: {_dist(altitude_m, units)}",
         f"Speed: {_speed(speed_mps, units)}",
     ]
@@ -52,7 +51,7 @@ class Hud:
     """Grouped orbit, maneuver, and vessel HUD panels."""
 
     def __init__(self, base) -> None:
-        self._left = HudPanel(base.a2dTopLeft, x=0.08, top=-0.10, width=0.92)
+        self._left = HudPanel(base.a2dTopLeft, x=0.08, top=-0.30, width=0.92)  # Task 9 moves it
         self._right = HudPanel(base.a2dTopRight, x=-0.62, top=-0.10)
         self._orbit_lines = []
         self._maneuver_lines = ("", "", "")
@@ -66,11 +65,11 @@ class Hud:
             shadow=(0, 0, 0, 1), mayChange=True, parent=base.aspect2d,
         )
         # Free-form persistent readout (used by the vesselless solar viewer, which has
-        # no orbit/vessel panels to populate).
+        # no orbit/vessel panels to populate): below the time + warp panel.
         self.text = OnscreenText(
-            text="", pos=(-1.28, 0.9), scale=0.045, align=TextNode.ALeft,
+            text="", pos=(0.08, -0.28), scale=0.045, align=TextNode.ALeft,
             fg=(1.0, 1.0, 1.0, 1.0), shadow=(0, 0, 0, 1), mayChange=True,
-            parent=base.aspect2d,
+            parent=base.a2dTopLeft,
         )
 
     def set_units(self, units: str) -> None:
@@ -102,13 +101,11 @@ class Hud:
         cyan = (0.7, 0.95, 1.0, 1.0)
         magenta = (1.0, 0.4, 1.0, 1.0)
         orange = (1.0, 0.7, 0.4, 1.0)
-        time_line = self._orbit_lines[0] if self._orbit_lines else ""
         sections = [
-            {"header": None, "rows": [(time_line, cyan)] if time_line else []},
             {
                 "header": "ORBIT",
                 "header_color": cyan,
-                "rows": [(line, (1.0, 1.0, 1.0, 1.0)) for line in self._orbit_lines[1:]],
+                "rows": [(line, (1.0, 1.0, 1.0, 1.0)) for line in self._orbit_lines],
             },
         ]
         dv_line, node_line, target_line = self._maneuver_lines
@@ -137,7 +134,6 @@ class Hud:
     def update(
         self,
         *,
-        sim_time_s: float,
         altitude_m: float,
         speed_mps: float,
         periapsis_m: float,
@@ -147,7 +143,7 @@ class Hud:
         dominant_body: str = "Earth",
     ) -> None:
         lines = orbit_panel_lines(
-            sim_time_s=sim_time_s, altitude_m=altitude_m, speed_mps=speed_mps,
+            altitude_m=altitude_m, speed_mps=speed_mps,
             periapsis_m=periapsis_m, apoapsis_m=apoapsis_m, period_s=period_s,
             inclination_rad=inclination_rad, units=self.units,
             dominant_body=dominant_body,

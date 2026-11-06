@@ -133,16 +133,16 @@
   "Prograde",
   "Radial",
   "SAS: OFF    HDG 082\u00b0   PIT +02\u00b0",
-  "Sim time: 250 s past J2000",
   "Speed: 8.040 km/s",
-  "T+ 0.0 DAYS     WARP  x1",
+  "T+ 00:04:10",
   "T+57.0m",
   "TARGET  MOON",
   "Throttle: 0%",
   "Thrust: 50.0 kN   TWR: 0.60",
   "Total dV: 3,132.6 m/s",
   "VESSEL",
-  "dV left: 5,633 m/s"
+  "dV left: 5,633 m/s",
+  "\u00d71"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,

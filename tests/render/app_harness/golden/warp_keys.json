@@ -127,14 +127,14 @@
   "Prograde",
   "Radial",
   "SAS: OFF    HDG 088\u00b0   PIT -08\u00b0",
-  "Sim time: 137,333 s past J2000",
   "Speed: 7.295 km/s",
-  "T+ 1.6 DAYS     WARP  x1,000",
+  "T+ 1d 14h 08m",
   "T+0s",
   "Throttle: 0%",
   "Thrust: 50.0 kN   TWR: 0.74",
   "VESSEL",
-  "dV left: 5,633 m/s"
+  "dV left: 5,633 m/s",
+  "\u00d71,000"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,

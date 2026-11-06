@@ -98,6 +98,7 @@ class OrbitApp(ShowBase):
             # The rig owns scale (= distance / 1000). Pull back to ~13 AU so the Sun,
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
+        self._hud_panels = {}      # PANELS name -> its frame (scaled by _update_responsive_ui)
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
         self.operation_overlay = OperationOverlay(self, self.trajectory_view.cancel_operation)
@@ -203,9 +204,17 @@ class OrbitApp(ShowBase):
         self._ui_viewport = size
         from orbitsim.render.ui.layout import ResponsiveLayout
 
+        from orbitsim.render.ui.hud_layout import PANELS
+        from orbitsim.render.ui.widgets import scale_panel
+
         layout = ResponsiveLayout.calculate(*size)
+        # HUD panels never shrink below their design size (small windows already get
+        # fewer pixels per unit); capped at 1.08 as before.
+        scale = min(max(layout.ui_scale, 1.0), 1.08)
+        self._ui_scale = scale
+        for name, frame in self._hud_panels.items():
+            scale_panel(frame, PANELS[name], scale)
         if hasattr(self, "_maneuver_frame"):
-            scale = min(layout.ui_scale, 1.08)
             self._maneuver_frame.set_scale(scale)
             self._action_frame.set_scale(scale)
 

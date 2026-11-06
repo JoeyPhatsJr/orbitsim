@@ -128,14 +128,14 @@
   "Prograde",
   "Radial",
   "SAS: ANTITARGET    HDG 180\u00b0   PIT +85\u00b0",
-  "Sim time: 183 s past J2000",
   "Speed: 8.056 km/s",
-  "T+ 0.0 DAYS     WARP  x100",
+  "T+ 00:03:03",
   "T+0s",
   "Throttle: 0%",
   "Thrust: 50.0 kN   TWR: 0.60",
   "VESSEL",
-  "dV left: 5,633 m/s"
+  "dV left: 5,633 m/s",
+  "\u00d7100"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,

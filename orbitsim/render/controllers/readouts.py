@@ -193,7 +193,6 @@ class Readouts:
             period = float("nan")
         dist_from_dom = float(np.linalg.norm(v0.state.r - dom_pos))
         self.app.hud.update(
-            sim_time_s=self.app.clock.sim_time_s,
             altitude_m=dist_from_dom - ref_radius,
             speed_mps=v0.state.v_mag,
             periapsis_m=rp - ref_radius,
