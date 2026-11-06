@@ -99,6 +99,7 @@ class OrbitApp(ShowBase):
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
         self._hud_panels = {}      # PANELS name -> its frame (scaled by _update_responsive_ui)
+        self._ui_scale = 1.0
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
         self.operation_overlay = OperationOverlay(self, self.trajectory_view.cancel_operation)
@@ -126,6 +127,9 @@ class OrbitApp(ShowBase):
             self.readouts.build_apsis_and_encounter_markers()
             self.bodies_view.build_moon_and_lagrange()
             self.bodies_view.build_sandbox_planets()
+            # The focus sits above the bottom HUD cluster (navball + speed chip).
+            from orbitsim.render.ui.hud_layout import FOCUS_SCREEN_Y
+            self.rig.focus_screen_y = FOCUS_SCREEN_Y
             self.vessel_view.apply_opening_camera()
         self.bodies_view.build_starfield()
 
@@ -230,6 +234,7 @@ class OrbitApp(ShowBase):
         if self.solar_system:
             self.clock.advance(real_dt)
             self.solar_view.update_solar_system()
+            self.readouts.hide_labels_on_panels()
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
@@ -262,6 +267,7 @@ class OrbitApp(ShowBase):
         self.node_placement.frame_hover()
 
         self.readouts.frame_readouts(target_pos, maneuver_dir)
+        self.readouts.hide_labels_on_panels()      # last: labels never sit on panels
         return task.cont
 
     def _frame_flight(self, real_dt):

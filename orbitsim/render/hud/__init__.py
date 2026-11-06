@@ -81,6 +81,10 @@ class Hud:
             parent=base.a2dTopLeft,
         )
 
+    def panel_frame(self):
+        """The orbit + fuel panel's drawn background (anchor-relative frameSize)."""
+        return self._panel._bg
+
     def set_units(self, units: str) -> None:
         """Set distance units for HUD readouts ('km' or 'mi')."""
         self.units = units

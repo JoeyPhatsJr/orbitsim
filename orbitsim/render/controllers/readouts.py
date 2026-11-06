@@ -117,6 +117,76 @@ class Readouts:
                 marker.set_transparency(TransparencyAttrib.M_alpha)
                 marker.set_alpha_scale(alpha)
 
+    def panel_rects_px(self):
+        """Pixel rects (x0, y0, x1, y1), bottom-up, of the HUD panels drawn now: each
+        panel's current frame (a panel that shrinks with its content counts as drawn),
+        plus the navball's display region."""
+        from dataclasses import replace
+        from orbitsim.render.ui.hud_layout import PANELS, to_pixels
+        app = self.app
+        w, h = app.win.get_x_size(), app.win.get_y_size()
+        if w <= 0 or h <= 0:
+            return []
+        scale = getattr(app, "_ui_scale", 1.0)
+        rects = []
+        for name, node in app._hud_panels.items():
+            if node.is_hidden():
+                continue
+            rect = PANELS[name]
+            frame = app.hud.panel_frame() if name == "orbit_fuel" else node
+            if frame is None or frame.is_hidden():
+                continue
+            if name != "speed_chip":
+                l, r, b, t = frame["frameSize"]
+                px, py = rect.pivot
+                rect = replace(rect, x0=l + px, x1=r + px, y0=b + py, y1=t + py)
+            rects.append(to_pixels(rect, w, h, scale))
+        if getattr(app, "navball", None) is not None:
+            rects.append(to_pixels(PANELS["navball"], w, h, scale))
+        return rects
+
+    def _world_labels(self):
+        """(owned, static) world labels. Owned labels are shown/hidden every frame by
+        their controller; static ones are only ever hidden by the panel pass."""
+        app = self.app
+        owned = []
+        for attr in ("_target_label", "_aim_ghost_label", "_node_dv_label", "_ghost_label"):
+            label = getattr(app, attr, None)
+            if label is not None:
+                owned.append(label)
+        owned += list(getattr(app, "_apsis_labels", {}).values())
+        owned += list(getattr(app, "_lagrange_labels", []))
+        owned += list(getattr(app, "_encounter_labels", []))
+        static = list(getattr(app, "_planet_sandbox_labels", {}).values())
+        static += list(getattr(app, "_planet_labels", []))
+        return owned, static
+
+    def hide_labels_on_panels(self) -> None:
+        """Last step of the frame: no world label is drawn on a HUD panel. A label whose
+        anchor lands on (or within 10 px of) a shown panel is hidden, whatever its
+        priority; static labels come back once they're clear."""
+        from orbitsim.render.picking import project_points_px
+        from orbitsim.render.world_markers import blocked_by_panels
+        app = self.app
+        owned, static = self._world_labels()
+        owned = [label for label in owned if not label.is_hidden()]
+        labels = owned + static
+        if not labels:
+            return
+        rects = self.panel_rects_px()
+        pts = np.array([tuple(label.get_pos(app.render)) for label in labels])
+
+        def m(lm):
+            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
+        render_to_clip = m(app.render.get_mat(app.cam)) @ m(app.camLens.get_projection_mat())
+        px = project_points_px(pts, render_to_clip, app.win.get_x_size(), app.win.get_y_size())
+        for i, label in enumerate(labels):
+            point = None if not np.isfinite(px[i]).all() else (px[i, 0], px[i, 1])
+            if blocked_by_panels(point, rects):
+                label.hide()
+            elif i >= len(owned):
+                label.show()
+
     def _update_encounter_info(self, vessel, dom_body, dom_pos) -> None:
         """Compute and display flyby encounter parameters when approaching a planet."""
         if not self.app.world.solar_system:

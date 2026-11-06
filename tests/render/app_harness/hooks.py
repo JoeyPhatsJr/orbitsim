@@ -150,3 +150,74 @@ def burn_panel(app):
     text = None if readout.is_hidden() else readout.getText()
     labels = [str(b["text"]).strip() for b in app._burn_buttons if not b.is_hidden()]
     return text, labels
+
+
+def _frame_rect_px(app, frame, size=None):
+    """Pixel rect (x0, y0, x1, y1), bottom-up, of a DirectFrame's drawn frameSize."""
+    from panda3d.core import Point3
+    l, r, b, t = frame["frameSize"] if size is None else size
+    w, h = app.win.get_x_size(), app.win.get_y_size()
+    p0 = app.render2d.get_relative_point(frame, Point3(l, 0, b))
+    p1 = app.render2d.get_relative_point(frame, Point3(r, 0, t))
+    return ((min(p0.x, p1.x) + 1) * 0.5 * w, (min(p0.z, p1.z) + 1) * 0.5 * h,
+            (max(p0.x, p1.x) + 1) * 0.5 * w, (max(p0.z, p1.z) + 1) * 0.5 * h)
+
+
+def shown_panel_rects_px(app):
+    """{name: pixel rect} of every HUD panel drawn now, measured from the widgets
+    themselves (frames, the speed chip, the navball's display region)."""
+    rects = {}
+    for name, root in app._hud_panels.items():
+        if root.is_hidden():
+            continue
+        frame = app.hud._panel._bg if name == "orbit_fuel" else root
+        if frame.is_hidden():
+            continue
+        if name == "speed_chip":
+            button = app.vel_readout._button
+            rects[name] = _frame_rect_px(app, button, button.getBounds())
+            continue
+        rects[name] = _frame_rect_px(app, frame)
+    if getattr(app, "navball", None) is not None:
+        l, r, b, t = app.navball.dr.get_dimensions()
+        w, h = app.win.get_x_size(), app.win.get_y_size()
+        rects["navball"] = (l * w, b * h, r * w, t * h)
+    return rects
+
+
+def labels_over_panels(app):
+    """Texts of shown world (render) labels whose anchor projects inside a shown panel."""
+    rects = list(shown_panel_rects_px(app).values())
+    out = []
+    for np_ in app.render.find_all_matches("**/+TextNode"):
+        text = np_.node().get_text()
+        if not text.strip() or np_.is_hidden():
+            continue
+        p = app.cam.get_relative_point(app.render, np_.get_pos(app.render))
+        from panda3d.core import Point2
+        proj = Point2()
+        if not app.camLens.project(p, proj):
+            continue
+        x = (proj.x * 0.5 + 0.5) * app.win.get_x_size()
+        y = (proj.y * 0.5 + 0.5) * app.win.get_y_size()
+        if any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in rects):
+            out.append(text)
+    return sorted(out)
+
+
+def shown_world_labels(app):
+    """Texts of every shown world (render) label."""
+    return sorted(np_.node().get_text() for np_ in app.render.find_all_matches("**/+TextNode")
+                  if np_.node().get_text().strip() and not np_.is_hidden())
+
+
+def orbit_points_under_navball(app) -> int:
+    """How many live-orbit-line samples project inside the navball's display region."""
+    l, r, b, t = app.navball.dr.get_dimensions()
+    w, h = app.win.get_x_size(), app.win.get_y_size()
+    count = 0
+    for point in app._traj_world_cache[0]:
+        px = app.targeting.marker_px(point)
+        if px is not None and l * w <= px[0] <= r * w and b * h <= px[1] <= t * h:
+            count += 1
+    return count

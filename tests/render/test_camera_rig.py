@@ -97,3 +97,45 @@ def test_rejects_degenerate_input():
         opening_camera((1.0, 0.0, 0.0), (0.0, 0.0, 0.0), 8.8e6)
     with pytest.raises(ValueError):
         opening_camera((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Film offset: the focus sits above the navball cluster, not at screen centre
+# ---------------------------------------------------------------------------
+_FOCUS_PROBE = r"""
+import numpy as np
+from panda3d.core import Point2, loadPrcFileData
+loadPrcFileData("", "window-type offscreen\nwin-size 1600 900\naudio-library-name null")
+from direct.showbase.ShowBase import ShowBase
+from orbitsim.render.camera_rig import CameraRig
+from orbitsim.render.floating_origin import RenderTransform
+from orbitsim.render.ui.hud_layout import FOCUS_SCREEN_Y
+base = ShowBase()
+rig = CameraRig(base, RenderTransform(origin_m=np.zeros(3), scale_m_per_unit=2.0e4))
+out = []
+for focus_y, el in ((FOCUS_SCREEN_Y, 0.3), (FOCUS_SCREEN_Y, -1.2), (0.0, 0.3)):
+    rig.focus_screen_y = focus_y
+    rig.elevation = el
+    rig.apply()
+    p = Point2()
+    base.camLens.project(base.cam.get_relative_point(base.render, (0, 0, 0)), p)
+    out.append((float(p.x), float(p.y)))
+print("RESULT", repr([FOCUS_SCREEN_Y] + out))
+base.destroy()
+"""
+
+
+def test_focus_projects_above_the_navball():
+    import ast
+    import os
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    proc = subprocess.run([sys.executable, "-c", _FOCUS_PROBE], cwd=root,
+                          capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")][-1]
+    focus_y, *points = ast.literal_eval(line[len("RESULT "):])
+    for x, y in points[:2]:
+        assert abs(x) < 1e-3 and abs(y - focus_y) < 0.01, points
+    assert abs(points[2][1]) < 1e-3                       # default rig: screen centre

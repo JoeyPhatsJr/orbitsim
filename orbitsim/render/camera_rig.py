@@ -115,6 +115,9 @@ class CameraRig:
         self.target_elevation = self.elevation
         self.zoom_response_s = 0.16
         self.orbit_response_s = 0.10
+        # Normalised screen y the focus projects to (lens film offset); 0 = centre.
+        # The sandbox lifts it above the bottom HUD cluster (hud_layout.FOCUS_SCREEN_Y).
+        self.focus_screen_y = 0.0
         self._apply_scale()
 
     def _apply_scale(self) -> None:
@@ -171,3 +174,6 @@ class CameraRig:
         far = max(1.5e12 / max(self.distance_m, MIN_DISTANCE_M), 1.0e6)
         near = min(max(far * 1e-7, 0.01), d * 0.1)
         lens.set_near_far(near, far)
+        # Shift the image (not the view direction) so the focus lands at
+        # focus_screen_y: film units span film_size, normalised screen spans 2.
+        lens.set_film_offset(0.0, -0.5 * self.focus_screen_y * lens.get_film_size()[1])

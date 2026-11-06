@@ -79,3 +79,13 @@ def declutter_indices(
             visible.add(index)
             accepted.append(point)
     return visible
+
+
+def blocked_by_panels(point_px, rects_px, margin_px: float = 10.0) -> bool:
+    """True when a label anchor (bottom-up pixels; None = off-lens) lies inside any
+    ``(x0, y0, x1, y1)`` pixel rect grown by ``margin_px``."""
+    if point_px is None:
+        return False
+    x, y = point_px
+    return any(x0 - margin_px <= x <= x1 + margin_px and y0 - margin_px <= y <= y1 + margin_px
+               for x0, y0, x1, y1 in rects_px)

@@ -64,3 +64,14 @@ def test_declutter_ignores_offscreen_points_and_validates_lengths():
     assert declutter_indices([None, (5.0, 5.0)], [100, 1], min_separation_px=10.0) == {1}
     with pytest.raises(ValueError):
         declutter_indices([(0.0, 0.0)], [], min_separation_px=10.0)
+
+
+def test_blocked_by_panels():
+    from orbitsim.render.world_markers import blocked_by_panels
+    rects = [(100.0, 0.0, 400.0, 300.0)]
+    assert blocked_by_panels((250.0, 150.0), rects)
+    assert blocked_by_panels((405.0, 150.0), rects)           # inside the 10 px margin
+    assert not blocked_by_panels((450.0, 150.0), rects)
+    assert not blocked_by_panels(None, rects)                  # behind the camera
+    assert not blocked_by_panels((250.0, 150.0), [])
+    assert blocked_by_panels((250.0, 330.0), rects, margin_px=40.0)
