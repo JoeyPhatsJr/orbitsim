@@ -107,13 +107,13 @@
   "distance_m": 88432714.28571446,
   "elevation": -1.3595397369784044
  },
- "sim_time_s": 216.66666666666632,
+ "sim_time_s": 18.66666666666655,
  "target": "Moon",
  "texts": [
   "+3131",
   "-25",
   "-81",
-  "Altitude: 524.6 km",
+  "Altitude: 500.2 km",
   "Apoapsis: 2,465.2 km",
   "Approach Moon: Pe 198 km  T-12d 12h  v-inf 1.1 km/s",
   "Fuel: 100%  (8,000 kg)",
@@ -125,21 +125,21 @@
   "Moon transfer planned \u00b7 Pe 198 km \u00b7 dV 3,133 m/s",
   "NODE T-1h 00m  /  3,133 m/s",
   "Node T",
-  "Node in T-57:32   dV 3,132.6 m/s",
+  "Node in T-1h 00m   dV 3,132.6 m/s",
   "Normal",
   "ORBIT",
   "Periapsis: 500.0 km",
   "Period: 115.6 min",
   "Prograde",
   "Radial",
-  "SAS: OFF    HDG 082\u00b0   PIT +02\u00b0",
-  "Sim time: 217 s past J2000",
-  "Speed: 8.049 km/s",
-  "T+ 0.0 DAYS     WARP  x100",
+  "SAS: OFF    HDG 082\u00b0   PIT +00\u00b0",
+  "Sim time: 19 s past J2000",
+  "Speed: 8.074 km/s",
+  "T+ 0.0 DAYS     WARP  x1",
   "T+1.0h",
   "TARGET  MOON",
   "Throttle: 0%",
-  "Thrust: 50.0 kN   TWR: 0.60",
+  "Thrust: 50.0 kN   TWR: 0.59",
   "Total dV: 3,132.6 m/s",
   "VESSEL",
   "dV left: 5,633 m/s"
@@ -147,7 +147,7 @@
  "vessel": {
   "fuel_mass_kg": 8000.0,
   "nodes": [
-   "ManeuverNode(epoch_s=3669.3724940036805, dv_prograde_mps=3131.4822863201125, dv_normal_mps=-25.14389428163254, dv_radial_mps=-81.40601494440375)"
+   "ManeuverNode(epoch_s=3669.3678337444985, dv_prograde_mps=3131.4826099482625, dv_normal_mps=-25.12577989314082, dv_radial_mps=-81.39097532821069)"
   ],
   "orientation": [
    1.0,
@@ -156,19 +156,19 @@
    0.0
   ],
   "r": [
-   6681627.150280179,
-   1715374.658189095,
-   245053.5246865959
+   6876632.145309389,
+   149196.89963832046,
+   21313.84281694025
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   -1801.722395769764,
-   7765.744799981697,
-   1109.3921362136066
+   -157.26245385627536,
+   7991.5538779774915,
+   1141.6505552462136
   ]
  },
- "warp": 100.0,
+ "warp": 1.0,
  "world_labels": [
   [
    "AP",
@@ -243,7 +243,7 @@
    false
   ],
   [
-   "dV 3,133 m/s  T-57:32",
+   "dV 3,133 m/s  T-1h 00m",
    false
   ]
  ]

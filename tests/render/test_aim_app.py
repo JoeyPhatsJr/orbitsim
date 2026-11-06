@@ -61,3 +61,32 @@ def test_status_follows_the_exact_path():
     assert 150.0 <= _pe_km(out["replanned"][1]) <= 250.0, out
     assert out["editing"][0] == "checking", out       # new burn: grey until its exact result
     assert out["editing_markers"] == 0, out           # never the un-burned path's markers
+
+
+PLAN_AT_WARP = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+from orbitsim.render.node_edit import MIN_NODE_LEAD_S
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.step(5)
+before = float(app.clock.warp)
+h.press("Plan Moon transfer")
+during = float(app.clock.warp)
+h.step(2)                                     # the plan lands (inline executors)
+epoch = hooks.node_state(app)[0]
+print("RESULT", repr([before, during, float(epoch) - float(app.clock.sim_time_s),
+                      float(MIN_NODE_LEAD_S)]))
+app.destroy()
+"""
+
+
+def test_planning_at_warp_lands_a_future_burn():
+    # Review (Part 4a): at x100 the 1-2.5 s planner run was ~100-250 s of sim time;
+    # the departure was past when the plan landed and the burn got clamped to now.
+    before, during, lead_s, min_lead_s = _run(PLAN_AT_WARP)
+    assert before == 100.0 and during == 1.0
+    assert lead_s >= min_lead_s

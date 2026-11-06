@@ -107,13 +107,13 @@
   "distance_m": 88432714.28571446,
   "elevation": -1.3595397369784044
  },
- "sim_time_s": 299.99999999999994,
+ "sim_time_s": 250.49999999999986,
  "target": "Moon",
  "texts": [
   "+3131",
   "-25",
   "-81",
-  "Altitude: 546.8 km",
+  "Altitude: 532.8 km",
   "Apoapsis: 2,465.2 km",
   "Approach Moon: Pe 198 km  T-12d 11h  v-inf 1.1 km/s",
   "Fuel: 100%  (8,000 kg)",
@@ -125,7 +125,7 @@
   "Moon transfer planned \u00b7 Pe 198 km \u00b7 dV 3,133 m/s",
   "NODE T-56:59  /  3,133 m/s",
   "Node T",
-  "Node in T-56:09   dV 3,132.6 m/s",
+  "Node in T-56:58   dV 3,132.6 m/s",
   "Normal",
   "ORBIT",
   "Periapsis: 500.0 km",
@@ -133,9 +133,9 @@
   "Prograde",
   "Radial",
   "SAS: OFF    HDG 082\u00b0   PIT +02\u00b0",
-  "Sim time: 300 s past J2000",
-  "Speed: 8.026 km/s",
-  "T+ 0.0 DAYS     WARP  x100",
+  "Sim time: 250 s past J2000",
+  "Speed: 8.040 km/s",
+  "T+ 0.0 DAYS     WARP  x1",
   "T+57.0m",
   "TARGET  MOON",
   "Throttle: 0%",
@@ -147,7 +147,7 @@
  "vessel": {
   "fuel_mass_kg": 8000.0,
   "nodes": [
-   "ManeuverNode(epoch_s=3669.370729467737, dv_prograde_mps=3131.484030947215, dv_normal_mps=-25.092867983744327, dv_radial_mps=-81.26392977379159)"
+   "ManeuverNode(epoch_s=3669.374313045672, dv_prograde_mps=3131.483775208199, dv_normal_mps=-25.09668586054124, dv_radial_mps=-81.27834880056986)"
   ],
   "orientation": [
    1.0,
@@ -156,19 +156,19 @@
    0.0
   ],
   "r": [
-   6503678.472426089,
-   2354424.547079297,
-   336346.3682888883
+   6616053.991744862,
+   1976866.6574065343,
+   282409.52539715177
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   -2464.9970930558784,
-   7561.073499929805,
-   1080.1533915182717
+   -2073.914557227607,
+   7690.171198081083,
+   1098.595912179425
   ]
  },
- "warp": 100.0,
+ "warp": 1.0,
  "world_labels": [
   [
    "AP",
@@ -243,7 +243,7 @@
    false
   ],
   [
-   "dV 3,133 m/s  T-56:09",
+   "dV 3,133 m/s  T-56:58",
    false
   ]
  ]

@@ -202,6 +202,7 @@ class Targeting:
         if self.app._planning_future is not None and not self.app._planning_future.done():
             self.app._flash_message("Planning already in progress...")
             return
+        from orbitsim.render.node_edit import departure_grid_s
         v0 = self.app.world.vessels[0]
         now = self.app.clock.sim_time_s
         grid_executor = self.app._grid_executor
@@ -226,7 +227,7 @@ class Targeting:
             # Hohmann transfer time to Earth's neighbour.
             w_target = np.sqrt(MU_SUN / target_a**3)
             synodic = 2.0 * np.pi / abs(_N_EARTH - w_target)
-            dep = np.linspace(0.0, min(synodic, 2 * 365.25 * 86400.0), 24)
+            dep = departure_grid_s(min(synodic, 2 * 365.25 * 86400.0), 24)
             hohmann_tof = np.pi * np.sqrt(((A_EARTH + target_a) / 2.0)**3 / MU_SUN)
             tof = np.linspace(0.3 * hohmann_tof, 2.0 * hohmann_tof, 32)
             ship_state = v0.state
@@ -243,7 +244,7 @@ class Targeting:
             except ValueError:
                 self.app._flash_message("Unbound orbit — can't plan intercept")
                 return
-            dep = np.linspace(0.0, period, 24)
+            dep = departure_grid_s(period, 24)
             tof = np.linspace(3.0e3, 14.0 * 86400.0, 48)
             ship_state = v0.state
             target_now = self.app._target.state_at(now)
@@ -262,6 +263,9 @@ class Targeting:
                     return intercept_node(
                         ship_state, target_now, mu, dep, tof, executor=grid_executor)
 
+        # Planning takes real seconds; at warp they'd be minutes of sim time and the
+        # departure would be gone when the plan lands. Plan at 1x (like coasts/burns).
+        self.app.clock.warp = 1.0
         self.app._flash_message(f"Planning {self.app._target.name} transfer...")
         self.app._planning_future = self.app._planning_executor.submit(job)
 
@@ -269,7 +273,13 @@ class Targeting:
         """Install a freshly-planned burn (ManeuverNode, or a FlybyPlan for the Moon)
         into the editor (render thread only)."""
         from orbitsim.core.flyby_targeting import FLYBY_TARGET_ALT_M, FlybyPlan
+        from orbitsim.render.node_edit import node_epoch_ok
         node = result.node if isinstance(result, FlybyPlan) else result
+        if not node_epoch_ok(node.epoch_s, self.app.clock.sim_time_s):
+            # Its departure is (nearly) past: installing it would clamp the burn to now
+            # and miss (a Moon flyby 10 s late impacts). Say so instead.
+            self.app._flash_message("Plan went stale — press Plan again")
+            return
         editor = self.app.maneuver_editor
         self.app._auto_execute_node = False
         editor.set_node_epoch(node.epoch_s)
