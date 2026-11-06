@@ -46,20 +46,6 @@ class OperationOverlay:
         self.frame.show()
 
 
-class PanelDock:
-    """Compact left-edge buttons for session-local panel visibility."""
-
-    def __init__(self, base, actions):
-        from direct.gui.DirectButton import DirectButton
-
-        self.buttons = []
-        for index, (label, command) in enumerate(actions):
-            self.buttons.append(DirectButton(
-                text=label, scale=0.042, pos=(0.17, 0, 0.16 - index * 0.12),
-                command=command, parent=base.a2dLeftCenter, **button_options(),
-            ))
-
-
 _ANCHOR_NODES = {
     "top_left": "a2dTopLeft", "top_right": "a2dTopRight", "bottom_left": "a2dBottomLeft",
     "bottom_center": "a2dBottomCenter", "bottom_right": "a2dBottomRight",

@@ -42,8 +42,8 @@ class PanelRect:
 PANELS: dict[str, PanelRect] = {r.name: r for r in (
     # time row; << . warp cell . >> . MAX row
     PanelRect("time_warp", "top_left", 0.04, -0.21, 0.84, -0.03),
-    # target name, status (icon + text), Plan / Clear target buttons
-    PanelRect("target", "top_right", -0.98, -0.31, -0.04, -0.03),
+    # target name, status (icon + text), Plan / Clear target buttons, in-SOI flyby row
+    PanelRect("target", "top_right", -0.98, -0.38, -0.04, -0.03),
     # orbit rows + fuel / dV left / throttle . TWR
     PanelRect("orbit_fuel", "bottom_left", 0.04, 0.04, 0.84, 0.66),
     # the ball's own display region (30% of the window height), never scaled

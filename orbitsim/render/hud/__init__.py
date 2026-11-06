@@ -26,36 +26,45 @@ def _speed(mps: float, units: str) -> str:
     return f"{kms:,.3f} km/s"
 
 
-def orbit_panel_lines(
-    *, altitude_m: float, speed_mps: float,
-    periapsis_m: float, apoapsis_m: float, period_s: float,
-    inclination_rad: float, units: str, dominant_body: str = "Earth",
+def orbit_fuel_lines(
+    *, altitude_m: float, speed_mps: float, periapsis_m: float, apoapsis_m: float,
+    period_s: float, inclination_rad: float, units: str, dominant_body: str,
+    fuel_frac: float, dv_remaining: float, throttle: float, twr: float,
+    warp_locked: bool = False,
 ) -> list[str]:
-    """Build the orbit-info panel text lines. Pure (no DirectGUI) so it is unit-testable."""
+    """The bottom-left panel's rows, top to bottom. Pure (no DirectGUI) so it is
+    unit-testable. Mass and thrust are constants of the one ship, so they're not here."""
+    period = (f"{period_s / 60.0:,.1f} min" if math.isfinite(period_s) else "\u2014")
     lines = [
-        f"Altitude: {_dist(altitude_m, units)}",
-        f"Speed: {_speed(speed_mps, units)}",
+        f"Altitude {_dist(altitude_m, units)}",
+        f"Speed {_speed(speed_mps, units)}",
+        f"Pe {_dist(periapsis_m, units)} \u00b7 Ap {_dist(apoapsis_m, units)}",
+        f"Inc {np.degrees(inclination_rad):,.1f}\u00b0 \u00b7 Period {period}",
     ]
     if dominant_body != "Earth":
-        lines.append(f"Orbiting: {dominant_body}")
+        lines.append(f"Orbiting {dominant_body}")
+    dv_left = "INF" if not math.isfinite(dv_remaining) else f"{dv_remaining:,.0f} m/s"
     lines += [
-        f"Periapsis: {_dist(periapsis_m, units)}",
-        f"Apoapsis: {_dist(apoapsis_m, units)}",
-        f"Inclination: {np.degrees(inclination_rad):,.1f}°",
-        f"Period: {period_s / 60.0:,.1f} min",
+        f"Fuel {fuel_frac * 100:,.0f}% \u00b7 dV left {dv_left}",
+        f"Throttle {throttle * 100:,.0f}% \u00b7 TWR {twr:,.2f}",
     ]
+    if warp_locked:
+        lines.append("WARP LOCKED \u2014 thrusting")
     return lines
 
 
 class Hud:
-    """Grouped orbit, maneuver, and vessel HUD panels."""
+    """The orbit + fuel panel (bottom-left), the toast, and the solar viewer's text."""
 
     def __init__(self, base) -> None:
-        self._left = HudPanel(base.a2dTopLeft, x=0.08, top=-0.30, width=0.92)  # Task 9 moves it
-        self._right = HudPanel(base.a2dTopRight, x=-0.62, top=-0.10)
-        self._orbit_lines = []
-        self._maneuver_lines = ("", "", "")
-        self._encounter_line = ""
+        from orbitsim.render.ui.hud_layout import PANELS
+        rect = PANELS["orbit_fuel"]
+        # A plain node at the anchor carries the UI scale (OrbitApp._hud_panels).
+        self._root = base.a2dBottomLeft.attach_new_node("orbit_fuel_panel")
+        base._hud_panels["orbit_fuel"] = self._root
+        self._panel = HudPanel(self._root, x=rect.x0 + 0.03, bottom=rect.y0 + 0.02,
+                               grow="up", width=rect.x1 - rect.x0 - 0.05)
+        self._orbit = None
         self.units = "km"  # distance/speed units for readouts ("km" or "mi")
         # Transient center-screen "toast" message (e.g. "Quicksaved").
         self._base = base
@@ -91,46 +100,6 @@ class Hud:
         self._toast_task = None
         return task.done
 
-    def toggle_orbit(self) -> None:
-        self._left.hide() if self._left.visible else self._left.show()
-
-    def toggle_vessel(self) -> None:
-        self._right.hide() if self._right.visible else self._right.show()
-
-    def _rebuild_left(self) -> None:
-        cyan = (0.7, 0.95, 1.0, 1.0)
-        magenta = (1.0, 0.4, 1.0, 1.0)
-        orange = (1.0, 0.7, 0.4, 1.0)
-        sections = [
-            {
-                "header": "ORBIT",
-                "header_color": cyan,
-                "rows": [(line, (1.0, 1.0, 1.0, 1.0)) for line in self._orbit_lines],
-            },
-        ]
-        dv_line, node_line, target_line = self._maneuver_lines
-        maneuver_rows = []
-        if dv_line:
-            maneuver_rows.append((dv_line, magenta))
-        if node_line:
-            maneuver_rows.append((node_line, cyan))
-        if target_line:
-            maneuver_rows.append((target_line, orange))
-        enc_line = getattr(self, "_encounter_line", "")
-        if enc_line:
-            maneuver_rows.append((enc_line, (0.4, 1.0, 0.6, 1.0)))
-        if maneuver_rows:
-            sections.append(
-                {"header": "MANEUVER", "header_color": magenta, "rows": maneuver_rows}
-            )
-        self._left.set_sections(sections)
-
-    def set_maneuver(self, dv_line: str, node_line: str, target_line: str,
-                     encounter_line: str = "") -> None:
-        self._maneuver_lines = (dv_line, node_line, target_line)
-        self._encounter_line = encounter_line
-        self._rebuild_left()
-
     def update(
         self,
         *,
@@ -142,38 +111,35 @@ class Hud:
         inclination_rad: float,
         dominant_body: str = "Earth",
     ) -> None:
-        lines = orbit_panel_lines(
-            altitude_m=altitude_m, speed_mps=speed_mps,
-            periapsis_m=periapsis_m, apoapsis_m=apoapsis_m, period_s=period_s,
-            inclination_rad=inclination_rad, units=self.units,
+        """Orbit values for the next ``update_flight`` (which redraws the panel)."""
+        self._orbit = dict(
+            altitude_m=altitude_m, speed_mps=speed_mps, periapsis_m=periapsis_m,
+            apoapsis_m=apoapsis_m, period_s=period_s, inclination_rad=inclination_rad,
             dominant_body=dominant_body,
         )
-        self._orbit_lines = lines
-        self._rebuild_left()
 
     def update_flight(
         self,
         *,
         throttle: float,
-        fuel_kg: float,
         fuel_frac: float,
-        mass_kg: float,
-        thrust_n: float,
         twr: float,
         dv_remaining: float,
         warp_locked: bool,
     ) -> None:
-        lines = [
-            f"Throttle: {throttle * 100:,.0f}%",
-            f"Fuel: {fuel_frac * 100:,.0f}%  ({fuel_kg:,.0f} kg)",
-            f"Mass: {mass_kg:,.0f} kg",
-            f"Thrust: {thrust_n / 1000:,.1f} kN   TWR: {twr:,.2f}",
-            ("dV left: INF" if not math.isfinite(dv_remaining)
-             else f"dV left: {dv_remaining:,.0f} m/s"),
-        ]
-        if warp_locked:
-            lines.append("WARP LOCKED - thrusting")
-        green = (0.6, 1.0, 0.6, 1.0)
-        self._right.set_sections(
-            [{"header": "VESSEL", "header_color": green, "rows": [(line, green) for line in lines]}]
+        """Fuel rows; redraws the orbit + fuel panel."""
+        if self._orbit is None:
+            return
+        lines = orbit_fuel_lines(
+            **self._orbit, units=self.units, fuel_frac=fuel_frac,
+            dv_remaining=dv_remaining, throttle=throttle, twr=twr, warp_locked=warp_locked,
         )
+        n_orbit = len(lines) - (3 if warp_locked else 2)
+        white = (1.0, 1.0, 1.0, 1.0)
+        green = (0.6, 1.0, 0.6, 1.0)
+        amber = (1.0, 0.72, 0.24, 1.0)
+        rows = [(line, white) for line in lines[:n_orbit]]
+        fuel = [(line, green) for line in lines[n_orbit:n_orbit + 2]]
+        if warp_locked:
+            fuel.append((lines[-1], amber))
+        self._panel.set_sections([{"rows": rows}, {"rows": fuel}])

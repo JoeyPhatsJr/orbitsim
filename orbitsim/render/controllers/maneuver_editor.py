@@ -46,7 +46,7 @@ class ManeuverEditor:
         """
         self.app._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
         self.app._nudge_held = {}          # nudge key -> seconds held
-        self.app._dv_line = self.app._node_line = self.app._target_line = self.app._encounter_line = ""
+        self.app._encounter_line = ""      # in-SOI flyby readout (target panel row)
         self.app._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self.app._auto_execute_node = False
         self.app._node_marker_np = None
@@ -330,15 +330,7 @@ class ManeuverEditor:
             self.app._node_time_text.setText("T+0s")
 
     def refresh_readout(self) -> None:
-        import math
         node = self.current_node()
-        budget = self.app.world.vessels[0].delta_v_remaining
-        left = "INF" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
-        self.app._dv_line = (
-            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
-            if node.magnitude_mps > 0.0
-            else ""
-        )
         if hasattr(self.app, "_dv_total_text"):
             if node.magnitude_mps > 0.0:
                 self.app._dv_total_text.setText(f"Total dV: {node.magnitude_mps:,.1f} m/s")
@@ -370,8 +362,8 @@ class ManeuverEditor:
         self.sync_maneuver_hud()
 
     def sync_maneuver_hud(self) -> None:
-        enc = getattr(self.app, "_encounter_line", "")
-        self.app.hud.set_maneuver(self.app._dv_line, self.app._node_line, self.app._target_line, enc)
+        """Refresh the burn readout. (The left panel no longer carries maneuver lines;
+        the slider panel shows its own status until the burn panel replaces it.)"""
 
     def _apply_unlimited(self, on: bool) -> None:
         """Set the unlimited-dV flag on all vessels (no UI). The sim layer
@@ -617,14 +609,5 @@ class ManeuverEditor:
         # Auto-warp-down as the node nears (never warps up).
         if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
             self.app.clock.warp_down()
-        # Pending-node readout (single node); shows "DUE" once within the execute window.
-        if ttn is not None and ttn >= -self.app.EXECUTE_TOLERANCE_S:
-            if ttn <= self.app.EXECUTE_TOLERANCE_S:
-                label = "DUE — press Execute"
-            else:
-                label = f"in T-{fmt_countdown(ttn)}"
-            self.app._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
-        else:
-            self.app._node_line = ""
         self.sync_maneuver_hud()
         return node

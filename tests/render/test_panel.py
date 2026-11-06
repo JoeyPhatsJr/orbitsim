@@ -1,4 +1,6 @@
 """Tests for the pure panel-layout math (no DirectGUI)."""
+import pytest
+
 from orbitsim.render.hud.panel import PanelLayout, layout_panel
 
 
@@ -50,3 +52,24 @@ def test_all_empty_is_degenerate_but_safe():
     )
     assert _flat(layout.line_ys) == []
     assert layout.frame_top >= layout.frame_bottom
+
+
+def test_panel_grows_up_from_bottom():
+    lay = layout_panel([3], top=None, bottom=0.08, line_height=0.06, padding=0.02,
+                       section_gap=0.03, grow="up")
+    assert lay.line_ys[0][-1] == pytest.approx(0.08 + 0.06) and lay.frame_bottom == pytest.approx(0.06)
+
+
+def test_grow_up_matches_grow_down_shape():
+    up = layout_panel([2, 0, 3], top=None, bottom=0.04, line_height=0.06, padding=0.02,
+                      section_gap=0.03, grow="up")
+    down = layout_panel([2, 0, 3], top=up.frame_top - 0.02, line_height=0.06, padding=0.02,
+                        section_gap=0.03)
+    assert _flat(up.line_ys) == pytest.approx(_flat(down.line_ys))
+    assert up.frame_bottom == pytest.approx(down.frame_bottom)
+    assert up.line_ys[1] == []
+
+
+def test_grow_up_needs_bottom():
+    with pytest.raises(ValueError):
+        layout_panel([1], top=0.0, line_height=0.06, padding=0.02, section_gap=0.03, grow="up")

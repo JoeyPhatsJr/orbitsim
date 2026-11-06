@@ -1,42 +1,73 @@
-"""Pure-logic tests for the HUD orbit panel line builder (no DirectGUI needed)."""
-from orbitsim.render.hud import orbit_panel_lines
+"""Pure-logic tests for the HUD line builders and formatters (no DirectGUI needed)."""
+import numpy as np
+
+from orbitsim.render.hud import orbit_fuel_lines
 
 
 def _lines(**over):
     base = dict(
         altitude_m=500_000.0, speed_mps=7600.0,
         periapsis_m=400_000.0, apoapsis_m=600_000.0, period_s=5400.0,
-        inclination_rad=0.5, units="km",
+        inclination_rad=0.5, units="km", dominant_body="Earth", fuel_frac=1.0,
+        dv_remaining=5633.0, throttle=0.0, twr=0.6,
     )
     base.update(over)
-    return orbit_panel_lines(**base)
+    return orbit_fuel_lines(**base)
+
+
+def test_orbit_fuel_lines_compact():
+    lines = orbit_fuel_lines(altitude_m=520.9e3, speed_mps=8053.0, periapsis_m=500e3,
+                             apoapsis_m=2465.2e3, period_s=115.6 * 60,
+                             inclination_rad=np.radians(8.1),
+                             units="km", dominant_body="Earth", fuel_frac=1.0,
+                             dv_remaining=5633.0, throttle=0.0, twr=0.6)
+    assert lines == ["Altitude 520.9 km", "Speed 8.053 km/s", "Pe 500.0 km · Ap 2,465.2 km",
+                     "Inc 8.1° · Period 115.6 min", "Fuel 100% · dV left 5,633 m/s",
+                     "Throttle 0% · TWR 0.60"]
+
+
+def test_orbiting_row_only_away_from_earth():
+    assert "Orbiting Moon" in _lines(dominant_body="Moon")
+    assert _lines(dominant_body="Moon").index("Orbiting Moon") == 4
+    assert not any(line.startswith("Orbiting") for line in _lines())
+
+
+def test_unlimited_dv_and_warp_lock_rows():
+    lines = _lines(dv_remaining=float("inf"), warp_locked=True)
+    assert "Fuel 100% · dV left INF" in lines
+    assert lines[-1] == "WARP LOCKED — thrusting"
+    assert not any("WARP" in line for line in _lines())
+
+
+def test_unbound_orbit_has_no_period_number():
+    assert "Inc 28.6° · Period —" in _lines(period_s=float("nan"))
+
+
+def test_no_mass_or_thrust_rows():
+    text = "\n".join(_lines())
+    assert "Mass" not in text and "Thrust" not in text
 
 
 def test_inclination_line_in_degrees():
-    text = "\n".join(_lines(inclination_rad=0.5))
-    assert "Inclination: 28.6°" in text  # 0.5 rad -> 28.6 deg
+    assert "Inc 28.6° · Period 90.0 min" in _lines(inclination_rad=0.5)
 
 
 def test_km_units_default():
-    text = "\n".join(_lines(units="km", altitude_m=500_000.0))
-    assert "Altitude: 500.0 km" in text
-    assert "Speed: 7.600 km/s" in text
+    lines = _lines(units="km", altitude_m=500_000.0)
+    assert "Altitude 500.0 km" in lines
+    assert "Speed 7.600 km/s" in lines
 
 
 def test_mi_units_conversion():
-    text = "\n".join(_lines(units="mi", altitude_m=500_000.0, speed_mps=7600.0))
+    lines = _lines(units="mi", altitude_m=500_000.0, speed_mps=7600.0)
     # 500 km * 0.621371 = 310.7 mi ; 7.6 km/s * 0.621371 = 4.722 mi/s
-    assert "Altitude: 310.7 mi" in text
-    assert "Speed: 4.722 mi/s" in text
+    assert "Altitude 310.7 mi" in lines
+    assert "Speed 4.722 mi/s" in lines
 
 
-def test_period_always_minutes_unit_agnostic():
-    text = "\n".join(_lines(period_s=5400.0))
-    assert "Period: 90.0 min" in text
-
-
-def test_no_warp_line():
-    assert "Warp" not in "\n".join(_lines())
+def test_no_sim_time_row():
+    # Mission time lives in the time + warp panel now.
+    assert not any("Sim time" in line for line in _lines())
 
 
 def test_fmt_lead():
@@ -45,21 +76,16 @@ def test_fmt_lead():
         "now", "in 45 s", "in 36 min", "in 2 h 05 min", "in 3 d 04 h"]
 
 
-def test_no_sim_time_row():
-    # Mission time lives in the time + warp panel now.
-    assert not any("Sim time" in line for line in _lines())
-
-
 def test_mission_time_formats():
     from orbitsim.render.hud.format import fmt_mission_time
     assert fmt_mission_time(12015.0) == "T+ 03:20:15"
     assert fmt_mission_time(12 * 86400 + 3 * 3600 + 20 * 60) == "T+ 12d 03h 20m"
     assert fmt_mission_time(969_100 * 86400 + 3 * 3600) == "T+ 969,100d 03h"
     assert fmt_mission_time(0.0) == "T+ 00:00:00"
-    assert fmt_mission_time(-12015.0) == "T\u2212 03:20:15"
+    assert fmt_mission_time(-12015.0) == "T− 03:20:15"
 
 
 def test_warp_formats():
     from orbitsim.render.hud.format import fmt_warp
-    assert fmt_warp(100.0, False) == "\u00d7100" and fmt_warp(1e6, False) == "\u00d71,000,000"
-    assert fmt_warp(1.0, True) == "\u00d71 LOCKED"
+    assert fmt_warp(100.0, False) == "×100" and fmt_warp(1e6, False) == "×1,000,000"
+    assert fmt_warp(1.0, True) == "×1 LOCKED"

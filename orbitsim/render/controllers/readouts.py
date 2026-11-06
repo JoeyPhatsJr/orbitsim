@@ -1,4 +1,4 @@
-"""Sandbox HUD wiring: navball, SAS panel, velocity readout, panel dock, apsis/encounter markers, per-frame readouts."""
+"""Sandbox HUD wiring: navball, SAS panel, velocity readout, apsis/encounter markers, per-frame readouts."""
 
 import numpy as np
 from orbitsim.core.moon import moon_state_at
@@ -14,7 +14,7 @@ class Readouts:
         self.app = app
 
     def build_sandbox_controls(self):
-        """Maneuver editor, navball, SAS panel, velocity readout, dock."""
+        """Maneuver editor, navball, SAS panel, velocity readout."""
         # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
         # *current* state (dt=0), so the executed orbit matches the live preview.
         self.app.maneuver_editor.build_maneuver_ui()
@@ -28,13 +28,6 @@ class Readouts:
             self.app, on_set_mode=self.app.flight_input.set_sas, on_toggle=self.app.flight_input.toggle_sas
         )
         self.app.vel_readout = VelocityReadout(self.app, lambda: self.app.hud.units)
-        from orbitsim.render.ui.widgets import PanelDock
-        self.app.panel_dock = PanelDock(self.app, [
-            ("ORBIT", self.app.hud.toggle_orbit),
-            ("VESSEL", self.app.hud.toggle_vessel),
-            ("MANEUVER", self.app.maneuver_editor.toggle_maneuver_drawer),
-        ])
-        self.app._maneuver_frame.hide()  # clean-flight default; MNV dock button opens it
 
     def build_apsis_and_encounter_markers(self):
         """PE/AP markers + encounter periapsis cues."""
@@ -165,7 +158,6 @@ class Readouts:
             f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
             f"free dV {dv_eq:,.0f} m/s"
         )
-        self.app.maneuver_editor.sync_maneuver_hud()
 
     def frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""
@@ -207,10 +199,7 @@ class Readouts:
         fuel_frac = v0.fuel_mass_kg / cap if cap > 0 else 0.0
         self.app.hud.update_flight(
             throttle=v0.throttle,
-            fuel_kg=v0.fuel_mass_kg,
             fuel_frac=fuel_frac,
-            mass_kg=v0.mass_kg,
-            thrust_n=v0.max_thrust_n,
             twr=twr,
             dv_remaining=v0.delta_v_remaining,
             warp_locked=self.app.world.any_thrusting(),
