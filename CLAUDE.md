@@ -42,7 +42,9 @@ gracefully offline — see the gotchas.
 
 Verifying graphics headlessly: prepend `loadPrcFileData("", "window-type offscreen")` before
 constructing `OrbitApp`, drive it with `app.taskMgr.step()`, and capture
-`app.win.save_screenshot(Filename.from_os_specific(path))`.
+`app.win.save_screenshot(Filename.from_os_specific(path))`. The easy way: the golden harness's
+`install_determinism(win_size="1600 900")` + `build_app("sandbox")` + `Harness(app).step(n)`;
+check layouts at 1280×720 (the smallest supported window) and a 21:9 size too.
 
 ## Architecture — the one rule that governs everything
 
@@ -262,10 +264,29 @@ don't batch many changes into one late commit. Stage specific files by **explici
   the plan matches the drawn preview (198 km). The flight integrator flies that plan to a
   147–165 km pass (3600 / 600 / 60 s chunks), safe but about 40 km low. The pre-Yoshida
   flight crashed it.
-- **Editing a burn: one state, three inputs.** The slider panel, the nudge keys (`node_edit.NUDGE_KEYS`)
-  and the 3D handles (`node_handles`) all write `app._dv` / `app._node_epoch_s` through
-  `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree. Clicking
-  your orbit opens `node_placement`'s "Add burn here / Warp to here" menu.
+- **Editing a burn: one state, two inputs.** The nudge keys (`node_edit.NUDGE_KEYS`) and the
+  3D handles (`node_handles`) write `app._dv` / `app._node_epoch_s` through
+  `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree (the jog
+  slider panel is gone; tests set a burn with `hooks.set_burn`). Clicking your orbit opens
+  `node_placement`'s "Add burn here / Warp to here" menu. The burn panel shows only what
+  exists: `burn_summary_text()` (also the map label), Next Pe / Next Ap / Delete burn, and an
+  Execute button relabelled every frame (Execute Burn / Jump & Execute).
+- **Screen layout lives in one table: `render/ui/hud_layout.PANELS`.** Every corner panel
+  (time+warp, target, orbit+fuel, navball, speed chip, SAS, burn) is a `PanelRect` relative
+  to its `a2d*` anchor; `tests/render/test_hud_layout.py` pins no overlap from 3:2 to 21:9
+  and UI scale 0.84–1.08. Build a panel with `ui.widgets.layout_panel_frame` and register it
+  in `app._hud_panels` (that's what `_update_responsive_ui` scales and what the label pass
+  hit-tests). Don't place HUD widgets with ad-hoc coordinates.
+- **World labels never sit on panels.** `readouts.hide_labels_on_panels` is the *last* step
+  of `_update`: any world label whose anchor projects onto a shown panel (its current frame,
+  +10 px) is hidden, whatever its priority. A new world label must be listed in
+  `Readouts._world_labels` (owned = shown/hidden by its controller each frame; static = only
+  the pass hides it). `hooks.labels_over_panels` checks it from the widgets themselves.
+- **The camera focus is not at screen centre.** In the sandbox `CameraRig.focus_screen_y =
+  FOCUS_SCREEN_Y` (0.20) applies a lens film offset so the ship sits above the navball
+  cluster. Picking goes through `camLens.project`, so it follows. Any change to framing moves
+  the pixels scripted clicks land on: `orbit_menu_warp_here`'s pixel-space pick moved its warp
+  target by 7 µs when the offset landed (re-recorded, see its commit).
 - **Input gotchas:**
   - Headless windows have no `mouseWatcherNode`. Read the mouse and keys only through
     `flight_input.mouse_px` / `mouse1_held` / `mouse_over_gui` / `key_held`; the harness
