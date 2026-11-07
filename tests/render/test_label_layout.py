@@ -132,3 +132,12 @@ def test_render2d_rect_px():
     assert render2d_rect_px((-1, -1), (1, 1), (1600, 900)) == (0, 0, 1600, 900)
     assert render2d_rect_px((-0.5, 0.8), (0.5, 1.0), (1600, 900)) == pytest.approx(
         (400, 810, 1200, 900))
+
+
+def test_solar_frame_skips_a_zero_size_framebuffer():
+    # Review (plan 5): a minimised window can report a 0-height framebuffer;
+    # units_per_pixel raises on it, which would kill the frame task.
+    from types import SimpleNamespace
+    from orbitsim.render.controllers.solar_view import SolarView
+    win = SimpleNamespace(get_fb_x_size=lambda: 1600, get_fb_y_size=lambda: 0)
+    SolarView(SimpleNamespace(win=win)).frame_markers_and_labels(None)   # no raise

@@ -129,11 +129,13 @@ class SolarView:
                                                   layout_labels, units_per_pixel)
         from orbitsim.render.picking import nearest_marker
         app = self.app
+        fb_w, fb_h = app.win.get_fb_x_size(), app.win.get_fb_y_size()
+        if fb_w <= 0 or fb_h <= 0:
+            return      # minimised window: nothing to lay out (units_per_pixel would raise)
         ui = app.line_px_scale()
         lens = app.camLens
         near = lens.get_near()
         vfov = lens.get_fov()[1]
-        fb_w, fb_h = app.win.get_fb_x_size(), app.win.get_fb_y_size()
         quat = app.camera.get_quat(app.render)
         cam_right, cam_up = quat.get_right(), quat.get_up()
         font_px = self.LABEL_FONT_PX * ui
