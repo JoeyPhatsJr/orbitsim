@@ -71,6 +71,8 @@ class Targeting:
     STATUS_Z = -0.175
     BUTTONS_Z = -0.255
     FLYBY_Z = -0.335              # in-SOI flyby readout row (only while inside an SOI)
+    FLYBY_SCALE = 0.034
+    FLYBY_ROW_W = 0.88            # x -0.94 .. -0.06, inside PANELS["target"] (-0.98 .. -0.04)
     BOTTOM_Z = -0.30              # frame bottom without the flyby row
     GHOST_MIN_UNITS = 6.0          # smallest on-screen ghost radius [render units]
 
@@ -92,7 +94,7 @@ class Targeting:
             text="", pos=(-0.87, self.STATUS_Z), scale=0.045, fg=THEME.text,
             align=TextNode.ALeft, mayChange=True, parent=panel)
         self.app._flyby_text = OnscreenText(
-            text="", pos=(-0.94, self.FLYBY_Z), scale=0.034, fg=(0.4, 1.0, 0.6, 1.0),
+            text="", pos=(-0.94, self.FLYBY_Z), scale=self.FLYBY_SCALE, fg=(0.4, 1.0, 0.6, 1.0),
             align=TextNode.ALeft, mayChange=True, parent=panel)
         # The bundled font has no tick/cross glyphs: draw them (2 segments each).
         x, z = -0.915, self.STATUS_Z + 0.012

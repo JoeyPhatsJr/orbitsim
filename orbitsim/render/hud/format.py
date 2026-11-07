@@ -106,3 +106,14 @@ def encounter_label(body_name: str, periapsis_alt_m: float, impact: bool) -> str
     if impact:
         return f"{body_name} impact"
     return f"{body_name} encounter \u00b7 Pe {periapsis_alt_m / 1000.0:,.0f} km"
+
+
+def flyby_line(body_name: str, v_inf_mps: float, deflection_rad: float,
+               periapsis_m: float, dv_equivalent_mps: float) -> str:
+    """In-SOI flyby row: speed at infinity, how far the pass turns you, periapsis and
+    the free dV. Short enough for the target panel at any planet; only glyphs the
+    bundled font has (no "δ")."""
+    import math
+    return (f"{body_name} · v-inf {v_inf_mps / 1000.0:,.1f} km/s · "
+            f"turns {math.degrees(deflection_rad):,.0f}° · Pe {fmt_dist(periapsis_m)} · "
+            f"+{dv_equivalent_mps:,.0f} m/s")
