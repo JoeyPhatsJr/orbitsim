@@ -79,3 +79,26 @@ def declutter_indices(
             visible.add(index)
             accepted.append(point)
     return visible
+
+
+def label_box_px(corners_px):
+    """``(x0, y0, x1, y1)`` bounds of a label's projected corners ((N, 2) bottom-up
+    pixels), or None when any corner is at or behind the camera (NaN)."""
+    import numpy as np
+    c = np.asarray(corners_px, dtype=np.float64)
+    if not np.isfinite(c).all():
+        return None
+    return (float(c[:, 0].min()), float(c[:, 1].min()),
+            float(c[:, 0].max()), float(c[:, 1].max()))
+
+
+def box_blocked_by_panels(box_px, rects_px, margin_px: float = 4.0) -> bool:
+    """True when a label's screen box ``(x0, y0, x1, y1)`` (None = off-lens) overlaps
+    any ``(x0, y0, x1, y1)`` pixel rect grown by ``margin_px``. Labels are wide and
+    centre-aligned, so testing only the anchor leaves text under panels."""
+    if box_px is None:
+        return False
+    bx0, by0, bx1, by1 = box_px
+    return any(bx0 < x1 + margin_px and x0 - margin_px < bx1
+               and by0 < y1 + margin_px and y0 - margin_px < by1
+               for x0, y0, x1, y1 in rects_px)

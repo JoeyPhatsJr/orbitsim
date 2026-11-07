@@ -22,22 +22,11 @@
   "]-up",
   "a",
   "a-up",
-  "adjust-pg*",
-  "adjust-pg*",
-  "adjust-pg*",
-  "adjust-pg*",
   "arrow_down",
   "arrow_left",
   "arrow_right",
   "arrow_up",
   "async_loader_0",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
   "click-mouse1-pg*",
   "click-mouse1-pg*",
   "click-mouse1-pg*",
@@ -107,36 +96,20 @@
   "distance_m": 88432714.28571446,
   "elevation": -1.3595397369784044
  },
- "sim_time_s": 2168.4713173593996,
+ "sim_time_s": 2168.471324682114,
  "target": null,
  "texts": [
-  "+0",
-  "+0",
-  "+0",
-  "Altitude: 1,956.3 km",
-  "Apoapsis: 2,465.1 km",
+  "Altitude 1,956.3 km",
   "Arrived at trajectory point",
   "COASTING 35:11 ALONG TRAJECTORY   100%",
-  "Fuel: 100%  (8,000 kg)",
-  "Inclination: 8.1\u00b0",
-  "Mass: 10,000 kg",
-  "NO MANEUVER PLANNED",
-  "Node T",
-  "Normal",
-  "ORBIT",
-  "Periapsis: 500.0 km",
-  "Period: 115.6 min",
-  "Prograde",
-  "Radial",
-  "SAS: OFF    HDG 094\u00b0   PIT +07\u00b0",
-  "Sim time: 2,168 s past J2000",
-  "Speed: 6.704 km/s",
-  "T+ 0.0 DAYS     WARP  x1",
-  "T+0s",
-  "Throttle: 0%",
-  "Thrust: 50.0 kN   TWR: 0.87",
-  "VESSEL",
-  "dV left: 5,633 m/s"
+  "Fuel 100% \u00b7 dV left 5,633 m/s",
+  "Inc 8.1\u00b0 \u00b7 Period 115.6 min",
+  "Pe 500.0 km \u00b7 Ap 2,465.1 km",
+  "SAS OFF \u00b7 HDG 094\u00b0 \u00b7 PIT +07\u00b0",
+  "Speed 6.704 km/s",
+  "T+ 00:36:08",
+  "Throttle 0% \u00b7 TWR 0.87",
+  "\u00d71"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,
@@ -148,22 +121,22 @@
    0.0
   ],
   "r": [
-   -4772741.378128122,
-   6763875.063317028,
-   966268.2984486507
+   -4772741.421214314,
+   6763875.040026059,
+   966268.2951213726
   ],
   "sas_mode": "OFF",
   "throttle": 0.0,
   "v": [
-   -5883.910062307872,
-   -3180.646649165608,
-   -454.377735846389
+   -5883.910038244859,
+   -3180.6466832674223,
+   -454.37774071807763
   ]
  },
  "warp": 1.0,
  "world_labels": [
   [
-   "AP",
+   "Ap 2,465 km",
    false
   ],
   [
@@ -203,7 +176,7 @@
    false
   ],
   [
-   "PE",
+   "Pe 500 km",
    false
   ],
   [

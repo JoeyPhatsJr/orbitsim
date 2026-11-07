@@ -22,22 +22,11 @@
   "]-up",
   "a",
   "a-up",
-  "adjust-pg*",
-  "adjust-pg*",
-  "adjust-pg*",
-  "adjust-pg*",
   "arrow_down",
   "arrow_left",
   "arrow_right",
   "arrow_up",
   "async_loader_0",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
-  "click-mouse1-pg*",
   "click-mouse1-pg*",
   "click-mouse1-pg*",
   "click-mouse1-pg*",
@@ -110,35 +99,16 @@
  "sim_time_s": 22.34999999999983,
  "target": null,
  "texts": [
-  "+1",
-  "+1",
-  "+13",
-  "Altitude: 500.3 km",
-  "Apoapsis: 2,465.2 km",
-  "Fuel: 100%  (8,000 kg)",
-  "Inclination: 8.1\u00b0",
-  "MANEUVER",
-  "Maneuver dV: 13.2 m/s   (dV left 5,633 m/s)",
-  "Mass: 10,000 kg",
-  "NODE T-01:49  /  13 m/s",
-  "Node T",
-  "Node in T-01:48   dV 13.2 m/s",
-  "Normal",
-  "ORBIT",
-  "Periapsis: 500.0 km",
-  "Period: 115.6 min",
-  "Prograde",
-  "Radial",
-  "SAS: OFF    HDG 082\u00b0   PIT +00\u00b0",
-  "Sim time: 22 s past J2000",
-  "Speed: 8.074 km/s",
-  "T+ 0.0 DAYS     WARP  x1",
-  "T+1.8m",
-  "Throttle: 0%",
-  "Thrust: 50.0 kN   TWR: 0.59",
-  "Total dV: 13.2 m/s",
-  "VESSEL",
-  "dV left: 5,633 m/s"
+  "Altitude 500.3 km",
+  "Burn 13 m/s \u00b7 in 1 min \u00b7 3s burn",
+  "Fuel 100% \u00b7 dV left 5,633 m/s",
+  "Inc 8.1\u00b0 \u00b7 Period 115.6 min",
+  "Pe 500.0 km \u00b7 Ap 2,465.2 km",
+  "SAS OFF \u00b7 HDG 082\u00b0 \u00b7 PIT +00\u00b0",
+  "Speed 8.074 km/s",
+  "T+ 00:00:22",
+  "Throttle 0% \u00b7 TWR 0.59",
+  "\u00d71"
  ],
  "vessel": {
   "fuel_mass_kg": 8000.0,
@@ -167,7 +137,11 @@
  "warp": 1.0,
  "world_labels": [
   [
-   "AP",
+   "Ap 2,463 km",
+   false
+  ],
+  [
+   "Burn 13 m/s \u00b7 in 1 min \u00b7 3s burn",
    false
   ],
   [
@@ -207,8 +181,8 @@
    false
   ],
   [
-   "PE",
-   false
+   "Pe 500 km",
+   true
   ],
   [
    "Saturn",
@@ -228,10 +202,6 @@
   ],
   [
    "Venus",
-   false
-  ],
-  [
-   "dV 13 m/s  T-01:48",
    false
   ]
  ]

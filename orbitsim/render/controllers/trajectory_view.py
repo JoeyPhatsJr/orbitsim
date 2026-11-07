@@ -1,8 +1,8 @@
 """Live trajectory lines, encounter patches/cues, and teleport-coast operations."""
 
-import numpy as np
 from orbitsim.core.elements import state_to_elements
-from orbitsim.render.hud.format import fmt_countdown
+import numpy as np
+from orbitsim.render.hud.format import encounter_label
 from orbitsim.render.line_style import ENCOUNTER_STYLE, ORBIT_STYLE
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
@@ -106,9 +106,15 @@ class TrajectoryView:
                 pe_point, ap_point = apsis_points_on_path(world_pts)
                 self.app._apsis_positions["PE"] = pe_point
                 self.app._apsis_positions["AP"] = ap_point
+                # Same points the ticks sit on; the line is Earth-centred.
+                radius = self.app.world.central.radius_m
+                self.app._apsis_altitudes["PE"] = float(np.linalg.norm(pe_point)) - radius
+                self.app._apsis_altitudes["AP"] = float(np.linalg.norm(ap_point)) - radius
             except ValueError:
                 self.app._apsis_positions["PE"] = None
                 self.app._apsis_positions["AP"] = None
+                self.app._apsis_altitudes["PE"] = None
+                self.app._apsis_altitudes["AP"] = None
 
     def rebuild_trajectory(self, idx, vessel, now_real) -> None:
         """Poll/submit N-body prediction work without blocking the render thread."""
@@ -163,12 +169,11 @@ class TrajectoryView:
             )
 
     def update_encounter_cues(self) -> None:
-        """Place predicted-flyby periapsis markers and set the HUD approach line.
+        """Place predicted-flyby periapsis markers.
 
         Shows the exact post-burn preview's encounters while a maneuver is planned (none
         while it is being edited and the exact result is stale), otherwise the live
-        trajectory's. The HUD line is only set when the vessel
-        is not already inside an SOI (the live flyby readout takes that slot)."""
+        trajectory's. (The target panel's status box says the same in words.)"""
         if not hasattr(self.app, "_encounter_marker_nps"):
             return
         now = self.app.clock.sim_time_s
@@ -193,21 +198,9 @@ class TrajectoryView:
             rx, ry, rz = self.app.transform.to_render(enc.periapsis_point_m)
             marker.set_pos(rx, ry, rz)
             marker.show()
-            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
-            tag = "IMPACT" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
-            countdown = max(0.0, enc.periapsis_epoch_s - now)
-            label.node().set_text(f"{enc.body_name} {tag}  T-{fmt_countdown(countdown)}")
+            text = encounter_label(enc.body_name, enc.periapsis_radius_m - enc.body_radius_m,
+                                   enc.impact)
+            if label.node().get_text() != text:
+                label.node().set_text(text)
             label.set_pos(rx, ry, rz + 8.0)
             label.show()
-        # Predicted approach line — only when not already inside an SOI.
-        if flybys and not getattr(self.app, "_encounter_line", ""):
-            enc = flybys[0]
-            pe_alt_km = (enc.periapsis_radius_m - enc.body_radius_m) / 1000.0
-            tag = "impact" if enc.impact else f"Pe {pe_alt_km:,.0f} km"
-            countdown = max(0.0, enc.periapsis_epoch_s - now)
-            v_inf = enc.v_inf_mps / 1000.0 if np.isfinite(enc.v_inf_mps) else 0.0
-            self.app._encounter_line = (
-                f"Approach {enc.body_name}: {tag}  "
-                f"T-{fmt_countdown(countdown)}  v-inf {v_inf:,.1f} km/s"
-            )
-            self.app.maneuver_editor.sync_maneuver_hud()

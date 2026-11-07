@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from orbitsim.core.flight import (
     tsiolkovsky_dv, fuel_burned_for_dv, mass_flow_rate, thrust_accel_mps2,
-    integrate_powered,
+    integrate_powered, burn_duration_s,
 )
 from orbitsim.core.state import StateVector
 from orbitsim.core.propagate import propagate_kepler
@@ -194,3 +194,20 @@ def test_nbody_moon_perturbation_diverges_from_twobody():
     )
     divergence = np.linalg.norm(out_nbody.r - out_2body.r)
     assert divergence > 1000.0, f"expected N-body divergence near Moon, got {divergence:.1f} m"
+
+
+def test_burn_duration_known_answer():
+    # 10 t ship, ve 3.5 km/s, 50 kN, 3,130 m/s: 700 s * (1 - e^-0.894286) = 413.8 s
+    assert burn_duration_s(10_000.0, 3500.0, 50_000.0, 3130.0) == pytest.approx(413.78, abs=0.05)
+
+
+def test_burn_duration_matches_mass_flow():
+    # Constant thrust and mass flow: the burn lasts (propellant burned) / mdot.
+    m0, ve, f, dv = 9_000.0, 3200.0, 40_000.0, 900.0
+    expected = fuel_burned_for_dv(ve, m0, dv) / mass_flow_rate(1.0, f, ve)
+    assert burn_duration_s(m0, ve, f, dv) == pytest.approx(expected, rel=1e-12)
+
+
+def test_burn_duration_rejects_zero_thrust():
+    with pytest.raises(ValueError):
+        burn_duration_s(10_000.0, 3500.0, 0.0, 10.0)

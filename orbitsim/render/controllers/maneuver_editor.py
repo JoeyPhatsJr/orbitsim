@@ -1,16 +1,13 @@
-"""Maneuver-node editor: jog sliders, node timing, preview, execute, unlimited dV."""
+"""Maneuver-node editor: the burn panel, node timing, preview, execute, unlimited dV."""
 
 import numpy as np
 from direct.gui.DirectButton import DirectButton
-from direct.gui.DirectFrame import DirectFrame
-from direct.gui.DirectSlider import DirectSlider
 from direct.gui.OnscreenText import OnscreenText
 from orbitsim.core.maneuvers import ManeuverNode, apply_maneuver
-from orbitsim.render.geometry import make_uv_sphere
-from orbitsim.render.hud.format import fmt_countdown
+from orbitsim.render.hud.format import burn_summary
 from orbitsim.render.line_style import ESTIMATE_STYLE, PLAN_STYLE
 from orbitsim.render.node_edit import (
-    NUDGE_DV, NUDGE_KEYS, NUDGE_TIME, jog_rate, nudge_rate, snap_dv, snap_epoch,
+    NUDGE_DV, NUDGE_KEYS, NUDGE_TIME, nudge_rate, snap_dv, snap_epoch,
 )
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
@@ -24,175 +21,60 @@ from panda3d.core import TextNode
 class ManeuverEditor:
     """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
-    # Spring-loaded "jog" sliders: displacement from center sets the *rate* of change.
-    JOG_MAX_RATE_MPS = 400.0  # delta-V change per second at full deflection
-    JOG_CURVE = 4.0  # exponential steepness; higher = gentler near center, sharper at edges
-    JOG_DEADZONE = 0.02  # |value| below this contributes no change
-    NODE_JOG_MAX_RATE = 1000.0    # max time jog rate [s/s at full deflection]
-    NODE_JOG_CURVE = 4.0
     AUTO_WARP_LEAD_S = 5.0        # auto-warp-down when within this many real-seconds of the node
     PREVIEW_SETTLE_S = 0.25       # burn must be still this long before the exact preview runs
     PREVIEW_REFRESH_S = 0.5       # min real-seconds between drift refreshes of the same burn
+    # Burn panel rows inside PANELS["burn"] (a2dBottomRight-relative). The buttons row
+    # never moves; the readout above it and Execute below it show only with a burn.
+    READOUT_Z = 0.855
+    BUTTONS_Z = 0.755
+    EXECUTE_Z = 0.645
+    IDLE_FRAME_Z = (0.705, 0.815)   # frame bottom/top with only the buttons row
 
     def __init__(self, app) -> None:
         self.app = app
 
     def build_maneuver_ui(self) -> None:
-        """Per-axis spring-loaded jog sliders for RTN delta-V, an Execute button, a readout.
-
-        Each slider is a rate control: hold it right to increase that delta-V component
-        (faster the further you push, exponentially), left to decrease. Releasing the
-        mouse springs the thumb back to center and the value stops changing.
-        """
+        """The burn panel (bottom-right): a one-line readout of the burn, Next Pe /
+        Next Ap / Delete burn, and Execute. The burn itself is shaped with the node
+        handles and the nudge keys; the panel shows only what exists."""
         self.app._dv = {"pro": 0.0, "nrm": 0.0, "rad": 0.0}
         self.app._nudge_held = {}          # nudge key -> seconds held
-        self.app._dv_line = self.app._node_line = self.app._target_line = self.app._encounter_line = ""
+        self.app._encounter_line = ""      # in-SOI flyby readout (target panel row)
         self.app._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
         self.app._auto_execute_node = False
         self.app._node_marker_np = None
         self.app._node_dv_label = None
-        self.app._dv_value_text = {}
-        self.app._jog = {}
+        self.app._node_label_position = None   # world position of the burn's map label
+        from orbitsim.render.ui.hud_layout import PANELS
         from orbitsim.render.ui.theme import THEME, button_options
-        self.app._maneuver_frame = DirectFrame(
-            frameColor=THEME.panel,
-            frameSize=(-1.34, 0.02, -0.29, 0.60),
-            parent=self.app.a2dBottomRight,
-        )
-        rows = (("pro", "Prograde", 0.40), ("nrm", "Normal", 0.28), ("rad", "Radial", 0.16))
-        for axis, label, z in rows:
-            OnscreenText(
-                text=label,
-                pos=(-1.22, z - 0.015),
-                scale=0.045,
-                fg=(1, 1, 1, 1),
-                align=TextNode.ALeft,
-                parent=self.app._maneuver_frame,
-            )
-            self.app._jog[axis] = DirectSlider(
-                pos=(-0.62, 0.0, z),
-                scale=0.34,
-                range=(-1.0, 1.0),
-                value=0.0,
-                pageSize=0.25,
-                parent=self.app._maneuver_frame,
-            )
-            self.app._dv_value_text[axis] = OnscreenText(
-                text="+0",
-                pos=(-0.14, z - 0.015),
-                scale=0.045,
-                fg=(1.0, 0.9, 0.4, 1),
-                align=TextNode.ALeft,
-                mayChange=True,
-                parent=self.app._maneuver_frame,
-            )
-        # Total dV magnitude display.
-        self.app._dv_total_text = OnscreenText(
-            text="", pos=(-0.65, 0.52), scale=0.05,
-            fg=(1.0, 0.5, 1.0, 1.0), align=TextNode.ACenter,
-            mayChange=True, parent=self.app._maneuver_frame,
-        )
-        # Node time jog slider (variable time stepping).
-        OnscreenText(
-            text="Node T", pos=(-1.22, 0.04 - 0.015), scale=0.045,
-            fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
-            parent=self.app._maneuver_frame,
-        )
-        self.app._node_time_jog = DirectSlider(
-            pos=(-0.62, 0.0, 0.04), scale=0.34,
-            range=(-1.0, 1.0), value=0.0, pageSize=0.25,
-            parent=self.app._maneuver_frame,
-        )
-        self.app._node_time_text = OnscreenText(
-            text="T+0s", pos=(-0.14, 0.04 - 0.015), scale=0.045,
-            fg=(0.3, 1.0, 1.0, 1), align=TextNode.ALeft,
-            mayChange=True, parent=self.app._maneuver_frame,
-        )
-        self.app._action_frame = DirectFrame(
-            frameColor=THEME.panel,
-            frameSize=(0.03, 0.78, 0.03, 0.25),
-            parent=self.app.a2dBottomLeft,
-        )
+        from orbitsim.render.ui.widgets import layout_panel_frame
+        rect = PANELS["burn"]
+        panel = layout_panel_frame(self.app, rect)
+        self.app._burn_panel = panel
+        self.app._hud_panels["burn"] = panel
+        self.app._burn_readout_text = OnscreenText(
+            text="", pos=(rect.x0 + 0.04, self.READOUT_Z), scale=0.046,
+            fg=(1.0, 0.55, 1.0, 1.0), shadow=(0, 0, 0, 1), align=TextNode.ALeft,
+            mayChange=True, parent=panel)
+        row = [("Next Pe", -0.92, self._node_to_pe), ("Next Ap", -0.68, self._node_to_ap),
+               ("Delete burn", -0.38, self.delete_burn)]
+        self.app._burn_buttons = [
+            DirectButton(text=label, scale=0.046, pos=(x, 0.0, self.BUTTONS_Z),
+                         command=cmd, parent=panel, **button_options())
+            for label, x, cmd in row]
         self.app._exec_btn = DirectButton(
-            text="Execute Burn",
-            scale=0.045,
-            pos=(0.40, 0.0, 0.10),
-            command=self.execute_burn,
-            parent=self.app._action_frame,
-            **button_options(),
-        )
-        self.app._action_status = OnscreenText(
-            text="NO MANEUVER PLANNED", pos=(0.40, 0.18), scale=0.036,
-            fg=THEME.text_muted, mayChange=True, parent=self.app._action_frame,
-        )
-        # Scheduled-node controls: jump to next apsis, clear.
-        node_btns = [
-            ("Next Pe", self._node_to_pe),
-            ("Next Ap", self._node_to_ap),
-            ("Clear", self._clear_node),
-        ]   # "Clear target" / "Plan {target} transfer" live in the target panel
-        for i, (label, cmd) in enumerate(node_btns):
-            DirectButton(text=label, scale=0.045, pos=(-0.95 + i * 0.34, 0.0, -0.20),
-                         command=cmd, parent=self.app._maneuver_frame, **button_options())
-        # Releasing the mouse springs every jog slider back to its center (zero rate).
-        self.app.accept("mouse1-up", self._release_jogs)
+            text="Execute Burn", scale=0.052, pos=(-0.57, 0.0, self.EXECUTE_Z),
+            command=self.execute_burn, parent=panel, **button_options())
+        self.app._burn_buttons.append(self.app._exec_btn)
+        self.app._burn_panel_state = None  # last (readout, delete shown, exec label) drawn
         self.refresh_readout()
 
-    def toggle_maneuver_drawer(self) -> None:
-        if self.app._maneuver_frame.is_hidden():
-            self.app._maneuver_frame.show()
-        else:
-            self.app._maneuver_frame.hide()
-
-    def _jog_rate_mps_per_s(self, value: float) -> float:
-        """Map a jog displacement in [-1, 1] to a signed delta-V rate [m/s per s].
-
-        Zero at center, ``JOG_MAX_RATE_MPS`` at full deflection, exponential in between
-        so small displacements give fine control and large ones change quickly.
-        """
-        return jog_rate(value, self.JOG_MAX_RATE_MPS, self.JOG_CURVE, self.JOG_DEADZONE)
-
-    def apply_jogs(self, real_dt_s: float) -> None:
-        """Integrate each jog slider's rate into its delta-V component for this frame."""
-        changed = False
-        if not self.burn_editable(flash=False):
-            return
-        for axis, slider in self.app._jog.items():
-            rate = self._jog_rate_mps_per_s(slider["value"])
-            if rate != 0.0:
-                self.app._dv[axis] += rate * real_dt_s
-                self.app._dv_value_text[axis].setText(f"{self.app._dv[axis]:+.0f}")
-                changed = True
-        if changed:
-            self.refresh_readout()
-        if hasattr(self.app, "_node_time_jog"):
-            tv = self.app._node_time_jog["value"]
-            mag = abs(tv)
-            if mag > self.JOG_DEADZONE:
-                shaped = (np.exp(self.NODE_JOG_CURVE * mag) - 1.0) / (np.exp(self.NODE_JOG_CURVE) - 1.0)
-                rate = float(np.copysign(self.NODE_JOG_MAX_RATE * shaped, tv))
-                now = self.app.clock.sim_time_s
-                base = self.app._node_epoch_s if self.app._node_epoch_s is not None else now
-                self.app._node_epoch_s = max(now, base + rate * real_dt_s)
-                self.app._node_time_text.setText(self._fmt_node_t(self.app._node_epoch_s - now))
-
-    @staticmethod
-    def _fmt_node_t(ttn: float) -> str:
-        """Node lead time for the panel's time readout (T+42s / T+3.5m / T+1.2h / T+2.0d)."""
-        if ttn < 60:
-            return f"T+{ttn:.0f}s"
-        if ttn < 3600:
-            return f"T+{ttn/60:.1f}m"
-        if ttn < 86400:
-            return f"T+{ttn/3600:.1f}h"
-        return f"T+{ttn/86400:.1f}d"
-
-    # --- Burn editing API shared by the slider panel, nudge keys and (later) handles ---
+    # --- Burn editing API shared by the handles and the nudge keys ---
 
     def set_dv(self, axis: str, value_mps: float) -> None:
         """Set one delta-V component ('pro'/'nrm'/'rad') of the planned burn [m/s]."""
         self.app._dv[axis] = value_mps
-        self.app._dv_value_text[axis].setText(f"{value_mps:+.0f}")
         self.refresh_readout()
 
     def burn_editable(self, flash: bool = True) -> bool:
@@ -215,8 +97,6 @@ class ManeuverEditor:
         """Schedule the burn at ``epoch_s`` (never in the past)."""
         now = self.app.clock.sim_time_s
         self.app._node_epoch_s = max(now, float(epoch_s))
-        if hasattr(self.app, "_node_time_text"):
-            self.app._node_time_text.setText(self._fmt_node_t(self.app._node_epoch_s - now))
 
     def _nudge(self, axis: str, delta: float) -> None:
         if axis == "time":
@@ -264,16 +144,6 @@ class ManeuverEditor:
             if rate:
                 self._nudge(axis, sign * rate * real_dt)
 
-    def _release_jogs(self) -> None:
-        """Spring all jog thumbs back to center so the value stops changing on release.
-
-        Also resolve a tap: a body (target it) or your orbit (the Add/Warp menu)."""
-        self.app.node_placement.on_mouse1_up()
-        for slider in self.app._jog.values():
-            slider["value"] = 0.0
-        if hasattr(self.app, "_node_time_jog"):
-            self.app._node_time_jog["value"] = 0.0
-
     def current_node(self) -> ManeuverNode:
         """Build the node from the current dV values at the scheduled epoch (or now if none)."""
         epoch = (self.app._node_epoch_s if self.app._node_epoch_s is not None
@@ -296,12 +166,6 @@ class ManeuverEditor:
         if self.app._node_epoch_s is None:
             return None
         return self.app._node_epoch_s - self.app.clock.sim_time_s
-
-    def _step_node_time(self, delta_s):
-        """Nudge the node epoch by delta_s (creating one at now+delta if none), clamped >= now."""
-        now = self.app.clock.sim_time_s
-        base = self.app._node_epoch_s if self.app._node_epoch_s is not None else now
-        self.app._node_epoch_s = max(now, base + delta_s)
 
     def _node_to_pe(self):
         from orbitsim.core.maneuvers import time_to_periapsis
@@ -326,52 +190,71 @@ class ManeuverEditor:
         if self.app._node_dv_label is not None:
             self.app._node_dv_label.remove_node()
             self.app._node_dv_label = None
-        if hasattr(self.app, "_node_time_text"):
-            self.app._node_time_text.setText("T+0s")
+
+    def delete_burn(self) -> None:
+        """Remove the planned burn: no node time and no delta-V."""
+        self._clear_node()
+        for axis in self.app._dv:
+            self.app._dv[axis] = 0.0
+        self.refresh_readout()
 
     def refresh_readout(self) -> None:
-        import math
-        node = self.current_node()
-        budget = self.app.world.vessels[0].delta_v_remaining
-        left = "INF" if not math.isfinite(budget) else f"{budget:,.0f} m/s"
-        self.app._dv_line = (
-            f"Maneuver dV: {node.magnitude_mps:,.1f} m/s   (dV left {left})"
-            if node.magnitude_mps > 0.0
-            else ""
-        )
-        if hasattr(self.app, "_dv_total_text"):
-            if node.magnitude_mps > 0.0:
-                self.app._dv_total_text.setText(f"Total dV: {node.magnitude_mps:,.1f} m/s")
-            else:
-                self.app._dv_total_text.setText("")
-        if hasattr(self.app, "_exec_btn"):
-            ttn = self.time_to_node()
-            if getattr(self.app, "_auto_execute_node", False):
-                self.app._exec_btn["text"] = "Cancel Auto Burn"
-            elif ttn is not None and ttn > self.app.EXECUTE_TOLERANCE_S:
-                self.app._exec_btn["text"] = "Jump & Execute"
-            else:
-                self.app._exec_btn["text"] = "Execute Burn"
-            if hasattr(self.app, "_action_status"):
-                if node.magnitude_mps <= 0.0:
-                    self.app._action_status.setText("NO MANEUVER PLANNED")
-                    from direct.gui import DirectGuiGlobals as DGG
-                    self.app._exec_btn["state"] = DGG.DISABLED
-                elif ttn is not None and ttn > 0.0:
-                    from direct.gui import DirectGuiGlobals as DGG
-                    self.app._exec_btn["state"] = DGG.NORMAL
-                    self.app._action_status.setText(
-                        f"NODE T-{fmt_countdown(ttn)}  /  {node.magnitude_mps:,.0f} m/s"
-                    )
-                else:
-                    from direct.gui import DirectGuiGlobals as DGG
-                    self.app._exec_btn["state"] = DGG.NORMAL
-                    self.app._action_status.setText(f"BURN READY  /  {node.magnitude_mps:,.0f} m/s")
+        """Redraw the burn panel now (an edit, Execute, unlimited toggle)."""
         self.sync_maneuver_hud()
 
+    def burn_summary_text(self, node=None) -> str:
+        """The burn's one-line summary (panel readout and map label): size, time until,
+        full-throttle duration."""
+        from orbitsim.core.flight import burn_duration_s
+        node = self.current_node() if node is None else node
+        v0 = self.app.world.vessels[0]
+        try:
+            duration = burn_duration_s(v0.mass_kg, v0.exhaust_velocity_mps,
+                                       v0.max_thrust_n, node.magnitude_mps)
+        except ValueError:
+            duration = None
+        return burn_summary(node.magnitude_mps, self.time_to_node(), duration)
+
     def sync_maneuver_hud(self) -> None:
-        enc = getattr(self.app, "_encounter_line", "")
-        self.app.hud.set_maneuver(self.app._dv_line, self.app._node_line, self.app._target_line, enc)
+        """The burn panel: readout + Delete burn while a burn exists, Execute while it has
+        delta-V (its label says what it will do); just Next Pe / Next Ap otherwise."""
+        app = self.app
+        if not hasattr(app, "_burn_panel"):
+            return
+        node = self.current_node()
+        dv = node.magnitude_mps
+        exists = app._node_epoch_s is not None or dv > 0.0
+        ttn = self.time_to_node()
+        if app._auto_execute_node:
+            exec_label = "Cancel Auto Burn"
+        elif ttn is not None and ttn > app.EXECUTE_TOLERANCE_S:
+            exec_label = "Jump & Execute"
+        else:
+            exec_label = "Execute Burn"
+        readout = self.burn_summary_text(node) if exists else None
+        state = (readout, exists, exec_label if dv > 0.0 else None)
+        if state == app._burn_panel_state:
+            return
+        app._burn_panel_state = state
+        if readout is None:
+            app._burn_readout_text.hide()
+        else:
+            app._burn_readout_text.setText(readout)
+            app._burn_readout_text.show()
+        delete_btn = app._burn_buttons[2]
+        delete_btn.show() if exists else delete_btn.hide()
+        if dv > 0.0:
+            if app._exec_btn["text"] != exec_label:
+                app._exec_btn["text"] = exec_label
+            app._exec_btn.show()
+        else:
+            app._exec_btn.hide()
+        from orbitsim.render.ui.hud_layout import PANELS
+        rect = PANELS["burn"]
+        bottom, top = (rect.y0, rect.y1) if exists else self.IDLE_FRAME_Z
+        if dv <= 0.0 and exists:
+            bottom = self.IDLE_FRAME_Z[0]
+        app._burn_panel["frameSize"] = (rect.x0, rect.x1, bottom, top)
 
     def _apply_unlimited(self, on: bool) -> None:
         """Set the unlimited-dV flag on all vessels (no UI). The sim layer
@@ -425,8 +308,8 @@ class ManeuverEditor:
         self._clear_node()
         for axis in self.app._dv:
             self.app._dv[axis] = 0.0
-            self.app._dv_value_text[axis].setText("+0")
-        self._release_jogs()
+        if self.app.node_handles.dragging() is not None:
+            self.app.node_handles.end_drag()     # the burn it was shaping is gone
         self.refresh_readout()
 
     def _update_maneuver_preview(self, node, vessel, now_real) -> None:
@@ -593,22 +476,24 @@ class ManeuverEditor:
             npos = apply_maneuver(v0.state, node).r
             mx, my, mz = self.app.transform.to_render(npos)
             if self.app._node_marker_np is None:
-                self.app._node_marker_np = make_uv_sphere(1.0, 8, 12)
-                self.app._node_marker_np.reparent_to(self.app.render)
-                self.app._node_marker_np.set_color(0.3, 1.0, 1.0, 1.0)
-                self.app._node_marker_np.set_light_off()
+                # A ring on the orbit (node_handles sizes it to NODE_RADIUS_PX).
+                from orbitsim.render.world_labels import build_ring_marker
+                self.app._node_marker_np = build_ring_marker(
+                    self.app.render, color=(0.3, 1.0, 1.0, 1.0),
+                    thickness_px=2.5 * self.app.line_px_scale())
             self.app._node_marker_np.set_pos(mx, my, mz)
             if self.app._node_dv_label is None:
                 from orbitsim.render.world_labels import build_world_label
                 self.app._node_dv_label = build_world_label(
                     self.app.render, "", color=(0.3, 1.0, 1.0, 1.0), scale=11.0)
-            dv_text = f"dV {node.magnitude_mps:,.0f} m/s"
-            if ttn > 0:
-                dv_text += f"  T-{fmt_countdown(ttn)}"
-            self.app._node_dv_label.node().set_text(dv_text)
+            text = self.burn_summary_text(node)   # the burn panel's readout, word for word
+            if self.app._node_dv_label.node().get_text() != text:
+                self.app._node_dv_label.node().set_text(text)
             self.app._node_dv_label.set_pos(mx, my, mz + 8.0)
             self.app._node_dv_label.show()
+            self.app._node_label_position = np.asarray(npos, dtype=np.float64).copy()
         elif self.app._node_marker_np is not None:
+            self.app._node_label_position = None
             self.app._node_marker_np.remove_node()
             self.app._node_marker_np = None
             if self.app._node_dv_label is not None:
@@ -617,14 +502,5 @@ class ManeuverEditor:
         # Auto-warp-down as the node nears (never warps up).
         if ttn is not None and 0.0 < ttn <= self.AUTO_WARP_LEAD_S * self.app.clock.warp and self.app.clock.warp > 1.0:
             self.app.clock.warp_down()
-        # Pending-node readout (single node); shows "DUE" once within the execute window.
-        if ttn is not None and ttn >= -self.app.EXECUTE_TOLERANCE_S:
-            if ttn <= self.app.EXECUTE_TOLERANCE_S:
-                label = "DUE — press Execute"
-            else:
-                label = f"in T-{fmt_countdown(ttn)}"
-            self.app._node_line = f"Node {label}   dV {node.magnitude_mps:,.1f} m/s"
-        else:
-            self.app._node_line = ""
         self.sync_maneuver_hud()
         return node

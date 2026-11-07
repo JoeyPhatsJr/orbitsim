@@ -66,11 +66,14 @@ class Targeting:
         self.app._target_label.hide()
         self.app._target_label_position = None
 
-    # Target panel rows (a2dTopRight; Task 9 of plan 4 moves the panel to the top).
-    PANEL_FRAME = (-0.98, -0.04, -0.90, -0.60)
-    TITLE_Z = -0.655
-    STATUS_Z = -0.745
-    BUTTONS_Z = -0.845
+    # Target panel rows, inside PANELS["target"] (a2dTopRight-relative).
+    TITLE_Z = -0.095
+    STATUS_Z = -0.175
+    BUTTONS_Z = -0.255
+    FLYBY_Z = -0.335              # in-SOI flyby readout row (only while inside an SOI)
+    FLYBY_SCALE = 0.034
+    FLYBY_ROW_W = 0.88            # x -0.94 .. -0.06, inside PANELS["target"] (-0.98 .. -0.04)
+    BOTTOM_Z = -0.30              # frame bottom without the flyby row
     GHOST_MIN_UNITS = 6.0          # smallest on-screen ghost radius [render units]
 
     def _build_target_panel(self) -> None:
@@ -78,15 +81,20 @@ class Targeting:
         from direct.gui.DirectFrame import DirectFrame
         from direct.gui.OnscreenText import OnscreenText
         from panda3d.core import LineSegs, TextNode
+        from orbitsim.render.ui.hud_layout import PANELS
         from orbitsim.render.ui.theme import THEME
-        panel = DirectFrame(frameColor=THEME.panel, frameSize=self.PANEL_FRAME,
-                            parent=self.app.a2dTopRight)
+        from orbitsim.render.ui.widgets import layout_panel_frame
+        panel = layout_panel_frame(self.app, PANELS["target"])
         self.app._target_panel = panel
+        self.app._hud_panels["target"] = panel
         self.app._target_title_text = OnscreenText(
             text="", pos=(-0.94, self.TITLE_Z), scale=0.042, fg=THEME.text_muted,
             align=TextNode.ALeft, mayChange=True, parent=panel)
         self.app._aim_status_text = OnscreenText(
             text="", pos=(-0.87, self.STATUS_Z), scale=0.045, fg=THEME.text,
+            align=TextNode.ALeft, mayChange=True, parent=panel)
+        self.app._flyby_text = OnscreenText(
+            text="", pos=(-0.94, self.FLYBY_Z), scale=self.FLYBY_SCALE, fg=(0.4, 1.0, 0.6, 1.0),
             align=TextNode.ALeft, mayChange=True, parent=panel)
         # The bundled font has no tick/cross glyphs: draw them (2 segments each).
         x, z = -0.915, self.STATUS_Z + 0.012
@@ -109,10 +117,10 @@ class Targeting:
         from direct.gui.DirectButton import DirectButton
         from orbitsim.render.ui.theme import button_options
         self.app._plan_transfer_btn = DirectButton(
-            text="Plan transfer", scale=0.040, pos=(-0.70, 0.0, self.BUTTONS_Z),
+            text="Plan transfer", scale=0.046, pos=(-0.68, 0.0, self.BUTTONS_Z),
             command=self.plan_intercept, parent=panel, **button_options())
         self.app._clear_target_btn = DirectButton(
-            text="Clear target", scale=0.040, pos=(-0.22, 0.0, self.BUTTONS_Z),
+            text="Clear target", scale=0.046, pos=(-0.22, 0.0, self.BUTTONS_Z),
             command=self.clear_target, parent=panel, **button_options())
         panel.hide()
 
@@ -325,8 +333,6 @@ class Targeting:
         self._hide_ghost()
         self.app._target_label_position = None
         self.app._target_label.hide()
-        self.app._target_line = ""
-        self.app.maneuver_editor.sync_maneuver_hud()
 
     def frame_target_label(self):
         """Billboard label on the selected target."""
@@ -345,21 +351,28 @@ class Targeting:
         today's live distance readout for Lagrange points and the Sun."""
         app = self.app
         target = app._target
+        flyby = self._sync_flyby_row()
         if target is None:
             app._aim_status = None
-            app._target_panel.hide()
             self._hide_ghost()
+            if not flyby:
+                app._target_panel.hide()
+                return
+            # Inside a planet's SOI with nothing targeted: the panel carries the flyby only.
+            app._target_panel.show()
+            app._target_title_text.setText("FLYBY")
+            self._show_status(None)
+            app._plan_transfer_btn.hide()
+            app._clear_target_btn.hide()
             return
         app._target_panel.show()
+        app._clear_target_btn.show()
         app._target_title_text.setText(f"TARGET  {target.name.upper()}")
         self._sync_plan_button(target)
         name = self.aim_target_name()
         if name is None:
             self._frame_live_distance(target)
             return
-        if app._target_line:
-            app._target_line = ""
-            app.maneuver_editor.sync_maneuver_hud()
         estimate_m, estimate_pos = self._kepler_estimate(target, node)
         if node.magnitude_mps > 0.0:
             exact = app.maneuver_editor.exact_preview_current(node)
@@ -389,8 +402,22 @@ class Targeting:
             btn["text"] = label
         btn.show()
 
+    def _sync_flyby_row(self) -> bool:
+        """The in-SOI flyby readout as the panel's extra row; True when shown."""
+        app = self.app
+        flyby = getattr(app, "_encounter_line", "")
+        if app._flyby_text.getText() != flyby:
+            app._flyby_text.setText(flyby)
+        bottom = self.FLYBY_Z - 0.035 if flyby else self.BOTTOM_Z
+        size = app._target_panel["frameSize"]
+        if size[2] != bottom:
+            app._target_panel["frameSize"] = (size[0], size[1], bottom, size[3])
+        return bool(flyby)
+
     def _frame_live_distance(self, target) -> None:
-        """Lagrange point / Sun: live distance + relative speed, no status box or ghost."""
+        """Lagrange point / Sun: live distance + relative speed in the status row, no
+        status box or ghost."""
+        from orbitsim.render.ui.theme import THEME
         app = self.app
         app._aim_status = None
         self._show_status(None)
@@ -399,11 +426,8 @@ class Targeting:
         here = target.state_at(app.clock.sim_time_s)
         dist = float(np.linalg.norm(v0.state.r - here.r))
         relsp = float(np.linalg.norm(v0.state.v - here.v))
-        app._target_line = (
-            f"Target: {target.name}   dist {fmt_dist(dist)}"
-            f"   rel {relsp:,.0f} m/s"
-        )
-        app.maneuver_editor.sync_maneuver_hud()
+        app._aim_status_text.setText(f"{fmt_dist(dist)} away \u00b7 rel {relsp:,.0f} m/s")
+        app._aim_status_text["fg"] = THEME.text_muted
 
     def _kepler_estimate(self, target, node):
         """(separation [m], target position [m]) of the Earth-only Kepler closest

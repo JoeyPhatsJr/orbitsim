@@ -1,7 +1,8 @@
-"""Sandbox HUD wiring: navball, SAS panel, velocity readout, panel dock, apsis/encounter markers, per-frame readouts."""
+"""Sandbox HUD wiring: navball, SAS panel, velocity readout, apsis/encounter markers, per-frame readouts."""
 
 import numpy as np
 from orbitsim.core.moon import moon_state_at
+from orbitsim.render.hud.format import apsis_label
 from orbitsim.render.world_markers import distance_fade
 
 
@@ -14,7 +15,7 @@ class Readouts:
         self.app = app
 
     def build_sandbox_controls(self):
-        """Maneuver editor, navball, SAS panel, velocity readout, dock."""
+        """Maneuver editor, navball, SAS panel, velocity readout."""
         # Maneuver editor (operates on vessel 0). The burn is applied at vessel 0's
         # *current* state (dt=0), so the executed orbit matches the live preview.
         self.app.maneuver_editor.build_maneuver_ui()
@@ -28,27 +29,23 @@ class Readouts:
             self.app, on_set_mode=self.app.flight_input.set_sas, on_toggle=self.app.flight_input.toggle_sas
         )
         self.app.vel_readout = VelocityReadout(self.app, lambda: self.app.hud.units)
-        from orbitsim.render.ui.widgets import PanelDock
-        self.app.panel_dock = PanelDock(self.app, [
-            ("ORBIT", self.app.hud.toggle_orbit),
-            ("VESSEL", self.app.hud.toggle_vessel),
-            ("MANEUVER", self.app.maneuver_editor.toggle_maneuver_drawer),
-        ])
-        self.app._maneuver_frame.hide()  # clean-flight default; MNV dock button opens it
 
     def build_apsis_and_encounter_markers(self):
         """PE/AP markers + encounter periapsis cues."""
-        from orbitsim.render.world_labels import build_labeled_marker, build_world_label
+        from orbitsim.render.world_labels import (
+            build_labeled_marker, build_tick_marker, build_world_label,
+        )
         self.app._apsis_positions = {"PE": None, "AP": None}
+        self.app._apsis_altitudes = {"PE": None, "AP": None}   # above the surface [m]
         self.app._apsis_nps = {}
         self.app._apsis_labels = {}
         for name, color in (
             ("PE", (0.30, 1.0, 0.58, 1.0)),
             ("AP", (0.38, 0.68, 1.0, 1.0)),
         ):
-            marker, label = build_labeled_marker(
-                self.app.render, name, color=color, marker_scale=5.5, label_scale=11.0
-            )
+            marker = build_tick_marker(self.app.render, color=color, length=7.0,
+                                       thickness_px=3.5 * self.app.line_px_scale())
+            label = build_world_label(self.app.render, "", color=color, scale=11.0)
             marker.hide()
             label.hide()
             self.app._apsis_nps[name] = marker
@@ -80,6 +77,10 @@ class Readouts:
             rx, ry, rz = self.app.transform.to_render(world_pos)
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 7.0)
+            altitude = self.app._apsis_altitudes[name]
+            text = apsis_label(name, altitude) if altitude is not None else ""
+            if label.node().get_text() != text:
+                label.node().set_text(text)
             marker.show()
 
     def update_marker_readability(self, focus_m) -> None:
@@ -96,14 +97,27 @@ class Readouts:
         add(self.app._target_label, None, self.app._target_label_position, 100, 0.55)
         add(self.app._aim_ghost_label, self.app._aim_ghost_np,
             self.app._aim_ghost_position, 85, 0.40)
+        if getattr(self.app, "_node_dv_label", None) is not None:   # the burn's one line
+            add(self.app._node_dv_label, None,
+                getattr(self.app, "_node_label_position", None), 90, 0.55)
         add(self.app._apsis_labels["PE"], self.app._apsis_nps["PE"],
             self.app._apsis_positions["PE"], 70)
         add(self.app._apsis_labels["AP"], self.app._apsis_nps["AP"],
             self.app._apsis_positions["AP"], 65)
+        # Lagrange points fade into the background unless one is the target: their
+        # labels don't compete for space, their markers dim (after the distance fade).
+        from orbitsim.render.controllers.bodies_view import BodiesView
+        target = getattr(self.app, "_target", None)
+        targeted = getattr(target, "name", None)
+        idle_markers = []
         for name, marker, label in zip(
             ("L1", "L2", "L3", "L4", "L5"), self.app._lagrange_nps, self.app._lagrange_labels
         ):
-            add(label, marker, self.app._lagrange_positions.get(name), 20)
+            if name == targeted:
+                add(label, marker, self.app._lagrange_positions.get(name), 20)
+            else:
+                label.hide()
+                idle_markers.append(marker)
 
         points_px = [self.app.targeting.marker_px(item[2]) for item in candidates]
         visible = declutter_indices(
@@ -123,6 +137,90 @@ class Readouts:
             if marker is not None and not marker.is_empty():
                 marker.set_transparency(TransparencyAttrib.M_alpha)
                 marker.set_alpha_scale(alpha)
+        for marker in idle_markers:
+            marker.set_transparency(TransparencyAttrib.M_alpha)
+            marker.set_alpha_scale(BodiesView.LAGRANGE_IDLE_ALPHA)
+
+    def panel_rects_px(self):
+        """Pixel rects (x0, y0, x1, y1), bottom-up, of the HUD panels drawn now: each
+        panel's current frame (a panel that shrinks with its content counts as drawn),
+        plus the navball's display region."""
+        from dataclasses import replace
+        from orbitsim.render.ui.hud_layout import PANELS, to_pixels
+        app = self.app
+        w, h = app.win.get_x_size(), app.win.get_y_size()
+        if w <= 0 or h <= 0:
+            return []
+        scale = getattr(app, "_ui_scale", 1.0)
+        rects = []
+        for name, node in app._hud_panels.items():
+            if node.is_hidden():
+                continue
+            rect = PANELS[name]
+            frame = app.hud.panel_frame() if name == "orbit_fuel" else node
+            if frame is None or frame.is_hidden():
+                continue
+            if name != "speed_chip":
+                l, r, b, t = frame["frameSize"]
+                px, py = rect.pivot
+                rect = replace(rect, x0=l + px, x1=r + px, y0=b + py, y1=t + py)
+            rects.append(to_pixels(rect, w, h, scale))
+        if getattr(app, "navball", None) is not None:
+            rects.append(to_pixels(PANELS["navball"], w, h, scale))
+        return rects
+
+    def _world_labels(self):
+        """(owned, static) world labels. Owned labels are shown/hidden every frame by
+        their controller; static ones are only ever hidden by the panel pass."""
+        app = self.app
+        owned = []
+        for attr in ("_target_label", "_aim_ghost_label", "_node_dv_label", "_ghost_label"):
+            label = getattr(app, attr, None)
+            if label is not None:
+                owned.append(label)
+        owned += list(getattr(app, "_apsis_labels", {}).values())
+        owned += list(getattr(app, "_lagrange_labels", []))
+        owned += list(getattr(app, "_encounter_labels", []))
+        static = list(getattr(app, "_planet_sandbox_labels", {}).values())
+        static += list(getattr(app, "_planet_labels", []))
+        return owned, static
+
+    def hide_labels_on_panels(self) -> None:
+        """Last step of the frame: no world label is drawn on a HUD panel. A label whose
+        drawn box (its card, placed along the camera's right/up axes: labels are eye
+        billboards) overlaps a shown panel (+4 px) is hidden, whatever its priority;
+        static labels come back once they're clear."""
+        from panda3d.core import Vec3
+        from orbitsim.render.picking import project_points_px
+        from orbitsim.render.world_markers import box_blocked_by_panels, label_box_px
+        app = self.app
+        owned, static = self._world_labels()
+        owned = [label for label in owned if not label.is_hidden()]
+        labels = owned + static
+        if not labels:
+            return
+        rects = self.panel_rects_px()
+        right = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(1, 0, 0))))
+        up = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(0, 0, 1))))
+        corners = []
+        for label in labels:
+            node = label.node()
+            l, r, b, t = node.get_card_actual() if node.has_card() else node.get_frame_actual()
+            anchor = np.array(tuple(label.get_pos(app.render)))
+            sx, _sy, sz = label.get_scale(app.render)
+            corners += [anchor + right * (x * sx) + up * (z * sz)
+                        for x in (l, r) for z in (b, t)]
+
+        def m(lm):
+            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
+        render_to_clip = m(app.render.get_mat(app.cam)) @ m(app.camLens.get_projection_mat())
+        px = project_points_px(np.array(corners), render_to_clip,
+                               app.win.get_x_size(), app.win.get_y_size())
+        for i, label in enumerate(labels):
+            if box_blocked_by_panels(label_box_px(px[4 * i:4 * i + 4]), rects):
+                label.hide()
+            elif i >= len(owned):
+                label.show()
 
     def _update_encounter_info(self, vessel, dom_body, dom_pos) -> None:
         """Compute and display flyby encounter parameters when approaching a planet."""
@@ -156,16 +254,10 @@ class Readouts:
         pstate = fn(t_now)
         params = encounter_parameters(
             vessel.state.r, vessel.state.v, dom_pos, pstate.v, dom_body.mu)
-        v_inf_kms = params["v_inf_mag"] / 1000.0
-        defl_deg = np.degrees(params["deflection_rad"])
-        dv_eq = params["dv_equivalent"]
-        pe_km = params["periapsis_m"] / 1000.0
-        self.app._encounter_line = (
-            f"Flyby {dom_body.name}: v-inf {v_inf_kms:,.1f} km/s  "
-            f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
-            f"free dV {dv_eq:,.0f} m/s"
-        )
-        self.app.maneuver_editor.sync_maneuver_hud()
+        from orbitsim.render.hud.format import flyby_line
+        self.app._encounter_line = flyby_line(
+            dom_body.name, params["v_inf_mag"], params["deflection_rad"],
+            params["periapsis_m"], params["dv_equivalent"])
 
     def frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""
@@ -193,7 +285,6 @@ class Readouts:
             period = float("nan")
         dist_from_dom = float(np.linalg.norm(v0.state.r - dom_pos))
         self.app.hud.update(
-            sim_time_s=self.app.clock.sim_time_s,
             altitude_m=dist_from_dom - ref_radius,
             speed_mps=v0.state.v_mag,
             periapsis_m=rp - ref_radius,
@@ -208,10 +299,7 @@ class Readouts:
         fuel_frac = v0.fuel_mass_kg / cap if cap > 0 else 0.0
         self.app.hud.update_flight(
             throttle=v0.throttle,
-            fuel_kg=v0.fuel_mass_kg,
             fuel_frac=fuel_frac,
-            mass_kg=v0.mass_kg,
-            thrust_n=v0.max_thrust_n,
             twr=twr,
             dv_remaining=v0.delta_v_remaining,
             warp_locked=self.app.world.any_thrusting(),

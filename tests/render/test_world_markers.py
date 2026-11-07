@@ -64,3 +64,26 @@ def test_declutter_ignores_offscreen_points_and_validates_lengths():
     assert declutter_indices([None, (5.0, 5.0)], [100, 1], min_separation_px=10.0) == {1}
     with pytest.raises(ValueError):
         declutter_indices([(0.0, 0.0)], [], min_separation_px=10.0)
+
+
+def test_box_blocked_by_panels_tests_the_whole_label():
+    # Review (4b): labels are wide and centre-aligned, so an anchor clear of a panel
+    # can still put most of the text under it. The whole box counts.
+    from orbitsim.render.world_markers import box_blocked_by_panels
+    rects = [(100.0, 0.0, 400.0, 300.0)]
+    assert box_blocked_by_panels((380.0, 140.0, 620.0, 162.0), rects)   # anchor at x=500
+    assert box_blocked_by_panels((402.0, 140.0, 620.0, 162.0), rects)   # within the margin
+    assert not box_blocked_by_panels((420.0, 140.0, 620.0, 162.0), rects)
+    assert not box_blocked_by_panels((150.0, 310.0, 300.0, 330.0), rects)
+    assert box_blocked_by_panels((150.0, 301.0, 300.0, 330.0), rects)
+    assert not box_blocked_by_panels(None, rects)                       # behind the camera
+    assert not box_blocked_by_panels((150.0, 0.0, 300.0, 30.0), [])
+
+
+def test_label_box_px_bounds_projected_corners():
+    import numpy as np
+    from orbitsim.render.world_markers import label_box_px
+    corners = np.array([[10.0, 5.0], [50.0, 5.0], [10.0, 25.0], [50.0, 25.0]])
+    assert label_box_px(corners) == (10.0, 5.0, 50.0, 25.0)
+    corners[2] = np.nan                                                 # a corner behind the camera
+    assert label_box_px(corners) is None

@@ -26,6 +26,16 @@ def fuel_burned_for_dv(ve_mps: float, m0_kg: float, dv_mps: float) -> float:
     return float(m0_kg * (1.0 - np.exp(-dv_mps / ve_mps)))
 
 
+def burn_duration_s(mass_kg: float, exhaust_velocity_mps: float, thrust_n: float,
+                    dv_mps: float) -> float:
+    """Full-throttle time [s] to deliver dv: m·ve/F · (1 − exp(−dv/ve)) (propellant
+    burned over the constant mass flow F/ve). Requires F > 0, ve > 0, m > 0, dv >= 0."""
+    if thrust_n <= 0.0:
+        raise ValueError(f"thrust must be positive, got {thrust_n}")
+    burned = fuel_burned_for_dv(exhaust_velocity_mps, mass_kg, dv_mps)
+    return float(burned * exhaust_velocity_mps / thrust_n)
+
+
 def mass_flow_rate(throttle: float, max_thrust_n: float, ve_mps: float
                    ) -> float:
     """Propellant mass flow ṁ = throttle * thrust / ve [kg/s]."""

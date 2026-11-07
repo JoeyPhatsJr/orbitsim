@@ -46,15 +46,33 @@ class OperationOverlay:
         self.frame.show()
 
 
-class PanelDock:
-    """Compact left-edge buttons for session-local panel visibility."""
+_ANCHOR_NODES = {
+    "top_left": "a2dTopLeft", "top_right": "a2dTopRight", "bottom_left": "a2dBottomLeft",
+    "bottom_center": "a2dBottomCenter", "bottom_right": "a2dBottomRight",
+}
 
-    def __init__(self, base, actions):
-        from direct.gui.DirectButton import DirectButton
 
-        self.buttons = []
-        for index, (label, command) in enumerate(actions):
-            self.buttons.append(DirectButton(
-                text=label, scale=0.042, pos=(0.17, 0, 0.16 - index * 0.12),
-                command=command, parent=base.a2dLeftCenter, **button_options(),
-            ))
+def layout_panel_frame(base, rect, *, color=None):
+    """A DirectFrame filling ``rect`` (a ``hud_layout.PanelRect``) on its anchor node.
+
+    The frame sits at the rect's pivot, so ``set_scale(ui_scale)`` scales it the way
+    ``hud_layout.to_absolute`` does; children go at ``panel_pos`` (rect coordinates,
+    i.e. anchor-relative and unscaled)."""
+    from direct.gui.DirectFrame import DirectFrame
+    px, py = rect.pivot
+    return DirectFrame(
+        frameColor=THEME.panel if color is None else color,
+        frameSize=(rect.x0 - px, rect.x1 - px, rect.y0 - py, rect.y1 - py),
+        pos=(px, 0.0, py),
+        parent=getattr(base, _ANCHOR_NODES[rect.anchor]),
+    )
+
+
+def panel_pos(rect, x, y):
+    """(x, z) inside a ``layout_panel_frame`` for anchor-relative rect coordinates."""
+    return x - rect.pivot[0], y - rect.pivot[1]
+
+
+def scale_panel(frame, rect, ui_scale: float) -> None:
+    """Apply the UI scale to a ``layout_panel_frame`` (pinned rects stay at 1)."""
+    frame.set_scale(ui_scale if rect.scales else 1.0)

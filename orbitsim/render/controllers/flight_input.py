@@ -48,6 +48,7 @@ class FlightInput:
                 self.app.accept(f"{k}-up", self._set_key, [k, False])
             self.app._mouse1_down_px = None
             self.app.accept("mouse1", self.app.node_placement.on_mouse1_down)   # tap: body / orbit menu
+            self.app.accept("mouse1-up", self.app.node_placement.on_mouse1_up)  # ends a tap or a drag
             self.app.accept("z", self._throttle_full)
             self.app.accept("x", self._throttle_cut)
             self.app.accept("u", self.app.maneuver_editor.toggle_unlimited_dv)

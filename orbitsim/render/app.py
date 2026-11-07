@@ -98,6 +98,8 @@ class OrbitApp(ShowBase):
             # The rig owns scale (= distance / 1000). Pull back to ~13 AU so the Sun,
             # inner planets, and Jupiter/Saturn all fit; the user can zoom from there.
             self.rig.set_distance(2.0e12)
+        self._hud_panels = {}      # PANELS name -> its frame (scaled by _update_responsive_ui)
+        self._ui_scale = 1.0
         self.hud = Hud(self)
         from orbitsim.render.ui.widgets import OperationOverlay
         self.operation_overlay = OperationOverlay(self, self.trajectory_view.cancel_operation)
@@ -125,6 +127,9 @@ class OrbitApp(ShowBase):
             self.readouts.build_apsis_and_encounter_markers()
             self.bodies_view.build_moon_and_lagrange()
             self.bodies_view.build_sandbox_planets()
+            # The focus sits above the bottom HUD cluster (navball + speed chip).
+            from orbitsim.render.ui.hud_layout import FOCUS_SCREEN_Y
+            self.rig.focus_screen_y = FOCUS_SCREEN_Y
             self.vessel_view.apply_opening_camera()
         self.bodies_view.build_starfield()
 
@@ -203,11 +208,16 @@ class OrbitApp(ShowBase):
         self._ui_viewport = size
         from orbitsim.render.ui.layout import ResponsiveLayout
 
+        from orbitsim.render.ui.hud_layout import PANELS
+        from orbitsim.render.ui.widgets import scale_panel
+
         layout = ResponsiveLayout.calculate(*size)
-        if hasattr(self, "_maneuver_frame"):
-            scale = min(layout.ui_scale, 1.08)
-            self._maneuver_frame.set_scale(scale)
-            self._action_frame.set_scale(scale)
+        # HUD panels never shrink below their design size (small windows already get
+        # fewer pixels per unit); capped at 1.08 as before.
+        scale = min(max(layout.ui_scale, 1.0), 1.08)
+        self._ui_scale = scale
+        for name, frame in self._hud_panels.items():
+            scale_panel(frame, PANELS[name], scale)
 
     def _update(self, task):
         real_dt = _global_clock.get_dt()
@@ -224,6 +234,7 @@ class OrbitApp(ShowBase):
         if self.solar_system:
             self.clock.advance(real_dt)
             self.solar_view.update_solar_system()
+            self.readouts.hide_labels_on_panels()
             return task.cont
 
         # Apply any finished background planning work (runs off the render thread).
@@ -232,8 +243,7 @@ class OrbitApp(ShowBase):
 
         target_pos, maneuver_dir = self._frame_flight(real_dt)
 
-        # Jog sliders accumulate delta-V at a real-time (warp-independent) rate.
-        self.maneuver_editor.apply_jogs(real_dt)
+        # Held nudge keys and handle drags change delta-V at a real-time rate.
         self.maneuver_editor.apply_nudges(real_dt)
         self.node_handles.apply_drag(real_dt)
 
@@ -257,6 +267,7 @@ class OrbitApp(ShowBase):
         self.node_placement.frame_hover()
 
         self.readouts.frame_readouts(target_pos, maneuver_dir)
+        self.readouts.hide_labels_on_panels()      # last: labels never sit on panels
         return task.cont
 
     def _frame_flight(self, real_dt):

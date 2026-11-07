@@ -35,12 +35,17 @@ def sas_and_views(h):
 
 def node_edit_execute(h):
     _launch_sandbox(h)
-    hooks.set_jog(h.app, "pro", 0.6)
+    # Was: jog "pro" at 0.6 for 30 frames. That accumulated exactly this dV (captured
+    # from the slider code on 2026-11-05); the burn doesn't fire until Execute, so
+    # setting it up front flies identically.
+    hooks.set_burn(h.app, pro=37.401206667377515)
     h.step(30)
     h.send("mouse1-up")
     h.press("Next Ap")
     h.step(10)
-    h.press("Execute Burn")
+    # Was "Execute Burn": the old panel never relabelled after Next Ap; the burn panel
+    # says what the same button (execute_burn) will do with the node scheduled ahead.
+    h.press("Jump & Execute")
     h.step(900)
 
 

@@ -17,12 +17,29 @@ class PanelLayout:
 def layout_panel(
     section_line_counts: list[int],
     *,
-    top: float,
+    top,
     line_height: float,
     padding: float,
     section_gap: float,
+    bottom=None,
+    grow: str = "down",
 ) -> PanelLayout:
-    """Lay out stacked sections from top to bottom in corner-relative coordinates."""
+    """Lay out stacked sections in corner-relative coordinates.
+
+    ``grow="down"`` hangs the first row at ``top``; ``grow="up"`` stands the last row
+    on ``bottom`` (the frame's bottom edge is ``bottom - padding``) and the panel grows
+    upward as rows are added. Rows are listed top to bottom either way."""
+    if grow == "up":
+        if bottom is None:
+            raise ValueError("grow='up' needs bottom=")
+        hung = layout_panel(section_line_counts, top=0.0, line_height=line_height,
+                            padding=padding, section_gap=section_gap)
+        flat = [y for section in hung.line_ys for y in section]
+        shift = bottom + line_height - (min(flat) if flat else 0.0)
+        return PanelLayout([[y + shift for y in section] for section in hung.line_ys],
+                           hung.frame_top + shift, bottom - padding)
+    if grow != "down":
+        raise ValueError(f"grow must be 'down' or 'up', got {grow!r}")
     line_ys: list[list[float]] = []
     current_y = top
     have_section = False
@@ -54,10 +71,12 @@ class HudPanel:
         parent,
         *,
         x: float,
-        top: float,
+        top: float = None,
         scale: float = 0.045,
         align="left",
         width: float = 0.62,
+        bottom: float = None,
+        grow: str = "down",
     ):
         from direct.gui.DirectFrame import DirectFrame
 
@@ -66,12 +85,14 @@ class HudPanel:
         self._parent = parent
         self._x = x
         self._top = top
+        self._bottom = bottom
+        self._grow = grow
         self._scale = scale
         self._width = width
         self._texts = []
         self._bg = DirectFrame(
             frameColor=(0.0, 0.0, 0.0, 0.45),
-            frameSize=(x - PADDING, x + width, top - PADDING, top + PADDING),
+            frameSize=(x - PADDING, x + width, -PADDING, PADDING),
             parent=parent,
         )
         self._bg.set_bin("fixed", 0)
@@ -114,6 +135,8 @@ class HudPanel:
             line_height=LINE_HEIGHT,
             padding=PADDING,
             section_gap=SECTION_GAP,
+            bottom=self._bottom,
+            grow=self._grow,
         )
         ys = [y for section in layout.line_ys for y in section]
         for index, ((label, color), y) in enumerate(zip(rows, ys)):
