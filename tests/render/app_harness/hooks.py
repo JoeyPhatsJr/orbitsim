@@ -186,21 +186,41 @@ def shown_panel_rects_px(app):
 
 
 def labels_over_panels(app):
-    """Texts of shown world (render) labels whose anchor projects inside a shown panel."""
+    """Texts of shown world (render) labels whose drawn box (card, or text frame)
+    overlaps a shown panel. Measured from the widgets: the label's card corners are
+    placed along the camera's right/up axes (labels are eye billboards) and projected
+    through the lens, so a wide label anchored just off a panel still counts."""
+    from panda3d.core import Point2, Point3, Vec3
     rects = list(shown_panel_rects_px(app).values())
+    right = app.render.get_relative_vector(app.cam, Vec3(1, 0, 0))
+    up = app.render.get_relative_vector(app.cam, Vec3(0, 0, 1))
+    w, h = app.win.get_x_size(), app.win.get_y_size()
+
+    def px(pt):
+        q = Point2()
+        if not app.camLens.project(app.cam.get_relative_point(app.render, pt), q):
+            return None
+        return ((q.x * 0.5 + 0.5) * w, (q.y * 0.5 + 0.5) * h)
+
     out = []
     for np_ in app.render.find_all_matches("**/+TextNode"):
-        text = np_.node().get_text()
+        tn = np_.node()
+        text = tn.get_text()
         if not text.strip() or np_.is_hidden():
             continue
-        p = app.cam.get_relative_point(app.render, np_.get_pos(app.render))
-        from panda3d.core import Point2
-        proj = Point2()
-        if not app.camLens.project(p, proj):
+        anchor = np_.get_pos(app.render)
+        if px(anchor) is None:
             continue
-        x = (proj.x * 0.5 + 0.5) * app.win.get_x_size()
-        y = (proj.y * 0.5 + 0.5) * app.win.get_y_size()
-        if any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in rects):
+        l, r, b, t = tn.get_card_actual() if tn.has_card() else tn.get_frame_actual()
+        s = np_.get_scale(app.render)
+        corners = [px(anchor + right * (x * s[0]) + up * (z * s[2]))
+                   for x in (l, r) for z in (b, t)]
+        corners = [c for c in corners if c is not None]
+        if not corners:
+            continue
+        x0, x1 = min(c[0] for c in corners), max(c[0] for c in corners)
+        y0, y1 = min(c[1] for c in corners), max(c[1] for c in corners)
+        if any(x0 < a1 and a0 < x1 and y0 < b1 and b0 < y1 for a0, b0, a1, b1 in rects):
             out.append(text)
     return sorted(out)
 

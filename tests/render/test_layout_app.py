@@ -33,6 +33,15 @@ app.rig.set_distance(1.0e9)
 h.step(60)
 out["planned_over"] = hooks.labels_over_panels(app)
 out["planned_shown"] = hooks.shown_world_labels(app)
+# Review (4b): camera poses where a wide label anchored just off a panel ran under it.
+posed = []
+for d, az_deg, el in ((1.0e9, 45, 0.6), (2.0e9, 330, 1.2), (2.0e9, 345, 0.6), (2.0e9, 345, 1.2)):
+    app.rig.set_distance(d)
+    app.rig.target_azimuth = app.rig.azimuth = az_deg * 0.2618 / 15
+    app.rig.target_elevation = app.rig.elevation = el
+    h.step(2)
+    posed += hooks.labels_over_panels(app)
+out["posed_over"] = posed
 print("RESULT", repr(out))
 app.destroy()
 """
@@ -51,4 +60,5 @@ def test_no_label_on_a_panel_and_orbit_clear_of_the_navball(size):
     assert out["boot_over"] == [], out
     assert out["under_navball"] == 0, out
     assert out["planned_over"] == [], out
+    assert out["posed_over"] == [], out
     assert any("Moon" in t or "MOON" in t for t in out["planned_shown"]), out

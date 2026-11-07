@@ -187,10 +187,12 @@ class Readouts:
 
     def hide_labels_on_panels(self) -> None:
         """Last step of the frame: no world label is drawn on a HUD panel. A label whose
-        anchor lands on (or within 10 px of) a shown panel is hidden, whatever its
-        priority; static labels come back once they're clear."""
+        drawn box (its card, placed along the camera's right/up axes: labels are eye
+        billboards) overlaps a shown panel (+4 px) is hidden, whatever its priority;
+        static labels come back once they're clear."""
+        from panda3d.core import Vec3
         from orbitsim.render.picking import project_points_px
-        from orbitsim.render.world_markers import blocked_by_panels
+        from orbitsim.render.world_markers import box_blocked_by_panels, label_box_px
         app = self.app
         owned, static = self._world_labels()
         owned = [label for label in owned if not label.is_hidden()]
@@ -198,15 +200,24 @@ class Readouts:
         if not labels:
             return
         rects = self.panel_rects_px()
-        pts = np.array([tuple(label.get_pos(app.render)) for label in labels])
+        right = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(1, 0, 0))))
+        up = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(0, 0, 1))))
+        corners = []
+        for label in labels:
+            node = label.node()
+            l, r, b, t = node.get_card_actual() if node.has_card() else node.get_frame_actual()
+            anchor = np.array(tuple(label.get_pos(app.render)))
+            sx, _sy, sz = label.get_scale(app.render)
+            corners += [anchor + right * (x * sx) + up * (z * sz)
+                        for x in (l, r) for z in (b, t)]
 
         def m(lm):
             return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
         render_to_clip = m(app.render.get_mat(app.cam)) @ m(app.camLens.get_projection_mat())
-        px = project_points_px(pts, render_to_clip, app.win.get_x_size(), app.win.get_y_size())
+        px = project_points_px(np.array(corners), render_to_clip,
+                               app.win.get_x_size(), app.win.get_y_size())
         for i, label in enumerate(labels):
-            point = None if not np.isfinite(px[i]).all() else (px[i, 0], px[i, 1])
-            if blocked_by_panels(point, rects):
+            if box_blocked_by_panels(label_box_px(px[4 * i:4 * i + 4]), rects):
                 label.hide()
             elif i >= len(owned):
                 label.show()
@@ -243,15 +254,10 @@ class Readouts:
         pstate = fn(t_now)
         params = encounter_parameters(
             vessel.state.r, vessel.state.v, dom_pos, pstate.v, dom_body.mu)
-        v_inf_kms = params["v_inf_mag"] / 1000.0
-        defl_deg = np.degrees(params["deflection_rad"])
-        dv_eq = params["dv_equivalent"]
-        pe_km = params["periapsis_m"] / 1000.0
-        self.app._encounter_line = (
-            f"Flyby {dom_body.name}: v-inf {v_inf_kms:,.1f} km/s  "
-            f"δ {defl_deg:,.1f}°  Pe {pe_km:,.0f} km  "
-            f"free dV {dv_eq:,.0f} m/s"
-        )
+        from orbitsim.render.hud.format import flyby_line
+        self.app._encounter_line = flyby_line(
+            dom_body.name, params["v_inf_mag"], params["deflection_rad"],
+            params["periapsis_m"], params["dv_equivalent"])
 
     def frame_readouts(self, target_pos, maneuver_dir):
         """HUD, navball, SAS panel, velocity, encounters, warp."""

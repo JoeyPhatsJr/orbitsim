@@ -278,8 +278,10 @@ don't batch many changes into one late commit. Stage specific files by **explici
   in `app._hud_panels` (that's what `_update_responsive_ui` scales and what the label pass
   hit-tests). Don't place HUD widgets with ad-hoc coordinates.
 - **World labels never sit on panels.** `readouts.hide_labels_on_panels` is the *last* step
-  of `_update`: any world label whose anchor projects onto a shown panel (its current frame,
-  +10 px) is hidden, whatever its priority. A new world label must be listed in
+  of `_update`: any world label whose drawn box (its card, laid along the camera's right/up
+  axes, since labels are eye billboards) overlaps a shown panel (its current frame, +4 px)
+  is hidden, whatever its priority. Testing only the anchor isn't enough: a centre-aligned
+  label is ~240 px wide, so an anchor just off a panel left half the text under it. A new world label must be listed in
   `Readouts._world_labels` (owned = shown/hidden by its controller each frame; static = only
   the pass hides it). `hooks.labels_over_panels` checks it from the widgets themselves.
 - **The camera focus is not at screen centre.** In the sandbox `CameraRig.focus_screen_y =
