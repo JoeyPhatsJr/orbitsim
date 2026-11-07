@@ -32,6 +32,12 @@ class SolarView:
     DEFAULT_MARKER_RADIUS_PX = 6.0
     LABEL_FONT_PX = 15.0      # pixels per text unit: a name's card is ~22 px tall
     LABEL_GAP_PX = 3.0        # between a dot's edge and its name's card
+    # Who keeps a name when names crowd: home first, then its neighbours, the giants,
+    # the small or far planets; the Sun last (the big yellow dot needs no label).
+    SOLAR_LABEL_PRIORITY = {"Earth": 100, "Venus": 90, "Mars": 85, "Jupiter": 80,
+                            "Saturn": 75, "Mercury": 70, "Uranus": 65, "Neptune": 60,
+                            "Sun": 10}
+    HOVER_TOL_PX = 14.0       # (x ui) a hovered dot always shows its name
 
     def __init__(self, app) -> None:
         self.app = app
@@ -48,6 +54,8 @@ class SolarView:
         self.app._planet_labels = []
         self.app._solar_label_cards = {}
         self.app._solar_marker_px = {}
+        self.app._solar_label_slots = {}
+        self.app._solar_label_rects = {}
         # The Sun marker below is the only Sun (bodies_view's central body is hidden).
         self.app.central_np.hide()
         from orbitsim.render.world_labels import build_world_label
@@ -107,15 +115,18 @@ class SolarView:
                 p[1] * win.get_fb_y_size() / max(win.get_y_size(), 1))
 
     def frame_markers_and_labels(self, mouse_px) -> None:
-        """Size every dot and name in pixels for this frame's camera, and place names.
+        """Size every dot and name in pixels for this frame's camera, and lay out names.
 
         A body behind the camera (or nearer than the lens's near plane) hides its dot and
         name. Otherwise the dot's scale is its pixel radius x ui x units-per-pixel at its
-        depth, and the name sits "above" its dot.
+        depth. Names are placed by ``layout_labels``: by ``SOLAR_LABEL_PRIORITY``, the
+        hovered body pinned, other dots and the HUD as obstacles, last frame's slot kept
+        when still free, and hidden when nothing fits. Dots are never hidden by it.
         """
         from panda3d.core import Point2
-        from orbitsim.render.label_layout import (label_origin_offset_px, slot_rect,
-                                                  units_per_pixel)
+        from orbitsim.render.label_layout import (LabelRequest, label_origin_offset_px,
+                                                  layout_labels, units_per_pixel)
+        from orbitsim.render.picking import nearest_marker
         app = self.app
         ui = app.line_px_scale()
         lens = app.camLens
@@ -125,33 +136,75 @@ class SolarView:
         quat = app.camera.get_quat(app.render)
         cam_right, cam_up = quat.get_right(), quat.get_up()
         font_px = self.LABEL_FONT_PX * ui
+
+        requests, placing = [], {}
         for body, marker, label in zip(app._planet_bodies, app._planet_nps, app._planet_labels):
             name = body.name
-            pos = marker.get_pos(app.render)
-            p = app.cam.get_relative_point(app.render, pos)
-            if p.y <= near:
-                marker.hide()
-                label.hide()
-                app._solar_marker_px[name] = None
-                continue
-            upp = units_per_pixel(p.y, vfov, fb_h)
-            radius_px = self.MARKER_RADIUS_PX.get(name, self.DEFAULT_MARKER_RADIUS_PX) * ui
-            marker.set_scale(radius_px * upp)
-            marker.show()
-            q = Point2()
-            if not lens.project(p, q):
-                label.hide()
-                app._solar_marker_px[name] = None
-                continue
-            anchor = ((q.x * 0.5 + 0.5) * fb_w, (q.y * 0.5 + 0.5) * fb_h)
-            app._solar_marker_px[name] = (anchor[0], anchor[1], radius_px)
             card = app._solar_label_cards[name]
             size = ((card[1] - card[0]) * font_px, (card[3] - card[2]) * font_px)
-            rect = slot_rect(anchor, size, radius_px + self.LABEL_GAP_PX * ui, "above")
-            dx, dy = label_origin_offset_px(rect, card, font_px, anchor)
+            radius_px = self.MARKER_RADIUS_PX.get(name, self.DEFAULT_MARKER_RADIUS_PX) * ui
+            priority = self.SOLAR_LABEL_PRIORITY.get(name, 0)
+            pos = marker.get_pos(app.render)
+            p = app.cam.get_relative_point(app.render, pos)
+            anchor = None
+            if p.y <= near:
+                marker.hide()
+            else:
+                upp = units_per_pixel(p.y, vfov, fb_h)
+                marker.set_scale(radius_px * upp)
+                marker.show()
+                q = Point2()
+                if lens.project(p, q):
+                    anchor = ((q.x * 0.5 + 0.5) * fb_w, (q.y * 0.5 + 0.5) * fb_h)
+                    placing[name] = (label, pos, upp, card)
+            app._solar_marker_px[name] = None if anchor is None else (*anchor, radius_px)
+            requests.append(LabelRequest(name, anchor, size, radius_px, priority))
+
+        hovered = None
+        if mouse_px is not None:
+            keys = [r.key for r in requests if r.anchor_px is not None]
+            i = nearest_marker(mouse_px, [r.anchor_px for r in requests if r.anchor_px is not None],
+                               self.HOVER_TOL_PX * ui)
+            hovered = None if i is None else keys[i]
+        layout = layout_labels(
+            requests, (fb_w, fb_h), gap_px=self.LABEL_GAP_PX * ui,
+            obstacles=self._ui_obstacles_px(), pinned={hovered} - {None},
+            preferred_slots=app._solar_label_slots,
+        )
+        app._solar_label_slots = {k: v[0] for k, v in layout.items() if v is not None}
+        app._solar_label_rects = {k: (None if v is None else v[1]) for k, v in layout.items()}
+        for label, name in zip(app._planet_labels, (b.name for b in app._planet_bodies)):
+            placed = layout[name]
+            if placed is None or name not in placing:
+                label.hide()
+                continue
+            _label, pos, upp, card = placing[name]
+            anchor = app._solar_marker_px[name][:2]
+            dx, dy = label_origin_offset_px(placed[1], card, font_px, anchor)
             label.set_scale(font_px * upp)
             label.set_pos(pos + (cam_right * dx + cam_up * dy) * upp)
             label.show()
+
+    def _ui_obstacles_px(self):
+        """Framebuffer-pixel rects names must keep off: the HUD panels drawn now (the
+        warp panel; grown by the panel pass's 4 px margin, so the pass never hides a name
+        the layout placed) and the HUD text. Live bounds, so a moved HUD is followed."""
+        from orbitsim.render.label_layout import render2d_rect_px
+        app = self.app
+        win = app.win
+        fb_w, fb_h = win.get_fb_x_size(), win.get_fb_y_size()
+        sx = fb_w / max(win.get_x_size(), 1)
+        sy = fb_h / max(win.get_y_size(), 1)
+        m = 4.0
+        rects = [((x0 - m) * sx, (y0 - m) * sy, (x1 + m) * sx, (y1 + m) * sy)
+                 for x0, y0, x1, y1 in app.readouts.panel_rects_px()]
+        text = app.hud.text
+        if not text.is_hidden():
+            bounds = text.get_tight_bounds(app.render2d)
+            if bounds:
+                lo, hi = bounds
+                rects.append(render2d_rect_px((lo.x, lo.z), (hi.x, hi.z), (fb_w, fb_h)))
+        return rects
 
     def frame_orbits(self, states) -> None:
         """Place and scale the planets' orbit lines; rebuild them once per 30-day bucket.

@@ -128,6 +128,17 @@ def solar_porkchop_key(h):
     h.step(10)
 
 
+def solar_zoom_out_labels(h):
+    # Zoomed out to the outer planets, the inner ones crowd the Sun: their names must
+    # declutter (hidden or moved, never stacked) while the outer planets stay labelled.
+    h.press("OPEN SOLAR VIEWER")
+    h.step(10)
+    for _ in range(12):
+        h.send("wheel_down")
+        h.step(5)
+    h.step(60)
+
+
 def nudge_keys(h):
     """Edit a burn with the keyboard: taps and holds on every nudge axis (plan 3)."""
     _launch_sandbox(h)
@@ -253,4 +264,5 @@ SCENARIOS = {
     "moon_transfer_status": ("sandbox", moon_transfer_status),
     "solar_boot_warp": ("solar", solar_boot_warp),
     "solar_porkchop_key": ("solar", solar_porkchop_key),
+    "solar_zoom_out_labels": ("solar", solar_zoom_out_labels),
 }

@@ -99,6 +99,8 @@ def test_markers_and_labels_keep_their_pixel_size_at_any_zoom():
                 continue
             want = {"Sun": 10.0, "Jupiter": 7.0}.get(name, 6.0)
             assert radius == pytest.approx(want, abs=0.3), (name, row)
+            if height is None and name != "Earth":   # name decluttered away (Task 5)
+                continue
             assert height == pytest.approx(card_h, abs=0.5), (name, row)
 
 
@@ -114,3 +116,82 @@ def test_bodies_off_screen_or_behind_the_camera_hide_their_names():
     """)
     assert len(gone) >= 3
     assert not set(gone) & set(shown)
+
+
+def _dot_rect(d):
+    x, y, r = d
+    return (x - r, y - r, x + r, y + r)
+
+
+def test_planet_names_never_overlap_each_other_or_dots():
+    from orbitsim.render.label_layout import rects_overlap
+    results = _probe("""
+        h.step(5)
+        out = []
+        for d in (2.0e12, 1.0e13):
+            app.rig.set_distance(d)
+            h.step(3)
+            out.append([hooks.solar_label_rects(app), hooks.solar_marker_px(app)])
+        print("RESULT " + json.dumps(out))
+    """)
+    for rects, dots in results:
+        shown = {k: r for k, r in rects.items() if r is not None}
+        assert "Earth" in shown
+        items = list(shown.items())
+        for i, (k, a) in enumerate(items):
+            assert all(not rects_overlap(a, b) for _, b in items[i + 1:]), (k, shown)
+            assert all(not rects_overlap(a, _dot_rect(d))
+                       for kk, d in dots.items() if d is not None and kk != k), (k, shown, dots)
+
+
+def test_hovering_a_hidden_name_reveals_it():
+    had_hidden, revealed = _probe("""
+        h.step(5)
+        app.rig.set_distance(1.0e13)
+        h.step(3)
+        dots = hooks.solar_marker_px(app)
+        hidden = [k for k, r in hooks.solar_label_rects(app).items()
+                  if r is None and dots[k] is not None]
+        target = hidden[0] if hidden else None
+        if target is not None:
+            hooks.hover_solar_body(app, target)
+        print("RESULT " + json.dumps([hidden != [],
+              target is not None and hooks.solar_label_rects(app)[target] is not None]))
+    """)
+    assert had_hidden and revealed
+
+
+def test_names_keep_clear_of_the_hud():
+    # The warp panel and the HUD text are obstacles. Sweep the camera round the Sun at a
+    # few zooms: with the obstacles ignored some name lands on the top-left HUD (so the
+    # sweep really tests it), and with them no shown name overlaps the HUD.
+    from orbitsim.render.label_layout import rects_overlap
+    results = _probe("""
+        from orbitsim.render.label_layout import render2d_rect_px
+        h.step(5)
+        out = []
+        for d in (3.0e11, 2.0e12, 4.0e12):
+            for i in range(21):
+                app.rig.azimuth = app.rig.target_azimuth = 0.3 * i
+                app.rig.set_distance(d)
+                h.step(2)
+                lo, hi = app.hud.text.get_tight_bounds(app.render2d)
+                hud = render2d_rect_px((lo.x, lo.z), (hi.x, hi.z),
+                                       (app.win.get_fb_x_size(), app.win.get_fb_y_size()))
+                with_obstacles = hooks.solar_label_rects(app)
+                app.solar_view._ui_obstacles_px = lambda: []
+                app.solar_view.frame_markers_and_labels(None)
+                without = hooks.solar_label_rects(app)
+                del app.solar_view._ui_obstacles_px
+                app.solar_view.frame_markers_and_labels(None)
+                out.append([with_obstacles, without, [hud] + app.readouts.panel_rects_px()])
+        print("RESULT " + json.dumps(out))
+    """)
+
+    def on_hud(rects, hud_rects):
+        return [k for k, r in rects.items()
+                if r is not None and any(rects_overlap(r, u) for u in hud_rects)]
+
+    assert any(on_hud(without, hud_rects) for _, without, hud_rects in results)
+    for with_obstacles, _, hud_rects in results:
+        assert on_hud(with_obstacles, hud_rects) == [], (with_obstacles, hud_rects)

@@ -324,3 +324,13 @@ def label_screen_height_px(app, text: str):
 def solar_marker_px(app):
     """{body: (x, y, radius_px) | None}: last frame's solar-viewer dot anchors."""
     return dict(app._solar_marker_px)
+
+
+def solar_label_rects(app):
+    """{body: (x0, y0, x1, y1) | None}: the last solar-viewer name layout (fb px)."""
+    return dict(app._solar_label_rects)
+
+
+def hover_solar_body(app, name: str) -> None:
+    """Lay the solar names out again as if the mouse were over ``name``'s dot."""
+    app.solar_view.frame_markers_and_labels(mouse_px=app._solar_marker_px[name][:2])
