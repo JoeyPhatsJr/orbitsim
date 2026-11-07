@@ -264,3 +264,63 @@ def solar_orbit_nodes(app):
 def solar_orbit_frame_scale(app) -> float:
     """The solar-viewer orbit frame's x scale (render units per baked unit)."""
     return float(app._solar_orbit_frame.get_scale()[0])
+
+
+def _project_fb_px(app, point_render):
+    """A render-space point to framebuffer pixels (y up), or None if it doesn't project."""
+    from panda3d.core import Point2
+    q = Point2()
+    if not app.camLens.project(app.cam.get_relative_point(app.render, point_render), q):
+        return None
+    return ((q.x * 0.5 + 0.5) * app.win.get_fb_x_size(),
+            (q.y * 0.5 + 0.5) * app.win.get_fb_y_size())
+
+
+def _camera_axes(app):
+    quat = app.camera.get_quat(app.render)
+    return quat.get_right(), quat.get_up()
+
+
+def screen_radius_px(app, node_name: str):
+    """On-screen radius [px] of the render node ``node_name`` (a unit sphere scaled to
+    its radius), measured from the scene: its centre and centre + camera-right x scale
+    are projected. None if hidden or its centre doesn't project."""
+    import math
+    np_ = app.render.find(f"**/{node_name}")
+    if np_.is_empty() or np_.is_hidden():
+        return None
+    centre = np_.get_pos(app.render)
+    right, _up = _camera_axes(app)
+    a = _project_fb_px(app, centre)
+    b = _project_fb_px(app, centre + right * np_.get_scale(app.render)[0])
+    if a is None or b is None:
+        return None
+    return math.hypot(b[0] - a[0], b[1] - a[1])
+
+
+def label_screen_height_px(app, text: str):
+    """On-screen height [px] of the solar-viewer label ``text``'s card (its top and
+    bottom projected along camera-up). None if hidden or it doesn't project."""
+    import math
+    for label in app._planet_labels:
+        if label.node().get_text() != text:
+            continue
+        if label.is_hidden():
+            return None
+        _l, _r, b, t = label.node().get_card_actual()
+        pos = label.get_pos(app.render)
+        s = label.get_scale(app.render)[2]
+        _right, up = _camera_axes(app)
+        if _project_fb_px(app, pos) is None:
+            return None
+        top = _project_fb_px(app, pos + up * (t * s))
+        bottom = _project_fb_px(app, pos + up * (b * s))
+        if top is None or bottom is None:
+            return None
+        return math.hypot(top[0] - bottom[0], top[1] - bottom[1])
+    raise LookupError(f"no solar label {text!r}")
+
+
+def solar_marker_px(app):
+    """{body: (x, y, radius_px) | None}: last frame's solar-viewer dot anchors."""
+    return dict(app._solar_marker_px)

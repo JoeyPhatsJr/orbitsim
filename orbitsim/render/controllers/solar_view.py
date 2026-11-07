@@ -3,7 +3,6 @@
 import numpy as np
 from orbitsim.core.planets import heliocentric_state
 from orbitsim.render.geometry import make_uv_sphere
-from panda3d.core import Filename
 
 
 class SolarView:
@@ -14,7 +13,7 @@ class SolarView:
         "Sun": (1.0, 0.85, 0.2, 1.0),
         "Mercury": (0.6, 0.6, 0.6, 1.0),
         "Venus": (0.9, 0.8, 0.5, 1.0),
-        "Earth": (0.3, 0.5, 1.0, 1.0),
+        "Earth": (0.35, 0.6, 1.0, 1.0),   # flat: a tiny textured Earth read as black
         "Mars": (0.9, 0.4, 0.2, 1.0),
         "Jupiter": (0.8, 0.7, 0.5, 1.0),
         "Saturn": (0.9, 0.8, 0.6, 1.0),
@@ -27,6 +26,12 @@ class SolarView:
     SOLAR_ORBIT_UNIT_M = 1.0e9
     SOLAR_ORBIT_REFRESH_S = 30 * 86400.0
     SOLAR_ORBIT_POINTS = 256
+
+    # On-screen sizes in framebuffer pixels (x line_px_scale()), constant at any zoom.
+    MARKER_RADIUS_PX = {"Sun": 10.0, "Jupiter": 7.0, "Saturn": 7.0}
+    DEFAULT_MARKER_RADIUS_PX = 6.0
+    LABEL_FONT_PX = 15.0      # pixels per text unit: a name's card is ~22 px tall
+    LABEL_GAP_PX = 3.0        # between a dot's edge and its name's card
 
     def __init__(self, app) -> None:
         self.app = app
@@ -41,28 +46,27 @@ class SolarView:
         self.app._solar_orbit_bucket = None
         self.app._planet_nps = []
         self.app._planet_labels = []
+        self.app._solar_label_cards = {}
+        self.app._solar_marker_px = {}
+        # The Sun marker below is the only Sun (bodies_view's central body is hidden).
+        self.app.central_np.hide()
+        from orbitsim.render.world_labels import build_world_label
         for body in self.app._planet_bodies:
-            is_earth = body.name == "Earth"
-            marker = make_uv_sphere(1.0, 12, 16, with_uv=is_earth)
+            marker = make_uv_sphere(1.0, 12, 16)
+            marker.set_name(f"solar_marker_{body.name}")
             marker.reparent_to(self.app.render)
             marker.set_color(*self._PLANET_COLORS.get(body.name, (0.8, 0.8, 0.8, 1.0)))
             marker.set_light_off()
-            marker.set_scale(8.0 if body.name == "Sun" else 4.0)
-            if is_earth:
-                from panda3d.core import Filename
-                from orbitsim.render.textures import texture_path
-
-                p = texture_path("earth_day")
-                if p is not None:
-                    marker.set_texture(self.app.loader.load_texture(Filename.from_os_specific(p)))
-                    marker.set_color(1, 1, 1, 1)
             self.app._planet_nps.append(marker)
-            # 3D billboard label on render (tracks the marker, faces the camera).
-            from orbitsim.render.world_labels import build_world_label
+            # Billboard label on render; frame_markers_and_labels sizes and places it.
             label = build_world_label(
                 self.app.render, body.name, color=(0.8, 0.85, 1.0, 1.0), scale=15.0
             )
+            # Drawn over orbit lines; the layout keeps names off the dots.
+            label.set_depth_test(False)
+            label.set_bin("fixed", 60)
             self.app._planet_labels.append(label)
+            self.app._solar_label_cards[body.name] = tuple(label.node().get_card_actual())
 
     def update_solar_system(self) -> None:
         """Place the Sun + planets for the current sim time (DE440 or fallback)."""
@@ -73,10 +77,9 @@ class SolarView:
         self.app.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
 
         states = {body.name: heliocentric_state(body.name, t) for body in self.app._planet_bodies}
-        for body, marker, label in zip(self.app._planet_bodies, self.app._planet_nps, self.app._planet_labels):
+        for body, marker in zip(self.app._planet_bodies, self.app._planet_nps):
             rx, ry, rz = self.app.transform.to_render(states[body.name].r)
             marker.set_pos(rx, ry, rz)
-            label.set_pos(rx, ry, rz + 6.0)
 
         self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
         self.app.flight_input.apply_mouse_orbit()
@@ -92,6 +95,63 @@ class SolarView:
             f"Date: {date:%Y-%m-%d}\n"
             f"',' / '.' or the buttons change warp"
         )
+        self.frame_markers_and_labels(self._mouse_px())
+
+    def _mouse_px(self):
+        """Mouse position in framebuffer pixels (y up), or None (no mouse; headless)."""
+        p = self.app.flight_input.mouse_px()
+        if p is None:
+            return None
+        win = self.app.win
+        return (p[0] * win.get_fb_x_size() / max(win.get_x_size(), 1),
+                p[1] * win.get_fb_y_size() / max(win.get_y_size(), 1))
+
+    def frame_markers_and_labels(self, mouse_px) -> None:
+        """Size every dot and name in pixels for this frame's camera, and place names.
+
+        A body behind the camera (or nearer than the lens's near plane) hides its dot and
+        name. Otherwise the dot's scale is its pixel radius x ui x units-per-pixel at its
+        depth, and the name sits "above" its dot.
+        """
+        from panda3d.core import Point2
+        from orbitsim.render.label_layout import (label_origin_offset_px, slot_rect,
+                                                  units_per_pixel)
+        app = self.app
+        ui = app.line_px_scale()
+        lens = app.camLens
+        near = lens.get_near()
+        vfov = lens.get_fov()[1]
+        fb_w, fb_h = app.win.get_fb_x_size(), app.win.get_fb_y_size()
+        quat = app.camera.get_quat(app.render)
+        cam_right, cam_up = quat.get_right(), quat.get_up()
+        font_px = self.LABEL_FONT_PX * ui
+        for body, marker, label in zip(app._planet_bodies, app._planet_nps, app._planet_labels):
+            name = body.name
+            pos = marker.get_pos(app.render)
+            p = app.cam.get_relative_point(app.render, pos)
+            if p.y <= near:
+                marker.hide()
+                label.hide()
+                app._solar_marker_px[name] = None
+                continue
+            upp = units_per_pixel(p.y, vfov, fb_h)
+            radius_px = self.MARKER_RADIUS_PX.get(name, self.DEFAULT_MARKER_RADIUS_PX) * ui
+            marker.set_scale(radius_px * upp)
+            marker.show()
+            q = Point2()
+            if not lens.project(p, q):
+                label.hide()
+                app._solar_marker_px[name] = None
+                continue
+            anchor = ((q.x * 0.5 + 0.5) * fb_w, (q.y * 0.5 + 0.5) * fb_h)
+            app._solar_marker_px[name] = (anchor[0], anchor[1], radius_px)
+            card = app._solar_label_cards[name]
+            size = ((card[1] - card[0]) * font_px, (card[3] - card[2]) * font_px)
+            rect = slot_rect(anchor, size, radius_px + self.LABEL_GAP_PX * ui, "above")
+            dx, dy = label_origin_offset_px(rect, card, font_px, anchor)
+            label.set_scale(font_px * upp)
+            label.set_pos(pos + (cam_right * dx + cam_up * dy) * upp)
+            label.show()
 
     def frame_orbits(self, states) -> None:
         """Place and scale the planets' orbit lines; rebuild them once per 30-day bucket.

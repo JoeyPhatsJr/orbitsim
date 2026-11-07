@@ -181,8 +181,9 @@ class Readouts:
         owned += list(getattr(app, "_apsis_labels", {}).values())
         owned += list(getattr(app, "_lagrange_labels", []))
         owned += list(getattr(app, "_encounter_labels", []))
+        # The solar viewer's names: solar_view shows/hides them every frame.
+        owned += list(getattr(app, "_planet_labels", []))
         static = list(getattr(app, "_planet_sandbox_labels", {}).values())
-        static += list(getattr(app, "_planet_labels", []))
         return owned, static
 
     def hide_labels_on_panels(self) -> None:
