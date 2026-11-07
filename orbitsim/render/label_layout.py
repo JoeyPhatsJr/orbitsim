@@ -63,10 +63,6 @@ def rects_overlap(a: Rect, b: Rect) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-def _inside(rect: Rect, viewport_px) -> bool:
-    return 0.0 <= rect[0] and rect[2] <= viewport_px[0] and 0.0 <= rect[1] and rect[3] <= viewport_px[1]
-
-
 def layout_labels(
     requests: Sequence[LabelRequest],
     viewport_px: Tuple[float, float],
@@ -100,20 +96,25 @@ def layout_labels(
 
     out = {r.key: None for r in requests}
     placed = []
+    vw, vh = viewport_px
+    obstacles = list(obstacles)
     for _, r in pinned_first + rest:
         if r.anchor_px is None:
             continue
         first = preferred_slots.get(r.key)
         candidates = ([first] if first in SLOTS else []) + [s for s in SLOTS if s != first]
-        blockers = [m for k, m in markers.items() if k != r.key] + list(obstacles)
+        # Everything this card must clear: placed cards, the other dots, the obstacles.
+        own = markers[r.key]
+        blockers = placed + [m for m in markers.values() if m is not own] + obstacles
         clearance = r.marker_radius_px + gap_px
         choice = None
         for slot in candidates:
             rect = slot_rect(r.anchor_px, r.size_px, clearance, slot)
-            if not _inside(rect, viewport_px):
+            x0, y0, x1, y1 = rect
+            if x0 < 0.0 or x1 > vw or y0 < 0.0 or y1 > vh:
                 continue
-            if any(rects_overlap(rect, b) for b in placed) or any(
-                    rects_overlap(rect, b) for b in blockers):
+            # rects_overlap, inlined: this loop runs ~400 times a frame.
+            if any(x0 < b[2] and b[0] < x1 and y0 < b[3] and b[1] < y1 for b in blockers):
                 continue
             choice = (slot, rect)
             break

@@ -56,6 +56,7 @@ class SolarView:
         self.app._solar_marker_px = {}
         self.app._solar_label_slots = {}
         self.app._solar_label_rects = {}
+        self.app._solar_hud_text_rect = None   # (key, rect): cached HUD-text bounds
         # The Sun marker below is the only Sun (bodies_view's central body is hidden).
         self.app.central_np.hide()
         from orbitsim.render.world_labels import build_world_label
@@ -200,10 +201,22 @@ class SolarView:
                  for x0, y0, x1, y1 in app.readouts.panel_rects_px()]
         text = app.hud.text
         if not text.is_hidden():
-            bounds = text.get_tight_bounds(app.render2d)
-            if bounds:
-                lo, hi = bounds
-                rects.append(render2d_rect_px((lo.x, lo.z), (hi.x, hi.z), (fb_w, fb_h)))
+            # Measuring forces the text's geometry (~0.14 ms), and the date changes every
+            # few frames at warp, so re-measure only when a line's length (or the window
+            # or UI scale) changes; m px of padding covers digit-width differences.
+            key = (tuple(len(line) for line in text.getText().split("\n")), fb_w, fb_h,
+                   win.get_x_size(), win.get_y_size(), getattr(app, "_ui_scale", 1.0))
+            cached = app._solar_hud_text_rect
+            if cached is None or cached[0] != key:
+                bounds = text.get_tight_bounds(app.render2d)
+                rect = None
+                if bounds:
+                    lo, hi = bounds
+                    x0, y0, x1, y1 = render2d_rect_px((lo.x, lo.z), (hi.x, hi.z), (fb_w, fb_h))
+                    rect = (x0 - m * sx, y0 - m * sy, x1 + m * sx, y1 + m * sy)
+                cached = app._solar_hud_text_rect = (key, rect)
+            if cached[1] is not None:
+                rects.append(cached[1])
         return rects
 
     def frame_orbits(self, states) -> None:
