@@ -217,3 +217,13 @@ def test_heliocentric_state_fallback_planet_is_geo_minus_sun(monkeypatch):
 def test_heliocentric_state_rejects_unknown_body():
     with pytest.raises(ValueError):
         heliocentric_state("Pluto", T_HELIO)
+
+
+def test_heliocentric_state_falls_back_past_the_kernel_range():
+    # Review (plan 5): the solar viewer at MAX warp reaches 2150-01-22 in ~38 s, where
+    # Skyfield raises EphemerisRangeError (a ValueError), not EphemerisUnavailableError.
+    t_late = 200.0 * 365.25 * 86400.0                      # ~2200
+    s, sun = heliocentric_state("Mars", t_late), sun_state_at(t_late)
+    geo = mars_state_at(t_late)
+    np.testing.assert_array_equal(s.r, geo.r - sun.r)
+    np.testing.assert_array_equal(s.v, geo.v - sun.v)

@@ -151,8 +151,9 @@ def heliocentric_state(name: str, t_s: float) -> StateVector:
     ``name`` is a body name as in ``core.bodies`` ("Sun", "Mercury" ... "Neptune"),
     case-insensitive. DE440 (``ephemeris.body_state(NAME, t_s, center="SUN")``) when
     the kernel is available; otherwise the circular approximations above, shifted from
-    geocentric to heliocentric by subtracting the Sun's geocentric state. The Sun is
-    the origin. Raises ``ValueError`` for an unknown body.
+    geocentric to heliocentric by subtracting the Sun's geocentric state (also outside
+    DE440's 1849-2150 range). The Sun is the origin. Raises ``ValueError`` for an
+    unknown body.
     """
     key = name.upper()
     if key == "SUN":
@@ -166,8 +167,8 @@ def heliocentric_state(name: str, t_s: float) -> StateVector:
     if ephemeris is not None:
         try:
             return ephemeris.body_state(key, t_s, center="SUN")
-        except ephemeris.EphemerisUnavailableError:
-            pass
+        except (ephemeris.EphemerisUnavailableError, ValueError):
+            pass    # offline, or outside DE440's 1849-2150 (EphemerisRangeError is a ValueError)
     sun = sun_state_at(t_s)
     if key == "EARTH":
         return StateVector(r=-sun.r, v=-sun.v, mu=MU_SUN, epoch_s=t_s)
