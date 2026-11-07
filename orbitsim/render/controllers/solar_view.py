@@ -1,6 +1,7 @@
 """Solar-system viewer mode: Sun-centered planets from the ephemeris, no vessel."""
 
 import numpy as np
+from orbitsim.core.planets import heliocentric_state
 from orbitsim.render.geometry import make_uv_sphere
 from panda3d.core import Filename
 
@@ -54,24 +55,6 @@ class SolarView:
             )
             self.app._planet_labels.append(label)
 
-    def _helio_body_pos(self, name: str, t_s: float) -> np.ndarray:
-        """Heliocentric position [m]: DE440 when available, circular fallback offline."""
-        from orbitsim.core.ephemeris import body_state, EphemerisUnavailableError
-        try:
-            return body_state(name.upper(), t_s, center="SUN").r
-        except EphemerisUnavailableError:
-            from orbitsim.core import planets as pl
-            # planets.py states are geocentric; helio = geocentric - sun_geocentric.
-            if name == "Earth":
-                return -pl.sun_state_at(t_s).r
-            geo_fns = {
-                "Mercury": pl.mercury_state_at, "Venus": pl.venus_state_at,
-                "Mars": pl.mars_state_at, "Jupiter": pl.jupiter_state_at,
-                "Saturn": pl.saturn_state_at, "Uranus": pl.uranus_state_at,
-                "Neptune": pl.neptune_state_at,
-            }
-            return geo_fns[name](t_s).r - pl.sun_state_at(t_s).r
-
     def update_solar_system(self) -> None:
         """Place the Sun + planets for the current sim time (DE440 or fallback)."""
         from datetime import datetime, timedelta
@@ -81,7 +64,7 @@ class SolarView:
         self.app.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
 
         for body, marker, label in zip(self.app._planet_bodies, self.app._planet_nps, self.app._planet_labels):
-            pos_m = np.zeros(3) if body.name == "Sun" else self._helio_body_pos(body.name, t)
+            pos_m = np.zeros(3) if body.name == "Sun" else heliocentric_state(body.name, t).r
             rx, ry, rz = self.app.transform.to_render(pos_m)
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 6.0)
