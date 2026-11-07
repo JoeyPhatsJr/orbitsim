@@ -168,3 +168,62 @@ class TestDominantBody:
         r = rJ + np.array([1e9, 0.0, 0.0])  # 1M km from Jupiter (inside SOI ~48M km)
         body, _ = dominant_body_solar(r, 0.0)
         assert body.name == "Jupiter"
+
+
+# --- heliocentric_state: one source of planet positions for the solar viewer ---
+from orbitsim.core import ephemeris
+from orbitsim.core.planets import heliocentric_state
+
+T_HELIO = 958_000_000.0   # 2030-05
+
+
+def _offline(monkeypatch):
+    def boom(*a, **k):
+        raise ephemeris.EphemerisUnavailableError("offline")
+    monkeypatch.setattr(ephemeris, "body_state", boom)
+
+
+def test_heliocentric_state_sun_is_origin():
+    s = heliocentric_state("Sun", T_HELIO)
+    assert np.all(s.r == 0.0) and np.all(s.v == 0.0)
+    assert s.mu == MU_SUN and s.epoch_s == T_HELIO
+
+
+def test_heliocentric_state_matches_de440_exactly():
+    if not ephemeris.available():
+        pytest.skip("DE440 not available")
+    s = heliocentric_state("mars", T_HELIO)
+    ref = ephemeris.body_state("MARS", T_HELIO, center="SUN")
+    assert np.array_equal(s.r, ref.r) and np.array_equal(s.v, ref.v) and s.mu == MU_SUN
+
+
+def test_heliocentric_state_fallback_earth_is_minus_sun(monkeypatch):
+    _offline(monkeypatch)
+    s, sun = heliocentric_state("Earth", T_HELIO), sun_state_at(T_HELIO)
+    np.testing.assert_array_equal(s.r, -sun.r)
+    np.testing.assert_array_equal(s.v, -sun.v)
+    assert s.mu == MU_SUN and s.epoch_s == T_HELIO
+
+
+def test_heliocentric_state_fallback_planet_is_geo_minus_sun(monkeypatch):
+    _offline(monkeypatch)
+    s, sun = heliocentric_state("Jupiter", T_HELIO), sun_state_at(T_HELIO)
+    geo = jupiter_state_at(T_HELIO)
+    np.testing.assert_array_equal(s.r, geo.r - sun.r)
+    np.testing.assert_array_equal(s.v, geo.v - sun.v)
+    assert np.linalg.norm(s.r) == pytest.approx(A_JUPITER, rel=1e-10)
+
+
+def test_heliocentric_state_rejects_unknown_body():
+    with pytest.raises(ValueError):
+        heliocentric_state("Pluto", T_HELIO)
+
+
+def test_heliocentric_state_falls_back_past_the_kernel_range():
+    # Review (plan 5): the solar viewer at MAX warp reaches 2150-01-22 in ~38 s, where
+    # Skyfield raises EphemerisRangeError (a ValueError), not EphemerisUnavailableError.
+    t_late = 200.0 * 365.25 * 86400.0                      # ~2200
+    s, sun = heliocentric_state("Mars", t_late), sun_state_at(t_late)
+    geo = mars_state_at(t_late)
+    np.testing.assert_array_equal(s.r, geo.r - sun.r)
+    np.testing.assert_array_equal(s.v, geo.v - sun.v)

@@ -62,3 +62,27 @@ def test_estimate_is_a_fainter_plan_line():
     from orbitsim.render.line_style import ESTIMATE_STYLE
     assert ESTIMATE_STYLE.color[:3] == PLAN_STYLE.color[:3]
     assert ESTIMATE_STYLE.color[3] < PLAN_STYLE.color[3] and ESTIMATE_STYLE.dash is not None
+
+
+def test_planet_orbit_style_is_tinted_reference():
+    from orbitsim.render.line_style import planet_orbit_style
+    s = planet_orbit_style("Earth")
+    assert s.color == (0.3, 0.5, 1.0, REFERENCE_STYLE.color[3])
+    assert (s.width_px, s.halo_px, s.dash) == (REFERENCE_STYLE.width_px, REFERENCE_STYLE.halo_px, None)
+
+
+def test_planet_orbit_style_targeted_uses_highlight_width_and_alpha():
+    from orbitsim.render.line_style import planet_orbit_style
+    s = planet_orbit_style("Mars", targeted=True)
+    assert s.color[3] == TARGET_REFERENCE_STYLE.color[3]
+    assert s.width_px == TARGET_REFERENCE_STYLE.width_px
+    assert s.color[:3] == (0.85, 0.4, 0.2)
+
+
+def test_every_planet_has_a_tint_and_unknown_raises():
+    import pytest
+    from orbitsim.render.line_style import PLANET_ORBIT_TINTS, planet_orbit_style
+    assert set(PLANET_ORBIT_TINTS) == {"Mercury", "Venus", "Earth", "Mars",
+                                       "Jupiter", "Saturn", "Uranus", "Neptune"}
+    with pytest.raises(ValueError):
+        planet_orbit_style("Sun")

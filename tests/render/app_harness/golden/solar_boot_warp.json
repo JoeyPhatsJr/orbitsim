@@ -52,15 +52,15 @@
   ],
   [
    "Mercury",
-   false
+   true
   ],
   [
    "Neptune",
-   false
+   true
   ],
   [
    "Saturn",
-   false
+   true
   ],
   [
    "Sun",
@@ -68,7 +68,7 @@
   ],
   [
    "Uranus",
-   false
+   true
   ],
   [
    "Venus",

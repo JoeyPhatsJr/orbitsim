@@ -5,7 +5,7 @@ zoom; multiply by ``px_scale(framebuffer height)`` so a Retina (2x) framebuffer 
 them into hairlines. Your own orbit, the planned path and encounters are bold; reference
 orbits (Moon, planets) are quiet unless targeted.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Tuple
 
 Color = Tuple[float, float, float, float]
@@ -44,6 +44,27 @@ ENCOUNTER_STYLE = LineStyle((1.0, 0.83, 0.30, 1.0), 4.5, 2.5, 0.8)
 def reference_style(targeted: bool) -> LineStyle:
     """Style for a body's reference orbit: highlighted while that body is the target."""
     return TARGET_REFERENCE_STYLE if targeted else REFERENCE_STYLE
+
+
+# Muted per-planet tints for the planets' reference orbits (sandbox and solar viewer).
+PLANET_ORBIT_TINTS = {
+    "Mercury": (0.5, 0.5, 0.5),
+    "Venus": (0.85, 0.75, 0.45),
+    "Earth": (0.3, 0.5, 1.0),
+    "Mars": (0.85, 0.4, 0.2),
+    "Jupiter": (0.8, 0.7, 0.5),
+    "Saturn": (0.9, 0.8, 0.6),
+    "Uranus": (0.6, 0.85, 0.9),
+    "Neptune": (0.3, 0.4, 0.9),
+}
+
+
+def planet_orbit_style(name: str, targeted: bool = False) -> LineStyle:
+    """``reference_style(targeted)`` tinted with the planet's colour (its alpha kept)."""
+    if name not in PLANET_ORBIT_TINTS:
+        raise ValueError(f"no orbit tint for {name!r}")
+    base = reference_style(targeted)
+    return replace(base, color=PLANET_ORBIT_TINTS[name] + (base.color[3],))
 
 
 # Below this camera distance the planets' heliocentric orbits are just stray straight

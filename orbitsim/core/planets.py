@@ -136,3 +136,41 @@ OUTER_PLANETS = [
 ]
 
 ALL_PLANETS = INNER_PLANETS + OUTER_PLANETS
+
+# Geocentric circular-fallback state functions, by planet name (Earth handled apart).
+_GEO_STATE_FNS = {
+    "MERCURY": mercury_state_at, "VENUS": venus_state_at, "MARS": mars_state_at,
+    "JUPITER": jupiter_state_at, "SATURN": saturn_state_at,
+    "URANUS": uranus_state_at, "NEPTUNE": neptune_state_at,
+}
+
+
+def heliocentric_state(name: str, t_s: float) -> StateVector:
+    """Heliocentric J2000/ICRF state of the Sun or a planet [m, m/s].
+
+    ``name`` is a body name as in ``core.bodies`` ("Sun", "Mercury" ... "Neptune"),
+    case-insensitive. DE440 (``ephemeris.body_state(NAME, t_s, center="SUN")``) when
+    the kernel is available; otherwise the circular approximations above, shifted from
+    geocentric to heliocentric by subtracting the Sun's geocentric state (also outside
+    DE440's 1849-2150 range). The Sun is the origin. Raises ``ValueError`` for an
+    unknown body.
+    """
+    key = name.upper()
+    if key == "SUN":
+        return StateVector(r=np.zeros(3), v=np.zeros(3), mu=MU_SUN, epoch_s=t_s)
+    if key != "EARTH" and key not in _GEO_STATE_FNS:
+        raise ValueError(f"unknown solar-system body {name!r}")
+    try:
+        from orbitsim.core import ephemeris  # lazy: needs skyfield
+    except ImportError:
+        ephemeris = None
+    if ephemeris is not None:
+        try:
+            return ephemeris.body_state(key, t_s, center="SUN")
+        except (ephemeris.EphemerisUnavailableError, ValueError):
+            pass    # offline, or outside DE440's 1849-2150 (EphemerisRangeError is a ValueError)
+    sun = sun_state_at(t_s)
+    if key == "EARTH":
+        return StateVector(r=-sun.r, v=-sun.v, mu=MU_SUN, epoch_s=t_s)
+    geo = _GEO_STATE_FNS[key](t_s)
+    return StateVector(r=geo.r - sun.r, v=geo.v - sun.v, mu=MU_SUN, epoch_s=t_s)

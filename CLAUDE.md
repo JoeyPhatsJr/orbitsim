@@ -78,6 +78,16 @@ owning controller (`self.app.maneuver_editor.current_node()`), never `self.app._
 maneuver editor) and the **solar viewer** (`--solar` — Sun-centered, planets from the ephemeris,
 no vessel).
 
+**Solar viewer** (`render/controllers/solar_view.py`): planets come from
+`core.planets.heliocentric_state` (DE440, circular fallback offline), one call per planet per
+frame. Orbit lines are baked in `SOLAR_ORBIT_UNIT_M` (1e9 m) under `solar_orbit_frame`, which is
+rescaled each frame, so zoom never rebuilds them; they refresh every 30 sim-days from that frame's
+states. Dots and names are sized in pixels each frame via `label_layout.units_per_pixel` (×
+`line_px_scale()`). Names are placed by the pure `label_layout.layout_labels`: priority
+`SOLAR_LABEL_PRIORITY`, the hovered body pinned, other dots and the HUD (panels + HUD text) as
+obstacles, last frame's slot kept, hidden when nothing fits. The solar names are *owned* world
+labels (solar_view shows/hides them; the panel pass only hides more).
+
 **App golden tests** (`tests/render/app_harness/`): each scenario drives a real `OrbitApp`
 headlessly in its own process (inline executors, fake wall clock, fixed 60 fps) through key
 events and button clicks, and must reproduce its recorded JSON (physics state, on-screen text,

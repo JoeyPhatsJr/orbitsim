@@ -1,7 +1,5 @@
 """Central body, lighting, Sun direction, Moon (ring, body, SOI), Lagrange points, planets, starfield."""
 
-from dataclasses import replace
-
 import numpy as np
 from orbitsim.core.constants import MU_SUN
 from orbitsim.core.elements import state_to_elements
@@ -20,7 +18,7 @@ from orbitsim.core.planets import (
 from orbitsim.core.state import StateVector
 from orbitsim.render.earth import build_earth, set_sun_dir
 from orbitsim.render.geometry import make_ring, make_uv_sphere
-from orbitsim.render.line_style import planet_orbits_visible, reference_style
+from orbitsim.render.line_style import planet_orbit_style, planet_orbits_visible, reference_style
 from orbitsim.render.orbit_lines import (
     build_orbit_node,
     sample_orbit_points,
@@ -410,7 +408,7 @@ class BodiesView:
         sun_geo = _csun(t_now).r
         sx, sy, sz = self.app.transform.to_render(sun_geo)
         self.app._sun_orbit_frame.set_pos(sx, sy, sz)
-        if self.app.solar_system or planet_orbits_visible(self.app.rig.distance_m):
+        if planet_orbits_visible(self.app.rig.distance_m):
             self.app._sun_orbit_frame.show()
         else:
             self.app._sun_orbit_frame.hide()
@@ -425,16 +423,6 @@ class BodiesView:
             self.app._planet_orbit_scale = scale
             self.app._planet_orbit_target = target
             self.app._planet_orbit_epoch_bucket = orbit_epoch_bucket
-            _orbit_colors = {
-                "Mercury": (0.5, 0.5, 0.5, 0.5),
-                "Venus": (0.85, 0.75, 0.45, 0.5),
-                "Earth": (0.3, 0.5, 1.0, 0.5),
-                "Mars": (0.85, 0.4, 0.2, 0.5),
-                "Jupiter": (0.8, 0.7, 0.5, 0.4),
-                "Saturn": (0.9, 0.8, 0.6, 0.4),
-                "Uranus": (0.6, 0.85, 0.9, 0.4),
-                "Neptune": (0.3, 0.4, 0.9, 0.4),
-            }
             earth_state = StateVector(
                 r=np.zeros(3), v=np.zeros(3), mu=0.0, epoch_s=t_now
             )
@@ -457,10 +445,7 @@ class BodiesView:
                     orbit_states[oname], sun_state, MU_SUN, n=256
                 )
                 pts = [tuple(point / scale) for point in orbit_points]
-                color = _orbit_colors[oname]
-                # Not `node`: that name is the maneuver node, read later this frame.
-                style = reference_style(target == oname)
-                style = replace(style, color=tuple(color[:3]) + (style.color[3],))
+                style = planet_orbit_style(oname, target == oname)
                 orbit_np = build_orbit_node(pts, style, px_scale=self.app.line_px_scale())
                 orbit_np.reparent_to(self.app._sun_orbit_frame)
                 self.app._planet_orbit_nps[oname] = orbit_np
