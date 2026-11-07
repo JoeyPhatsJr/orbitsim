@@ -113,11 +113,13 @@ def layout_labels(
             x0, y0, x1, y1 = rect
             if x0 < 0.0 or x1 > vw or y0 < 0.0 or y1 > vh:
                 continue
-            # rects_overlap, inlined: this loop runs ~400 times a frame.
-            if any(x0 < b[2] and b[0] < x1 and y0 < b[3] and b[1] < y1 for b in blockers):
-                continue
-            choice = (slot, rect)
-            break
+            # rects_overlap, inlined (a plain loop, no generator): ~400 tests a frame.
+            for bx0, by0, bx1, by1 in blockers:
+                if x0 < bx1 and bx0 < x1 and y0 < by1 and by0 < y1:
+                    break
+            else:
+                choice = (slot, rect)
+                break
         if choice is None and r.key in pinned:
             slot = candidates[0]
             choice = (slot, slot_rect(r.anchor_px, r.size_px, clearance, slot))
