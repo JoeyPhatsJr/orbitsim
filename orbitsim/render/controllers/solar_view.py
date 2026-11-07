@@ -22,6 +22,12 @@ class SolarView:
         "Neptune": (0.3, 0.4, 0.9, 1.0),
     }
 
+    # Orbit lines are baked in these units under one frame node that is rescaled each
+    # frame (zoom never rebuilds them); they are rebuilt once per 30 sim-days.
+    SOLAR_ORBIT_UNIT_M = 1.0e9
+    SOLAR_ORBIT_REFRESH_S = 30 * 86400.0
+    SOLAR_ORBIT_POINTS = 256
+
     def __init__(self, app) -> None:
         self.app = app
 
@@ -30,6 +36,9 @@ class SolarView:
         from orbitsim.core.bodies import PLANETS, SUN
 
         self.app._planet_bodies = [SUN] + list(PLANETS)
+        self.app._solar_orbit_frame = self.app.render.attach_new_node("solar_orbit_frame")
+        self.app._solar_orbit_nps = {}
+        self.app._solar_orbit_bucket = None
         self.app._planet_nps = []
         self.app._planet_labels = []
         for body in self.app._planet_bodies:
@@ -63,15 +72,16 @@ class SolarView:
         t = self.app.clock.sim_time_s
         self.app.transform.set_origin(np.zeros(3))  # heliocentric: Sun fixed at origin
 
+        states = {body.name: heliocentric_state(body.name, t) for body in self.app._planet_bodies}
         for body, marker, label in zip(self.app._planet_bodies, self.app._planet_nps, self.app._planet_labels):
-            pos_m = np.zeros(3) if body.name == "Sun" else heliocentric_state(body.name, t).r
-            rx, ry, rz = self.app.transform.to_render(pos_m)
+            rx, ry, rz = self.app.transform.to_render(states[body.name].r)
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 6.0)
 
         self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
         self.app.flight_input.apply_mouse_orbit()
         self.app.bodies_view.update_starfield()
+        self.frame_orbits(states)
         self.app.rig.apply()
 
         self.app.warp_controls.update_warp_readout()
@@ -82,3 +92,37 @@ class SolarView:
             f"Date: {date:%Y-%m-%d}\n"
             f"',' / '.' or the buttons change warp"
         )
+
+    def frame_orbits(self, states) -> None:
+        """Place and scale the planets' orbit lines; rebuild them once per 30-day bucket.
+
+        ``states`` are this frame's heliocentric states (the ones placing the markers),
+        so a rebuild costs no extra ephemeris calls.
+        """
+        from orbitsim.core.constants import MU_SUN
+        from orbitsim.core.state import StateVector
+        from orbitsim.render.line_style import PLANET_ORBIT_TINTS, planet_orbit_style
+        from orbitsim.render.orbit_lines import build_orbit_node, sample_relative_orbit_points
+
+        app = self.app
+        t = app.clock.sim_time_s
+        bucket = int(np.floor(t / self.SOLAR_ORBIT_REFRESH_S))
+        if bucket != app._solar_orbit_bucket:
+            app._solar_orbit_bucket = bucket
+            sun = StateVector(r=np.zeros(3), v=np.zeros(3), mu=MU_SUN, epoch_s=t)
+            for name in PLANET_ORBIT_TINTS:
+                old = app._solar_orbit_nps.pop(name, None)
+                if old is not None:
+                    old.remove_node()
+                pts = sample_relative_orbit_points(
+                    states[name], sun, MU_SUN, n=self.SOLAR_ORBIT_POINTS
+                ) / self.SOLAR_ORBIT_UNIT_M
+                orbit_np = build_orbit_node(
+                    [tuple(p) for p in pts], planet_orbit_style(name),
+                    px_scale=app.line_px_scale(),
+                )
+                orbit_np.set_name(f"solar_orbit_{name}")
+                orbit_np.reparent_to(app._solar_orbit_frame)
+                app._solar_orbit_nps[name] = orbit_np
+        app._solar_orbit_frame.set_pos(*app.transform.to_render(np.zeros(3)))
+        app._solar_orbit_frame.set_scale(self.SOLAR_ORBIT_UNIT_M / app.transform.scale_m_per_unit)

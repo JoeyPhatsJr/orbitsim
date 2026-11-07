@@ -254,3 +254,13 @@ def lagrange_state(app):
     return {name: (float(marker.get_color_scale()[3]), not label.is_hidden())
             for name, marker, label in zip(("L1", "L2", "L3", "L4", "L5"),
                                            app._lagrange_nps, app._lagrange_labels)}
+
+
+def solar_orbit_nodes(app):
+    """{planet: its solar-viewer orbit line NodePath} (a copy)."""
+    return dict(app._solar_orbit_nps)
+
+
+def solar_orbit_frame_scale(app) -> float:
+    """The solar-viewer orbit frame's x scale (render units per baked unit)."""
+    return float(app._solar_orbit_frame.get_scale()[0])
