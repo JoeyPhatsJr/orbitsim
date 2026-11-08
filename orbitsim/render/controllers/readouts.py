@@ -192,7 +192,6 @@ class Readouts:
         billboards) overlaps a shown panel (+4 px) is hidden, whatever its priority;
         static labels come back once they're clear."""
         from panda3d.core import Vec3
-        from orbitsim.render.picking import project_points_px
         from orbitsim.render.world_markers import box_blocked_by_panels, label_box_px
         app = self.app
         owned, static = self._world_labels()
@@ -212,11 +211,7 @@ class Readouts:
             corners += [anchor + right * (x * sx) + up * (z * sz)
                         for x in (l, r) for z in (b, t)]
 
-        def m(lm):
-            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
-        render_to_clip = m(app.render.get_mat(app.cam)) @ m(app.camLens.get_projection_mat())
-        px = project_points_px(np.array(corners), render_to_clip,
-                               app.win.get_x_size(), app.win.get_y_size())
+        px = app.targeting.project_render_px(np.array(corners))
         for i, label in enumerate(labels):
             if box_blocked_by_panels(label_box_px(px[4 * i:4 * i + 4]), rects):
                 label.hide()

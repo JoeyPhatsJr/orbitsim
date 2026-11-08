@@ -50,7 +50,6 @@ class Targeting:
         # Earth-only Kepler closest approach: the "checking..." estimate (throttled).
         self.app._ca_recompute_t = 0.0
         self.app._ca = None
-        self.app._ca_traj = None
         self.app._ca_abs_epoch = 0.0
         self.app._aim_status = None             # AimStatus shown in the target panel
         self.app._aim_ghost_np = None           # "{Target} when you arrive" sphere
@@ -145,19 +144,27 @@ class Targeting:
         w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
         return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
 
+    def render_to_clip(self) -> np.ndarray:
+        """Row-vector 4x4 render -> clip matrix for this frame's camera and lens."""
+        def m(lm):
+            return np.array([tuple(lm.get_row(r)) for r in range(4)], dtype=np.float64)
+        return m(self.app.render.get_mat(self.app.cam)) @ m(
+            self.app.camLens.get_projection_mat())
+
+    def project_render_px(self, points_render):
+        """Render-space points, shape (N, 3), to bottom-up window pixels (N, 2); NaN rows
+        are behind the camera."""
+        from orbitsim.render.picking import project_points_px
+        return project_points_px(np.asarray(points_render, dtype=np.float64),
+                                 self.render_to_clip(),
+                                 self.app.win.get_x_size(), self.app.win.get_y_size())
+
     def project_px(self, points_m):
         """Geocentric positions [m], shape (N, 3), to bottom-up pixels (N, 2); NaN rows
         are behind the camera. One matrix pass (matches marker_px to ~3e-5 px)."""
-        from orbitsim.render.picking import project_points_px
         pts = (np.asarray(points_m, dtype=np.float64) - self.app.transform.origin_m) \
             / self.app.transform.scale_m_per_unit
-
-        def m(lm):
-            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
-        render_to_clip = m(self.app.render.get_mat(self.app.cam)) @ m(
-            self.app.camLens.get_projection_mat())
-        return project_points_px(pts, render_to_clip,
-                                 self.app.win.get_x_size(), self.app.win.get_y_size())
+        return self.project_render_px(pts)
 
     def pick_body_at(self, click_px) -> bool:
         """Target the body under ``click_px`` (22 px), as a tap on its marker; True on a hit."""
@@ -217,7 +224,6 @@ class Targeting:
         if isinstance(self.app._target, PlanetTarget):
             from orbitsim.core.optimize import interplanetary_departure_node_by_name
             from orbitsim.core.planets import A_EARTH, _N_EARTH
-            from orbitsim.core.constants import MU_SUN, R_MOON
             target_a = {
                 "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
                 "Jupiter": A_JUPITER, "Saturn": A_SATURN,
@@ -456,7 +462,6 @@ class Targeting:
             # exact N-body preview for this burn is in.
             app._ca = closest_approach(
                 traj, target.state_at(base_epoch), window_s=window, coarse_samples=720)
-            app._ca_traj = traj
             app._ca_abs_epoch = base_epoch + app._ca.t_ca_s
         return app._ca.separation_m, target.state_at(app._ca_abs_epoch).r
 

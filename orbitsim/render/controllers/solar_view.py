@@ -90,7 +90,6 @@ class SolarView:
             rx, ry, rz = self.app.transform.to_render(states[body.name].r)
             marker.set_pos(rx, ry, rz)
 
-        self.app.central_np.set_pos(*self.app.transform.to_render(np.zeros(3)))
         self.app.flight_input.apply_mouse_orbit()
         self.app.bodies_view.update_starfield()
         self.frame_orbits(states)
