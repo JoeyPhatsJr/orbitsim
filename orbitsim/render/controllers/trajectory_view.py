@@ -150,9 +150,13 @@ class TrajectoryView:
             self.app._traj_future[idx] = None
             generation = self.app._traj_submit_generation[idx]
             self.app._traj_generation[idx] = generation
-            # A line for an outdated path is replaced at once, not after the cadence.
-            self.app._traj_last_complete_t[idx] = (
-                now_real if generation == self.app._orbit_generation else float("-inf"))
+            # A line for an outdated path is replaced at once, not after the cadence
+            # (both timestamps gate the next submit).
+            if generation == self.app._orbit_generation:
+                self.app._traj_last_complete_t[idx] = now_real
+            else:
+                self.app._traj_last_complete_t[idx] = float("-inf")
+                self.app._traj_last_submit_t[idx] = float("-inf")
             self.app._traj_render_scale[idx] = None
 
         scale = self.app.transform.scale_m_per_unit
@@ -166,9 +170,12 @@ class TrajectoryView:
 
         if (
             self.app._traj_future[idx] is None
-            and now_real - max(
+            and (now_real - max(
                 self.app._traj_last_submit_t[idx], self.app._traj_last_complete_t[idx]
             ) >= self.TRAJECTORY_REFRESH_S
+                # The path jumped (e.g. a manual burn just ended): replace the stale
+                # line now. Not while thrusting -- that would resample every frame.
+                or (not self.live_line_current(idx) and not self.app.world.any_thrusting()))
         ):
             horizon = _trajectory_horizon_s(vessel.state, self.app.world.solar_system)
             n_pts = 256

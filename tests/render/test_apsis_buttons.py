@@ -46,4 +46,5 @@ def test_passed_node_executes_now_and_the_button_says_so():
     assert execute_label(auto_armed=False, ttn_s=600.0, tolerance_s=2.0) == "Jump & Execute"
     assert execute_label(auto_armed=False, ttn_s=1.0, tolerance_s=2.0) == "Execute Burn"
     assert execute_label(auto_armed=False, ttn_s=None, tolerance_s=2.0) == "Execute Burn"
+    assert execute_label(auto_armed=False, ttn_s=None, tolerance_s=2.0, passed=True) == "Burn Now"
     assert execute_label(auto_armed=True, ttn_s=600.0, tolerance_s=2.0) == "Cancel Auto Burn"

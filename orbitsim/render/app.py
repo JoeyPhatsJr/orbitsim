@@ -146,7 +146,8 @@ class OrbitApp(ShowBase):
         self._preview_approach = None          # TargetApproach of the drawn exact preview
         self._preview_points = None            # cached exact preview samples [m]
         self._preview_built_scale = None       # zoom scale the exact line was built at
-        self._preview_exact_key = None         # burn the drawn exact line belongs to
+        self._preview_exact_key = None         # burn + target the exact result is current for
+        self._preview_drawn_key = None         # burn + target the drawn exact line was sampled for
         self._preview_last_key = None          # burn seen last frame (change detection)
         self._preview_key_changed_t = 0.0      # real time the burn last changed
         self._preview_estimate_np = None       # faint two-body line while editing

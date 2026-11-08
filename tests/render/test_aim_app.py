@@ -108,6 +108,10 @@ for _ in range(40):
     h.step(1)
     shown.append(hooks.preview_lines(app))
     statuses.append(hooks.aim_status(app))
+hooks.select_target(app, "Venus"); h.step(1)   # A -> B -> C -> A, each a frame apart
+shown.append(hooks.preview_lines(app))
+hooks.select_target(app, "Moon"); h.step(1)
+shown.append(hooks.preview_lines(app))
 print("RESULT", repr({"before": before, "shown": shown, "statuses": statuses}))
 app.destroy()
 """
@@ -153,3 +157,31 @@ def test_status_never_shows_the_pre_burn_path_after_a_burn():
     kinds = [s[0] for s in out["after"] if s is not None]
     assert "miss" not in kinds, kinds[:20]
     assert kinds and kinds[-1] == "encounter", kinds[-5:]
+
+
+THRUST = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.step(150)
+vessel = app.world.vessels[0]
+vessel.throttle = 1.0
+h.step(30)                                    # a short manual burn
+vessel.throttle = 0.0
+frames = 0
+while frames < 300 and (hooks.aim_status(app) or ("checking",))[0] == "checking":
+    h.step(1)
+    frames += 1
+print("RESULT", repr(frames))
+app.destroy()
+"""
+
+
+def test_status_recovers_right_after_a_manual_burn():
+    # Review of PR #20: the stale line's completion left the submit time alone, so
+    # the box sat on "checking" ~1.5-2 s after the throttle was cut.
+    assert _run(THRUST) <= 10

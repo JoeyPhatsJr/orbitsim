@@ -137,7 +137,8 @@ def test_burn_summary_without_delta_v_says_so():
 
 def test_burn_summary_for_a_passed_node_says_it_burns_now():
     from orbitsim.render.hud.format import burn_summary
-    assert burn_summary(120.0, -30.0, 7.4) == "Burn 120 m/s · node passed, burns now · 7s burn"
+    assert burn_summary(120.0, None, 7.4, passed=True) == \
+        "Burn 120 m/s · node passed, burns now · 7s burn"
     assert burn_summary(120.0, -1.0, 7.4) == "Burn 120 m/s · now · 7s burn"   # within tolerance
 
 
