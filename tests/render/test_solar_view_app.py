@@ -59,7 +59,7 @@ def test_solar_orbits_rebuild_per_bucket_not_on_zoom():
         scale_ok = math.isclose(hooks.solar_orbit_frame_scale(app),
                                 1.0e9 / app.transform.scale_m_per_unit, rel_tol=1e-6)  # NodePath scale is float32
         app.clock.sim_time_s += 30 * 86400.0
-        h.step(1)
+        h.step(30)                 # rebuilds wait SOLAR_ORBIT_MIN_REBUILD_S (0.5 s) of real time
         keys2 = keys()
         print("RESULT " + json.dumps([keys0, keys1, scale_ok, keys2]))
     """)
@@ -187,3 +187,20 @@ def test_names_keep_clear_of_the_hud():
     assert any(on_hud(without, hud_rects) for _, without, hud_rects in results)
     for with_obstacles, _, hud_rects in results:
         assert on_hud(with_obstacles, hud_rects) == [], (with_obstacles, hud_rects)
+
+
+def test_max_warp_rebuilds_the_orbits_a_few_times_a_second_not_every_frame():
+    rebuilds = _probe("""
+        h.step(5)
+        app.clock.warp = 1.0e8
+        h.step(2)
+        keys = {k: n.get_key() for k, n in hooks.solar_orbit_nodes(app).items()}
+        count = 0
+        for _ in range(120):                       # 2 s of frames
+            h.step(1)
+            now = {k: n.get_key() for k, n in hooks.solar_orbit_nodes(app).items()}
+            count += now != keys
+            keys = now
+        print("RESULT " + json.dumps(count))
+    """)
+    assert 1 <= rebuilds <= 5, rebuilds

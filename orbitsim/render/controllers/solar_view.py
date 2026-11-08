@@ -4,6 +4,25 @@ import numpy as np
 from orbitsim.core.planets import heliocentric_state
 from orbitsim.render.geometry import make_uv_sphere
 
+# At 1e8x a 30-day orbit bucket passes every ~1.5 frames, but the osculating orbits
+# barely move: rebuild them at most this often in real time [s].
+SOLAR_ORBIT_MIN_REBUILD_S = 0.5
+
+
+def solar_orbits_need_rebuild(bucket, last_bucket, px_scale, last_px_scale,
+                              now_real_s, last_rebuild_real_s) -> bool:
+    """Whether this frame rebuilds the solar orbit lines.
+
+    Always on the first frame and when the line pixel scale changed (a move to a
+    display of another density: widths are baked in); on a new sim-time bucket only
+    once SOLAR_ORBIT_MIN_REBUILD_S of real time has passed since the last rebuild.
+    """
+    if last_bucket is None or last_rebuild_real_s is None:
+        return True
+    if px_scale != last_px_scale:
+        return True
+    return bucket != last_bucket and now_real_s - last_rebuild_real_s >= SOLAR_ORBIT_MIN_REBUILD_S
+
 
 class SolarView:
     """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
@@ -50,6 +69,8 @@ class SolarView:
         self.app._solar_orbit_frame = self.app.render.attach_new_node("solar_orbit_frame")
         self.app._solar_orbit_nps = {}
         self.app._solar_orbit_bucket = None
+        self.app._solar_orbit_px_scale = None
+        self.app._solar_orbit_rebuilt_real_s = None
         self.app._planet_nps = []
         self.app._planet_labels = []
         self.app._solar_label_cards = {}
@@ -221,7 +242,8 @@ class SolarView:
         return rects
 
     def frame_orbits(self, states) -> None:
-        """Place and scale the planets' orbit lines; rebuild them once per 30-day bucket.
+        """Place and scale the planets' orbit lines; rebuild them once per 30-day bucket
+        (at most every SOLAR_ORBIT_MIN_REBUILD_S real seconds) or on a line-scale change.
 
         ``states`` are this frame's heliocentric states (the ones placing the markers),
         so a rebuild costs no extra ephemeris calls.
@@ -231,11 +253,19 @@ class SolarView:
         from orbitsim.render.line_style import PLANET_ORBIT_TINTS, planet_orbit_style
         from orbitsim.render.orbit_lines import build_orbit_node, sample_relative_orbit_points
 
+        import time as _time
+
         app = self.app
         t = app.clock.sim_time_s
         bucket = int(np.floor(t / self.SOLAR_ORBIT_REFRESH_S))
-        if bucket != app._solar_orbit_bucket:
+        px_scale = app.line_px_scale()
+        now_real = _time.monotonic()
+        if solar_orbits_need_rebuild(bucket, app._solar_orbit_bucket, px_scale,
+                                     app._solar_orbit_px_scale, now_real,
+                                     app._solar_orbit_rebuilt_real_s):
             app._solar_orbit_bucket = bucket
+            app._solar_orbit_px_scale = px_scale
+            app._solar_orbit_rebuilt_real_s = now_real
             sun = StateVector(r=np.zeros(3), v=np.zeros(3), mu=MU_SUN, epoch_s=t)
             for name in PLANET_ORBIT_TINTS:
                 old = app._solar_orbit_nps.pop(name, None)
@@ -246,7 +276,7 @@ class SolarView:
                 ) / self.SOLAR_ORBIT_UNIT_M
                 orbit_np = build_orbit_node(
                     [tuple(p) for p in pts], planet_orbit_style(name),
-                    px_scale=app.line_px_scale(),
+                    px_scale=px_scale,
                 )
                 orbit_np.set_name(f"solar_orbit_{name}")
                 orbit_np.reparent_to(app._solar_orbit_frame)
