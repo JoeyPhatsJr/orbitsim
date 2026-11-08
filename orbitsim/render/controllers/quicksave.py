@@ -43,4 +43,5 @@ class Quicksave:
         self.app.world.solar_system = world.solar_system
         self.app.clock.sim_time_s = clock.sim_time_s
         self.app.clock.warp = clock.warp
+        self.app.trajectory_view.invalidate_live_line()
         self.app._flash_message("Quickloaded")

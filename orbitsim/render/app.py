@@ -279,6 +279,7 @@ class OrbitApp(ShowBase):
         self.flight_input.apply_flight_input(real_dt)
         if self.world.any_thrusting():
             self.clock.warp = 1.0
+            self.trajectory_view.invalidate_live_line(resubmit=False)
         elif self.world.vessels:
             from orbitsim.sim.clock import SimClock
             if self.world.solar_system:

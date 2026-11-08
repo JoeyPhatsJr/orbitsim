@@ -395,7 +395,8 @@ class Targeting:
             encounters, approach = app._preview_encounters, app._preview_approach
         else:
             approach = app._traj_approach[0]
-            exact = approach is not None and approach.body_name == name
+            exact = (approach is not None and approach.body_name == name
+                     and app.trajectory_view.live_line_current(0))
             encounters = app._traj_encounters[0] or []
         from orbitsim.render.aim_status import aim_status
         status = aim_status(name, encounters, approach, exact, estimate_m)

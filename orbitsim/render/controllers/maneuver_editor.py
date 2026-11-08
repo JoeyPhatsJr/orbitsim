@@ -301,6 +301,7 @@ class ManeuverEditor:
         dv = node.magnitude_mps
         if 0.0 < dv <= v0.delta_v_remaining:
             v0.state = apply_maneuver(v0.state, node)
+            self.app.trajectory_view.invalidate_live_line()
             # Spend fuel for this impulse, so maneuver nodes and live thrust draw
             # from the same tank (no separate budget pool) — unless unlimited.
             if not v0.unlimited_dv:

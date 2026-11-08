@@ -96,6 +96,11 @@ class BodiesView:
         self.app._traj_render_origin = [None for _ in world.vessels]
         self.app._traj_encounters = [None for _ in world.vessels]
         self.app._traj_approach = [None for _ in world.vessels]   # TargetApproach or None
+        # Bumped whenever a vessel's path jumps (thrust, quickload, executed burn,
+        # cancelled operation): a live line from an older generation shows the old path.
+        self.app._orbit_generation = 0
+        self.app._traj_submit_generation = [None for _ in world.vessels]
+        self.app._traj_generation = [None for _ in world.vessels]
 
     def build_moon_and_lagrange(self):
         """Moon marker, SOI shell, Lagrange markers."""

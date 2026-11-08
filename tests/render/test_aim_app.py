@@ -122,3 +122,34 @@ def test_switching_target_keeps_the_exact_path_drawn():
     assert out["statuses"][0] is None or out["statuses"][0][0] == "checking", out["statuses"][0]
     assert out["statuses"][-1] is not None and out["statuses"][-1][0] != "checking", \
         out["statuses"][-1]
+
+
+EXECUTED = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.step(150)                                   # live line: LEO misses the Moon
+before = hooks.aim_status(app)
+h.send("i"); h.step(30)                       # plan the transfer
+h.press("Jump & Execute")                     # burn it: no burn left, a new path
+after = []
+for _ in range(150):
+    h.step(1)
+    after.append(hooks.aim_status(app))
+print("RESULT", repr({"before": before, "after": after}))
+app.destroy()
+"""
+
+
+def test_status_never_shows_the_pre_burn_path_after_a_burn():
+    # With no burn planned the box follows the live line; right after a burn (or a
+    # quickload) that line still shows the old orbit for up to its 2 s refresh.
+    out = _run(EXECUTED)
+    assert out["before"][0] == "miss", out["before"]
+    kinds = [s[0] for s in out["after"] if s is not None]
+    assert "miss" not in kinds, kinds[:20]
+    assert kinds and kinds[-1] == "encounter", kinds[-5:]
