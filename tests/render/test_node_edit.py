@@ -115,7 +115,7 @@ def test_window_ignores_earth_period_inside_another_soi():
 
 def test_radial_keys_push_the_way_their_labels_say():
     # F1 says "; / '  Burn radial in / out". apply_maneuver's radial axis (rtn_basis[2])
-    # points toward the central body, so "out" needs a negative radial component.
+    # points away from the central body, so "out" is a positive radial component.
     import numpy as np
     from orbitsim.core.maneuvers import rtn_basis
     r, v = np.array([7e6, 0.0, 0.0]), np.array([0.0, 7.5e3, 0.0])

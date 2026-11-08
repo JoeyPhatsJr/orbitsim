@@ -313,11 +313,13 @@ _ephemeris_context = threading.local()
 
 try:
     from orbitsim.core.ephemeris import body_state as _ephem_body_state
+    from orbitsim.core.ephemeris import body_states as _ephem_body_states
     _EPHEMERIS_AVAILABLE = True
 except ImportError:
     # skyfield itself is missing; keep the attribute defined so callers (and
     # tests) can always reference/patch nbody._ephem_body_state.
     _ephem_body_state = None
+    _ephem_body_states = None
     _EPHEMERIS_AVAILABLE = False
 
 _EPHEM_BODY_NAMES = ("SUN", "MERCURY", "VENUS", "MARS",
@@ -373,6 +375,41 @@ def stable_prediction_ephemeris():
 
 _PREDICTION_EPHEMERIS_STEP_S = 86400.0
 
+# Daily knots kept across frames for deep-space flight (bounded: 8 bodies x ~1 yr).
+_flight_samples: dict = {}
+_FLIGHT_SAMPLES_MAX = 8 * 400
+# A missing knot fetches this many days at once (one vectorized Skyfield call,
+# bit-identical to scalar calls): a 1e8x frame spans ~19 days.
+_FLIGHT_KNOT_BATCH = 64
+
+
+@contextmanager
+def time_correct_flight_ephemeris():
+    """Planet positions at each substep's own time for one flight tick.
+
+    The per-frame cache freezes every planet for a whole frame. Near Earth that is
+    harmless (Earth and ship feel almost the same Sun), but outside Earth's SOI the
+    direct and indirect solar terms no longer cancel and a frozen Sun puts a
+    heliocentric coast ~2,000,000 km off after 60 days at 1e7x. Inside this context
+    the cached wrappers interpolate daily DE440 knots (cubic Hermite, metres of
+    error), exactly like a background prediction, but the knots persist across
+    frames and are fetched 64 days at a time.
+    """
+    previous = getattr(_ephemeris_context, "prediction_cache", None)
+    previous_last = getattr(_ephemeris_context, "prediction_last", None)
+    previous_batch = getattr(_ephemeris_context, "prediction_batch", 1)
+    if len(_flight_samples) > _FLIGHT_SAMPLES_MAX:
+        _flight_samples.clear()
+    _ephemeris_context.prediction_cache = _flight_samples
+    _ephemeris_context.prediction_last = {}
+    _ephemeris_context.prediction_batch = _FLIGHT_KNOT_BATCH
+    try:
+        yield
+    finally:
+        _ephemeris_context.prediction_cache = previous
+        _ephemeris_context.prediction_last = previous_last
+        _ephemeris_context.prediction_batch = previous_batch
+
 
 def _prediction_ephemeris_state(name, fallback_fn, t_s):
     """Cubic-Hermite interpolation of thread-local daily JPL samples."""
@@ -388,6 +425,17 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
         key = (name, index)
         if key not in cache:
             epoch = index * step
+            batch = getattr(_ephemeris_context, "prediction_batch", 1)
+            if batch > 1 and _EPHEMERIS_AVAILABLE:
+                try:
+                    knots = _ephem_body_states(
+                        name, np.arange(index, index + batch) * step, center="EARTH")
+                except ValueError:   # offline / out of range: knot by knot below
+                    knots = None
+                if knots is not None:
+                    for offset, st in enumerate(knots):
+                        cache.setdefault((name, index + offset), st)
+                    return cache[key]
             if _EPHEMERIS_AVAILABLE:
                 try:
                     cache[key] = _ephem_body_state(name, epoch, center="EARTH")
@@ -399,9 +447,33 @@ def _prediction_ephemeris_state(name, fallback_fn, t_s):
 
     start = sample(bucket)
     end = sample(bucket + 1)
-    state = hermite_state(start, end, bucket * step, step, t_s, mu=start.mu)
+    if getattr(_ephemeris_context, "prediction_batch", 1) > 1:
+        state = _lean_hermite(start, end, bucket * step, step, t_s)   # flight
+    else:
+        state = hermite_state(start, end, bucket * step, step, t_s, mu=start.mu)
     last[name] = (t_s, state)
     return state
+
+
+class _LeanState:
+    """r/v/mu/epoch_s without StateVector's validation (flight's per-substep planet
+    positions: interpolated from validated knots, read-only consumers)."""
+    __slots__ = ("r", "v", "mu", "epoch_s")
+
+    def __init__(self, r, v, mu, epoch_s):
+        self.r, self.v, self.mu, self.epoch_s = r, v, mu, epoch_s
+
+
+def _lean_hermite(start, end, t0_s, step_s, t_s):
+    """core.hermite.hermite_state's arithmetic, returning a _LeanState."""
+    u = (float(t_s) - t0_s) / step_s
+    u2 = u * u
+    u3 = u2 * u
+    r = ((2.0 * u3 - 3.0 * u2 + 1.0) * start.r + (u3 - 2.0 * u2 + u) * step_s * start.v
+         + (-2.0 * u3 + 3.0 * u2) * end.r + (u3 - u2) * step_s * end.v)
+    v = (((6.0 * u2 - 6.0 * u) / step_s) * start.r + (3.0 * u2 - 4.0 * u + 1.0) * start.v
+         + ((-6.0 * u2 + 6.0 * u) / step_s) * end.r + (3.0 * u2 - 2.0 * u) * end.v)
+    return _LeanState(r, v, start.mu, float(t_s))
 
 
 def _make_cached_state_fn(name, fallback_fn):
@@ -539,7 +611,15 @@ def _solar_system_substeps(state, dt_s, max_step_s):
     return max(1, int(np.ceil(abs(dt_s) / cap)))
 
 
-def propagate_solar_system(state, dt_s, max_step_s=6.0 * 3600.0,
+# Flight's largest coast step [s]. It binds only in deep space (every body's cap is
+# longer); steps are quantized to FLIGHT_MAX_STEP_S / 2^k, and 12 h / 2^(k+1) equals
+# the old 6 h / 2^k, so a coast whose cap is under 12 h steps exactly as before. At
+# 6 h, Yoshida's 3 evaluations per step pushed 100,000,000x over the 200-evaluation
+# frame budget in deep space; at 12 h it fits (117 evaluations).
+FLIGHT_MAX_STEP_S = 12.0 * 3600.0
+
+
+def propagate_solar_system(state, dt_s, max_step_s=FLIGHT_MAX_STEP_S,
                            min_substep_s=_MIN_SUBSTEP_S):
     """Propagate a vessel under full solar system gravity (geocentric)."""
     r, v, t = _verlet_adaptive(
@@ -648,12 +728,47 @@ def osculating_elements_solar(state, t_s):
     return state_to_elements(rel)
 
 
+def soi_entry_time_s(r_m, v_mps, t_s, planets: bool = True) -> float:
+    """Lower bound [s] on when (r, v) can enter the SOI of a body it is outside of.
+
+    Straight-line distance to the SOI over the relative speed, in any direction, so
+    it never overestimates. Covers the Moon, Earth (the frame origin) and, with
+    ``planets``, the seven other planets; inf when no SOI is reachable this way.
+    A frame (or tick) shorter than this cannot jump into a body it never sees.
+    """
+    r = np.asarray(r_m, dtype=np.float64)
+    v = np.asarray(v_mps, dtype=np.float64)
+    bodies = [(moon_state_at(t_s), MOON_SOI_M)]
+    origin = np.zeros(3)
+    bodies.append((None, EARTH_SOI_M))
+    if planets:
+        for state_fn, _mu, soi, _radius in _SOLAR_CAP_BODIES[1:]:
+            bodies.append((state_fn(t_s), soi))
+    best = float("inf")
+    for st, soi in bodies:
+        if st is None:
+            dr, dv = r - origin, v
+        else:
+            dr, dv = r - st.r, v - st.v
+        gap = _norm3(dr) - soi
+        if gap <= 0.0:
+            continue                       # already inside this one
+        speed = _norm3(dv)
+        if speed > 0.0:
+            best = min(best, gap / speed)
+    return best
+
+
 def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
     """Largest warp whose per-frame integration stays within budget_evals gravity
-    evaluations (solar system; a coast step costs EVALS_PER_STEP)."""
+    evaluations (solar system; a coast step costs EVALS_PER_STEP), and whose frame
+    is too short to cross into a sphere of influence (soi_entry_time_s): a 1e8x
+    frame from deep space would otherwise integrate straight into a planet."""
+    entry_s = soi_entry_time_s(state.r, state.v, t_s)
     allowed = [w for w in warp_steps
-               if _solar_system_substeps(state, real_dt_s * w, 6.0 * 3600.0) * EVALS_PER_STEP
-               <= budget_evals]
+               if _solar_system_substeps(state, real_dt_s * w, FLIGHT_MAX_STEP_S)
+               * EVALS_PER_STEP
+               <= budget_evals and real_dt_s * w <= entry_s]
     return max(allowed) if allowed else min(warp_steps)
 
 

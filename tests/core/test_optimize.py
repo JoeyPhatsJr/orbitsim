@@ -131,9 +131,8 @@ def test_intercept_node_rtn_projection_is_lossless():
     tof = np.linspace(1.0e3, 4.0e4, 30)
     node = intercept_node(ship, target, mu, dep, tof, refine=False)
     burn = propagate_kepler(ship, node.epoch_s - ship.epoch_s)
-    v_hat = burn.v / np.linalg.norm(burn.v)
-    h = np.cross(burn.r, burn.v); h_hat = h / np.linalg.norm(h)
-    r_hat = np.cross(h_hat, v_hat)
+    from orbitsim.core.maneuvers import rtn_basis
+    v_hat, h_hat, r_hat = rtn_basis(burn.r, burn.v)    # the axes apply_maneuver uses
     recomposed = (node.dv_prograde_mps * v_hat + node.dv_normal_mps * h_hat
                   + node.dv_radial_mps * r_hat)
     assert node.magnitude_mps > 0.0

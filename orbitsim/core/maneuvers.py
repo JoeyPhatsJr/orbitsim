@@ -60,7 +60,7 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
     Local RTN basis at the burn point:
         v_hat = v / |v|                  (prograde)
         h_hat = (r x v) / |r x v|        (orbit-normal)
-        r_hat = h_hat x v_hat            (radial-out, orthonormal — NOT r/|r|)
+        r_hat = v_hat x h_hat            (radial-out, orthonormal — NOT r/|r|)
     """
     dt = node.epoch_s - state.epoch_s
     burn_state = propagate_kepler(state, dt)
@@ -70,7 +70,7 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
     v_hat = v / np.linalg.norm(v)
     h = np.cross(r, v)
     h_hat = h / np.linalg.norm(h)
-    r_hat = np.cross(h_hat, v_hat)
+    r_hat = np.cross(v_hat, h_hat)
 
     dv = (
         node.dv_prograde_mps * v_hat
@@ -90,10 +90,11 @@ def apply_maneuver(state: StateVector, node: ManeuverNode) -> StateVector:
 def rtn_basis(r: np.ndarray, v: np.ndarray) -> tuple:
     """Burn frame at a point: (prograde v_hat, orbit-normal h_hat, radial axis r_hat).
 
-    The same formulas as apply_maneuver (r_hat = h_hat x v_hat, orthonormal -- not
-    r/|r|). Note: this radial axis points TOWARD the central body (SAS RADIAL_OUT is
-    v x h); a positive radial delta-V is a radial-in burn. Raises ValueError for zero velocity or zero angular momentum (a landed or
-    purely radial state), where the frame is undefined.
+    The same formulas as apply_maneuver (r_hat = v_hat x h_hat, orthonormal -- not
+    r/|r|): the radial axis points AWAY from the central body, like SAS RADIAL_OUT,
+    so a positive radial delta-V is a radial-out burn. Raises ValueError for zero
+    velocity or zero angular momentum (a landed or purely radial state), where the
+    frame is undefined.
     """
     r = np.asarray(r, dtype=np.float64)
     v = np.asarray(v, dtype=np.float64)
@@ -106,7 +107,7 @@ def rtn_basis(r: np.ndarray, v: np.ndarray) -> tuple:
         raise ValueError("RTN basis undefined for zero angular momentum")
     v_hat = v / v_norm
     h_hat = h / h_norm
-    return v_hat, h_hat, np.cross(h_hat, v_hat)
+    return v_hat, h_hat, np.cross(v_hat, h_hat)
 
 
 def maneuver_direction(state: StateVector, node: ManeuverNode) -> np.ndarray:
@@ -123,7 +124,7 @@ def maneuver_direction(state: StateVector, node: ManeuverNode) -> np.ndarray:
     v_hat = v / np.linalg.norm(v)
     h = np.cross(r, v)
     h_hat = h / np.linalg.norm(h)
-    r_hat = np.cross(h_hat, v_hat)
+    r_hat = np.cross(v_hat, h_hat)
 
     dv = (
         node.dv_prograde_mps * v_hat

@@ -28,7 +28,7 @@ install_determinism()
 app = build_app("sandbox")
 h = Harness(app)
 h.press("LAUNCH SANDBOX"); h.step(10)
-for k in ("]", "j", ";"):                 # taps: node later, +1 prograde, -1 radial
+for k in ("]", "j", ";"):                 # taps: node later, +1 prograde, radial in
     h.send(k); h.send(k + "-up")
 a = hooks.node_state(app)
 h.send("l"); h.step(60); h.send("l-up")  # 1 s hold: tap + 0.7 s of ramp
@@ -42,7 +42,7 @@ app.destroy()
 
 def test_nudge_taps_set_exact_steps():
     a, b, c = _run(NUDGES)
-    assert a[1:] == (1.0, 0.0, 1.0) and a[0] is not None           # node created, +1 pro, ';' = +1 rad (in)
+    assert a[1:] == (1.0, 0.0, -1.0) and a[0] is not None          # node created, +1 pro, ';' = -1 rad (in)
     ramp = 10 * 0.5 / math.log(2) * (2 ** 1.4 - 1)
     assert b[2] == pytest.approx(ramp + 1.0, abs=0.5)               # tap + 0.7 s ramp
 

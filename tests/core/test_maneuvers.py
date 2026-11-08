@@ -206,14 +206,21 @@ def test_time_to_apsis_is_zero_on_the_apsis_for_any_geometry():
 
 # --- The burn frame at a point (plan 3: drag handles) ---
 def test_rtn_basis_circular_equatorial():
-    # NOTE (plan 3, found while planning handles): apply_maneuver's radial axis is
-    # h_hat x v_hat, which points TOWARD the central body (-x here), while SAS
-    # RADIAL_OUT (core/attitude.py) is v x h, away from it. rtn_basis mirrors
-    # apply_maneuver so handles sit where the burn really pushes; the sign convention
-    # is flagged to the user to decide (fixing it changes stored burns).
+    # A positive radial delta-V is radial OUT: away from the central body (+x here),
+    # the same direction as SAS RADIAL_OUT (v x h). It used to be h x v (inward), so
+    # the "radial in"/"radial out" names were swapped everywhere.
     from orbitsim.core.maneuvers import rtn_basis
     pro, nrm, rad = rtn_basis(np.array([7e6, 0, 0]), np.array([0, 7.5e3, 0]))
-    np.testing.assert_allclose([pro, nrm, rad], [[0, 1, 0], [0, 0, 1], [-1, 0, 0]], atol=1e-15)
+    np.testing.assert_allclose([pro, nrm, rad], [[0, 1, 0], [0, 0, 1], [1, 0, 0]], atol=1e-15)
+
+
+def test_radial_out_burn_matches_sas_radial_out():
+    from orbitsim.core.attitude import sas_target_dir
+    s = _periapsis_state()
+    after = apply_maneuver(s, ManeuverNode(s.epoch_s, 0.0, 0.0, 10.0))
+    out = sas_target_dir("RADIAL_OUT", s, None)
+    np.testing.assert_allclose((after.v - s.v) / 10.0, out, atol=1e-12)
+    assert np.dot(after.v - s.v, s.r) > 0.0                  # away from the body
 
 
 def test_rtn_basis_matches_apply_maneuver():

@@ -332,3 +332,154 @@ def test_unlimited_dv_thrusts_with_empty_tank():
     # Nose is +Z (identity orientation): thrust accel = 30 kN / 2000 kg = 15 m/s^2.
     assert vessel.state.v[2] > 10.0             # thrust produced acceleration
     assert vessel.fuel_mass_kg == 0.0           # tank untouched under unlimited
+
+
+def _deorbit_vessel(depth_m: float = 2.0e6) -> Vessel:
+    """At a 400 km apoapsis on an orbit whose periapsis is depth_m underground."""
+    ra, rp = R_EARTH + 4.0e5, R_EARTH - depth_m
+    a = 0.5 * (ra + rp)
+    va = np.sqrt(MU_EARTH * (2.0 / ra - 1.0 / a))
+    state = StateVector(r=np.array([ra, 0.0, 0.0]), v=np.array([0.0, va, 0.0]),
+                        mu=MU_EARTH, epoch_s=0.0)
+    return Vessel(name="deorbit", state=state)
+
+
+def _past_the_climb_out_s(vessel) -> float:
+    """A tick length that ends back above the surface on the far side: the conic
+    is symmetric about periapsis, so it re-emerges at period - t_hit."""
+    from orbitsim.core.impact import surface_crossing_s
+    t_hit = surface_crossing_s(vessel.state.r, vessel.state.v, MU_EARTH, R_EARTH)
+    a = state_to_elements(vessel.state).a
+    period = 2.0 * np.pi * np.sqrt(a**3 / MU_EARTH)
+    return period - t_hit + 200.0
+
+
+def test_one_long_tick_cannot_tunnel_through_the_planet():
+    # High warp in LEO is ~1,700 s per frame: a path that dips under the surface and
+    # comes back out inside one tick must still land, not pass through the planet.
+    vessel = _deorbit_vessel()
+    dt = _past_the_climb_out_s(vessel)
+    world = World(central=EARTH, vessels=[vessel])
+    world.step(dt)                        # past the dive and the climb back out
+    assert vessel.landed_on == "Earth"
+    assert abs(np.linalg.norm(vessel.state.r) - R_EARTH) < 1.0
+    assert vessel.state.epoch_s == dt
+
+
+def test_one_long_tick_cannot_tunnel_through_the_planet_solar_system():
+    vessel = _deorbit_vessel()
+    dt = _past_the_climb_out_s(vessel)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    world.step(dt)
+    assert vessel.landed_on == "Earth"
+    assert abs(np.linalg.norm(vessel.state.r) - R_EARTH) < 1.0
+
+
+def test_tick_that_ends_before_the_surface_does_not_land():
+    from orbitsim.core.impact import surface_crossing_s
+    vessel = _deorbit_vessel()
+    t_hit = surface_crossing_s(vessel.state.r, vessel.state.v, MU_EARTH, R_EARTH)
+    world = World(central=EARTH, vessels=[vessel])
+    world.step(t_hit - 30.0)
+    assert vessel.landed_on is None
+    assert np.linalg.norm(vessel.state.r) > R_EARTH
+
+
+def _flown_deep_space_error_m(warp: float, days: float = 60.0) -> float:
+    """Fly a heliocentric coast (~0.5 AU from Earth) through World.step at the frame
+    cadence of `warp` (cache refreshed each frame, like the app) and return its
+    distance from the time-correct converged path."""
+    import pytest
+    from orbitsim.core import nbody as nb
+    if not nb.refresh_ephemeris_cache(0.0):
+        pytest.skip("DE440 ephemeris not available offline")
+    total = days * 86400.0
+    with nb.stable_prediction_ephemeris():
+        sun = nb._csun(0.0)
+        r = sun.r + np.array([0.0, 1.0e11, 0.0])
+        v = sun.v + np.array([-np.sqrt(nb.MU_SUN / 1.0e11), 0.0, 0.0])
+        start = StateVector(r=r, v=v, mu=MU_EARTH, epoch_s=0.0)
+        truth = nb.propagate_solar_system(start, total, max_step_s=600.0)
+    vessel = Vessel(name="probe", state=start)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    frame = warp / 60.0
+    while vessel.state.epoch_s < total - 1e-6:
+        nb.refresh_ephemeris_cache(vessel.state.epoch_s)
+        world.step(min(frame, total - vessel.state.epoch_s))
+    return float(np.linalg.norm(vessel.state.r - truth.r))
+
+
+def test_deep_space_coast_at_warp_follows_the_moving_planets():
+    # The per-frame ephemeris cache froze the Sun for a whole frame: outside Earth's
+    # SOI that was 2,000,000 km off after 60 days at 1e7x (19,000,000 km at 1e8x).
+    # Out there flight reads time-correct (interpolated) planet positions instead.
+    assert _flown_deep_space_error_m(1.0e7) < 50.0e3
+    assert _flown_deep_space_error_m(1.0e8) < 50.0e3
+
+
+def _aimed_at(body_state, v_rel_mps, lead_s, epoch_s):
+    """A state lead_s before hitting body_state's centre head-on at v_rel_mps."""
+    u = np.array([1.0, 0.3, 0.1])
+    u /= np.linalg.norm(u)
+    vrel = v_rel_mps * u
+    return StateVector(r=body_state.r - vrel * lead_s, v=body_state.v + vrel,
+                       mu=MU_EARTH, epoch_s=epoch_s)
+
+
+def test_a_max_warp_frame_cannot_fly_through_a_planet():
+    # Review of PR #19: 4 days out from Mars at 5 km/s the Sun is dominant, so the
+    # impact check never looked at Mars and one 1e8x frame flew through its centre.
+    import pytest
+    from orbitsim.core import nbody as nb
+    from orbitsim.sim.clock import SimClock
+    t0 = 1.0e8
+    if not nb.refresh_ephemeris_cache(t0):
+        pytest.skip("DE440 ephemeris not available offline")
+    start = _aimed_at(nb._cmars(t0), 5000.0, 4 * 86400.0, t0)
+    # The warp cap keeps a frame from crossing into Mars's SOI ...
+    cap = nb.max_safe_warp_solar(start, t0, SimClock.WARP_STEPS)
+    assert cap / 60.0 <= nb.soi_entry_time_s(start.r, start.v, t0)
+    # ... and a frame that long anyway (a jump chunk) still lands on Mars.
+    vessel = Vessel(name="probe", state=start)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    world.step(1.0e8 / 60.0)
+    assert vessel.landed_on == "Mars"
+
+
+def test_a_day_long_tick_cannot_fly_through_the_moon():
+    # Jump & Execute / Warp to here coast in 1-day chunks. From outside the Moon's SOI
+    # the Earth conic never reaches the Moon, so a chunk could pass straight through.
+    from orbitsim.core.moon import moon_state_at
+    from orbitsim.core import nbody as nb
+    nb.refresh_ephemeris_cache(0.0)
+    start = _aimed_at(moon_state_at(0.0), 1500.0, 16 * 3600.0, 0.0)
+    assert np.linalg.norm(start.r - moon_state_at(0.0).r) > nb.MOON_SOI_M
+    vessel = Vessel(name="probe", state=start)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    world.step(86400.0)
+    assert vessel.landed_on == "Moon"
+    assert vessel.state.epoch_s == 86400.0
+
+
+def test_long_ticks_in_a_high_earth_orbit_follow_the_moving_sun():
+    # Review of PR #19: inside Earth's SOI the per-frame cache froze the Sun too; at
+    # 700,000 km that was 10,477 km off after 60 days at 1e7x (1,060 km at 1e6x).
+    import pytest
+    from orbitsim.core import nbody as nb
+    if not nb.refresh_ephemeris_cache(0.0):
+        pytest.skip("DE440 ephemeris not available offline")
+    r0 = 7.0e8
+    moon = nb.moon_state_at(0.0)
+    u = -moon.r / np.linalg.norm(moon.r)
+    w = np.cross(u, np.array([0.0, 0.0, 1.0]))
+    w /= np.linalg.norm(w)
+    start = StateVector(r=u * r0, v=w * np.sqrt(MU_EARTH / r0), mu=MU_EARTH, epoch_s=0.0)
+    total = 60 * 86400.0
+    with nb.stable_prediction_ephemeris():
+        truth = nb.propagate_solar_system(start, total, max_step_s=600.0)
+    vessel = Vessel(name="high", state=start)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    while vessel.state.epoch_s < total - 1e-6:
+        nb.refresh_ephemeris_cache(vessel.state.epoch_s)
+        world.step(min(1.0e7 / 60.0, total - vessel.state.epoch_s))
+    assert np.linalg.norm(vessel.state.r - truth.r) < 200.0e3

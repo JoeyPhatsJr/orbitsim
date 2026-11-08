@@ -287,7 +287,7 @@ def intercept_node(ship_state, target_state_now, mu, dep_times_s, tof_grid_s,
     dv_vec = v1 - dep.v
     v_hat = dep.v / np.linalg.norm(dep.v)
     h = np.cross(dep.r, dep.v); h_hat = h / np.linalg.norm(h)
-    r_hat = np.cross(h_hat, v_hat)
+    r_hat = np.cross(v_hat, h_hat)
     return ManeuverNode(
         epoch_s=ship_state.epoch_s + t_dep,
         dv_prograde_mps=float(np.dot(dv_vec, v_hat)),
@@ -440,7 +440,7 @@ def interplanetary_departure_node(
     v_hat = departure.v / np.linalg.norm(departure.v)
     h_hat = np.cross(departure.r, departure.v)
     h_hat /= np.linalg.norm(h_hat)
-    r_hat = np.cross(h_hat, v_hat)
+    r_hat = np.cross(v_hat, h_hat)
     return ManeuverNode(
         epoch_s=epoch + t_dep,
         dv_prograde_mps=float(np.dot(dv_vec, v_hat)),
@@ -518,7 +518,7 @@ def intercept_node_callable(ship_state, target_state_fn, mu, dep_times_s,
     dv_vec = v1 - dep.v
     v_hat = dep.v / np.linalg.norm(dep.v)
     h = np.cross(dep.r, dep.v); h_hat = h / np.linalg.norm(h)
-    r_hat = np.cross(h_hat, v_hat)
+    r_hat = np.cross(v_hat, h_hat)
     return ManeuverNode(
         epoch_s=ship_state.epoch_s + t_dep,
         dv_prograde_mps=float(np.dot(dv_vec, v_hat)),

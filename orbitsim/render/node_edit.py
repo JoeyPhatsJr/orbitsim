@@ -34,9 +34,9 @@ NUDGE_TIME = NudgeSpec(10.0, 30.0, 0.5, 21600.0, 0.3)   # s, s per s
 NUDGE_KEYS: dict = {
     "j": ("pro", 1), "h": ("pro", -1),
     "l": ("nrm", 1), "k": ("nrm", -1),
-    # Radial: the burn's radial axis (apply_maneuver / rtn_basis) points TOWARD the
-    # central body, so ";" (radial in) is +1 and "'" (radial out) is -1.
-    ";": ("rad", 1), "'": ("rad", -1),
+    # Radial: the burn's radial axis (apply_maneuver / rtn_basis) points away from
+    # the central body, so ";" (radial in) is -1 and "'" (radial out) is +1.
+    ";": ("rad", -1), "'": ("rad", 1),
     "]": ("time", 1), "[": ("time", -1),
 }
 

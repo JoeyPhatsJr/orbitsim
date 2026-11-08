@@ -153,7 +153,7 @@ def nudge_keys(h):
     h.send("l")                     # hold: normal, ramping
     h.step(60)
     h.send("l-up")
-    h.send(";")                     # tap: -1 m/s radial
+    h.send(";")                     # tap: 1 m/s radial in
     h.send(";-up")
     h.step(30)
 

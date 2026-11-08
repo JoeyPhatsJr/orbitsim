@@ -7,6 +7,15 @@ from orbitsim.core.state import StateVector
 from orbitsim.core.maneuvers import ManeuverNode
 from orbitsim.core.attitude import quat_identity
 from orbitsim.core.flight import tsiolkovsky_dv
+from orbitsim.core.planets import EARTH_SOI_M
+
+
+def _body_named(name: str) -> CelestialBody:
+    from orbitsim.core.bodies import MOON, PLANETS, SUN
+    for body in (SUN, MOON, *PLANETS):
+        if body.name == name:
+            return body
+    raise ValueError(f"unknown body: {name!r}")
 
 
 @dataclass
@@ -110,9 +119,7 @@ class World:
         When solar_system is True, propagation includes the Sun and inner planets
         as gravitational perturbers alongside the Moon.
         """
-        from orbitsim.core.attitude import (
-            slew_toward, sas_target_dir, nose_direction,
-        )
+        from orbitsim.core.attitude import slew_toward, sas_target_dir
 
         if self.solar_system:
             from orbitsim.core.nbody import propagate_solar_system
@@ -141,39 +148,57 @@ class World:
                 if target is not None:
                     vessel.orientation = slew_toward(
                         vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
-            # 2) Translation.
-            thrusting = vessel.throttle > 0.0 and (
-                vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv)
-            if thrusting:
-                fuel_for_impulse = vessel.fuel_mass_kg
-                if vessel.unlimited_dv:
-                    fuel_for_impulse = max(fuel_for_impulse, self.UNLIMITED_FUEL_FLOOR_KG)
-                new_state, new_fuel = powered_fn(
-                    vessel.state,
-                    dry_mass_kg=vessel.dry_mass_kg,
-                    fuel_kg=fuel_for_impulse,
-                    thrust_dir_unit=nose_direction(vessel.orientation),
-                    throttle=vessel.throttle,
-                    max_thrust_n=vessel.max_thrust_n,
-                    ve_mps=vessel.exhaust_velocity_mps,
-                    dt_s=sim_dt_s,
-                )
-                vessel.state = new_state
-                if not vessel.unlimited_dv:
-                    vessel.fuel_mass_kg = new_fuel
-            elif vessel.landed_on is not None:
-                # Resting on a surface with no thrust: ride the surface point
-                # (exact and free) instead of integrating a free fall that the
-                # contact clamp would immediately undo.
-                self._ride_surface(vessel, sim_dt_s)
-                continue
+            # 2) Translation (+ 3) contact). Outside Earth's SOI, or for a tick over
+            # an hour (1e6x frames and up, jump chunks), the planets must move within
+            # the tick (see time_correct_flight_ephemeris). Short ticks near Earth keep
+            # the per-frame cache: there the frozen Sun's tidal error is negligible.
+            if self.solar_system and (
+                    sim_dt_s > self.FROZEN_EPHEMERIS_MAX_TICK_S
+                    or float(np.dot(vessel.state.r, vessel.state.r))
+                    > EARTH_SOI_M * EARTH_SOI_M):
+                from orbitsim.core.nbody import time_correct_flight_ephemeris
+                with time_correct_flight_ephemeris():
+                    self._translate(vessel, sim_dt_s, propagate_fn, powered_fn)
             else:
-                vessel.state = propagate_fn(vessel.state, sim_dt_s)
-            # 3) Surface contact: a vessel below the dominant body's surface is
-            # placed on it with the body's velocity. This is what physically
-            # bounds the integrator too — the singular r -> 0 region of the
-            # gravity field is unreachable.
-            self._resolve_surface_contact(vessel)
+                self._translate(vessel, sim_dt_s, propagate_fn, powered_fn)
+
+    def _translate(self, vessel, sim_dt_s, propagate_fn, powered_fn) -> None:
+        """Thrust or coast one tick, then resolve surface contact."""
+        from orbitsim.core.attitude import nose_direction
+
+        thrusting = vessel.throttle > 0.0 and (
+            vessel.fuel_mass_kg > 0.0 or vessel.unlimited_dv)
+        if thrusting:
+            fuel_for_impulse = vessel.fuel_mass_kg
+            if vessel.unlimited_dv:
+                fuel_for_impulse = max(fuel_for_impulse, self.UNLIMITED_FUEL_FLOOR_KG)
+            new_state, new_fuel = powered_fn(
+                vessel.state,
+                dry_mass_kg=vessel.dry_mass_kg,
+                fuel_kg=fuel_for_impulse,
+                thrust_dir_unit=nose_direction(vessel.orientation),
+                throttle=vessel.throttle,
+                max_thrust_n=vessel.max_thrust_n,
+                ve_mps=vessel.exhaust_velocity_mps,
+                dt_s=sim_dt_s,
+            )
+            vessel.state = new_state
+            if not vessel.unlimited_dv:
+                vessel.fuel_mass_kg = new_fuel
+        elif vessel.landed_on is not None:
+            # Resting on a surface with no thrust: ride the surface point
+            # (exact and free) instead of integrating a free fall that the
+            # contact clamp would immediately undo.
+            self._ride_surface(vessel, sim_dt_s)
+            return
+        else:
+            if self._coast(vessel, sim_dt_s, propagate_fn):
+                return                                     # landed during the tick
+        # 3) Surface contact: a vessel below the dominant body's surface is
+        # placed on it with the body's velocity. This is what physically
+        # bounds the integrator too — the singular r -> 0 region of the
+        # gravity field is unreachable.
+        self._resolve_surface_contact(vessel)
 
     def _contact_candidates(self, vessel):
         """(name, center_m, velocity_mps, radius_m) of bodies the vessel could
@@ -192,6 +217,93 @@ class World:
             (self.central.name, np.zeros(3), np.zeros(3), self.central.radius_m),
             (MOON.name, moon.r, moon.v, MOON.radius_m),
         ]
+
+    # Longest tick inside Earth's SOI that still reads the per-frame (frozen) planet
+    # cache [s]. Frozen-Sun error grows with tick length: at 700,000 km it was 106 /
+    # 1,060 / 10,477 km after 60 days at 1e5 / 1e6 / 1e7x.
+    FROZEN_EPHEMERIS_MAX_TICK_S = 3600.0
+
+    # A coast tick is cut where the conic contact check would go blind: at the edge of
+    # a sphere of influence it could jump into (the tick start's dominant body never
+    # sees it), and into pieces of at most this long while a Moon or planet dominates
+    # (its conic ignores Earth's pull, which a day-long jump chunk makes matter).
+    PERTURBED_PIECE_S = 3600.0
+    MIN_PIECE_S = 60.0
+
+    def _coast(self, vessel, sim_dt_s: float, propagate_fn) -> bool:
+        """Coast sim_dt_s, landing on the first surface the path reaches; True if it
+        landed (the vessel then rides that surface for the rest of the tick)."""
+        t_end = vessel.state.epoch_s + sim_dt_s
+        remaining = sim_dt_s
+        split = False
+        while remaining > 0.0:
+            piece = min(remaining, max(self._piece_limit_s(vessel, remaining),
+                                       self.MIN_PIECE_S))
+            hit = self._surface_hit_within(vessel, piece)
+            if hit is not None:
+                # The path reaches a surface inside this piece. Checking only the
+                # end position lets a long (high-warp) tick dive under the surface
+                # and climb back out: stop at the impact and land.
+                t_hit, name = hit
+                vessel.state = propagate_fn(vessel.state, t_hit)
+                self._land_on(vessel, name)
+                self._ride_surface(vessel, t_end - vessel.state.epoch_s)
+                return True
+            vessel.state = propagate_fn(vessel.state, piece)
+            split = split or piece < remaining
+            remaining -= piece
+        if split:                       # pieces summed in floating point: end exactly
+            vessel.state = StateVector(r=vessel.state.r, v=vessel.state.v,
+                                       mu=vessel.state.mu, epoch_s=t_end)
+        return False
+
+    def _piece_limit_s(self, vessel, remaining_s: float) -> float:
+        """Longest piece of this coast the contact check can vouch for [s]."""
+        from orbitsim.core.nbody import soi_entry_time_s
+        limit = soi_entry_time_s(vessel.state.r, vessel.state.v, vessel.state.epoch_s,
+                                 planets=self.solar_system)
+        if remaining_s > self.PERTURBED_PIECE_S:
+            if self.solar_system:
+                name = self._contact_candidates(vessel)[0][0]
+            else:
+                name = self._earth_moon_dominant(vessel)
+            if name not in ("Earth", "Sun"):
+                limit = min(limit, self.PERTURBED_PIECE_S)
+        return limit
+
+    def _earth_moon_dominant(self, vessel) -> str:
+        from orbitsim.core.moon import moon_state_at
+        from orbitsim.core.nbody import MOON_SOI_M
+        moon = moon_state_at(vessel.state.epoch_s)
+        inside = float(np.linalg.norm(vessel.state.r - moon.r)) < MOON_SOI_M
+        return "Moon" if inside else self.central.name
+
+    def _surface_hit_within(self, vessel, sim_dt_s: float):
+        """(t_hit_s, body name) if the coast's conic about a contact candidate
+        descends to its surface within sim_dt_s, else None (earliest wins)."""
+        from orbitsim.core.impact import surface_crossing_s
+
+        best = None
+        for name, center, velocity, radius in self._contact_candidates(vessel):
+            t = surface_crossing_s(vessel.state.r - center, vessel.state.v - velocity,
+                                   _body_named(name).mu, radius)
+            if t is not None and t < sim_dt_s and (best is None or t < best[0]):
+                best = (t, name)
+        return best
+
+    def _land_on(self, vessel, name: str) -> None:
+        """Place the vessel on name's surface below its current position, at rest
+        relative to the body (the integrated state is within metres of it)."""
+        from orbitsim.core.nbody import geocentric_body_state
+        body = geocentric_body_state(name, vessel.state.epoch_s)
+        rel = vessel.state.r - body.r
+        dist = float(np.linalg.norm(rel))
+        up = rel / dist if dist > 0.0 else np.array([0.0, 0.0, 1.0])
+        vessel.state = StateVector(
+            r=body.r + up * _body_named(name).radius_m,
+            v=np.asarray(body.v, dtype=np.float64),
+            mu=vessel.state.mu, epoch_s=vessel.state.epoch_s)
+        vessel.landed_on = name
 
     def _resolve_surface_contact(self, vessel) -> None:
         """Clamp a vessel that ended the tick below a surface onto that surface."""

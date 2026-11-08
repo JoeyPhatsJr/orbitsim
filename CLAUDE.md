@@ -206,15 +206,26 @@ don't batch many changes into one late commit. Stage specific files by **explici
   (`nbody._symplectic_adaptive`, alias `_verlet_adaptive`) is **Yoshida 4th-order**: three
   kick-drift-kick sub-steps weighted w1, w0, w1, so a step costs `EVALS_PER_STEP` (3) gravity
   evaluations. `max_safe_warp[_solar]` budget **gravity evaluations** (`budget_evals=200` per
-  frame), not steps; in deep space the 6 h max step binds, so the top warp there is
-  10,000,000×. A single giant `world.step(period)` is accurate even across periapsis
+  frame), not steps, **and** cap a frame below `nbody.soi_entry_time_s` (straight-line time
+  to the nearest SOI it's outside of), so one frame can't integrate from deep space into a
+  planet. Where every cap is long (deep space, and Earth orbits above ~570,000 km) the 12 h
+  max step (`nbody.FLIGHT_MAX_STEP_S`) binds, so the top warp there is 100,000,000×.
+  12 h / 2^(k+1) = 6 h / 2^k, so raising it from 6 h changed no step whose cap is under
+  12 h (goldens bit-identical). A single giant `world.step(period)` is accurate even across periapsis
   passages, but flight-cadence stepping remains the truest exercise of the sandbox loop. Don't
   switch the coast integrator to RK4 — it isn't symplectic and drifts on long coasts.
 - **The cap divisor is a default argument, bound at import.** `_timescale_cap_s` and
   `_solar_cap_s` take `divisor=SUBSTEP_DIVISOR`; assigning `nbody.SUBSTEP_DIVISOR` at runtime
   changes nothing. To experiment, patch their `__defaults__` (or pass `divisor=`). Powered
   flight (`core/flight.py`) and the warp caps size substeps through the same caps.
-- **Vessels land, not sink.** `World.step` resolves surface contact after each tick: below the
+- **Vessels land, not sink — or tunnel.** `World._coast` checks each piece of a coast with
+  `core.impact.surface_crossing_s` (conic time to the inbound surface crossing; Barker's
+  equation near e = 1) about the dominant body; inside the piece, the vessel coasts to it,
+  lands, and rides the surface for the rest (at 1e5× a LEO frame is ~1,700 s, enough to dive
+  under and climb back out). A tick is cut into pieces where that check would go blind: at
+  `soi_entry_time_s` (a jump chunk could enter a body the tick start's dominant body never
+  sees) and into ≤ 1 h pieces while the Moon or a planet dominates (its conic ignores Earth's
+  pull: from the Moon's SOI edge a 198 km pass read 400 km). `World.step` also resolves surface contact after each tick: below the
   dominant body's surface a vessel is clamped to it with the body's velocity and `landed_on`
   set; TWR > 1 lifts off again. This (plus the surface-radius floor in the substep caps) is
   what keeps the singular r→0 gravity region unreachable — don't remove one without the other.
@@ -271,9 +282,11 @@ don't batch many changes into one late commit. Stage specific files by **explici
   Broyden updates. About 8 evaluations, ~2 s. With an executor *every* evaluation runs on
   it, not just the FD fan-out. On the planning thread the serial ones held the GIL, and
   `node_planned` frame time rose 47%. It runs on the *prediction* propagator, so
-  the plan matches the drawn preview (198 km). The flight integrator flies that plan to a
-  147–165 km pass (3600 / 600 / 60 s chunks), safe but about 40 km low. The pre-Yoshida
-  flight crashed it.
+  the plan matches the drawn preview (198 km). Flown the app's way (cache refreshed per
+  chunk) it passes at 204.5 / 199.3 / 197.2 km in 3600 / 600 / 60 s chunks; converged truth
+  is 193.8 km (`test_flown_plan_passes_where_the_plan_says`). An earlier "147–165 km" note
+  didn't reproduce. A cache left un-refreshed for the whole coast reads 1,428 km: always
+  refresh per frame. The pre-Yoshida flight crashed it.
 - **Editing a burn: one state, two inputs.** The nudge keys (`node_edit.NUDGE_KEYS`) and the
   3D handles (`node_handles`) write `app._dv` / `app._node_epoch_s` through
   `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree (the jog
@@ -309,19 +322,30 @@ don't batch many changes into one late commit. Stage specific files by **explici
   - Every `accept()` changes the `events` field of every sandbox golden.
   - The navball has its own display region, drawn over all 2D GUI; popups must keep clear of
     it (`node_edit.menu_clear_of`).
-- **Burn radial sign (open issue):** `apply_maneuver`'s radial axis is `h_hat x v_hat`, which
-  points *toward* the central body, while SAS `RADIAL_OUT` is `v x h` (away). The planner and
-  `rtn_basis` use the same `h x v`, so burns are self-consistent; only the "radial in/out"
-  naming is inverted. Fixing it means flipping the sign in core and in stored burns.
+- **Burn radial axis is radial OUT (`v_hat x h_hat`), like SAS `RADIAL_OUT`.** It used to be
+  `h x v` (inward), so "radial in/out" were swapped. `apply_maneuver`, `maneuver_direction`,
+  `rtn_basis` and `optimize.py`'s three RTN projections must all use the same axis. Saves are
+  schema 2; a schema-1 save loads with `dv_radial_mps` negated (same physical burn). The
+  B-plane planner's forward-difference probes aren't sign-symmetric, so its Moon plans moved
+  by ≤ 0.03 m/s when the axis flipped (same on-screen result).
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.
-- **Ephemeris cache positions are constant within a frame.** The cached wrappers (`_csun`, etc.)
-  ignore their `t_s` argument when the cache is populated — this is by design (planet positions
-  don't change meaningfully over one frame's substeps). The Moon is NOT frame-frozen: it moves
+- **Ephemeris cache positions are constant within a frame — inside Earth's SOI.** The cached
+  wrappers (`_csun`, etc.) ignore their `t_s` argument when the cache is populated; near Earth
+  that's harmless (Earth and ship feel nearly the same Sun). Outside Earth's SOI the direct and
+  indirect solar terms stop cancelling: a Sun frozen for a whole frame put a deep-space coast
+  2,000,000 km off after 60 days at 1e7×. The error grows with frame length everywhere (a
+  700,000 km Earth orbit: 106 / 1,060 / 10,477 km after 60 days at 1e5 / 1e6 / 1e7×). So
+  outside Earth's SOI, and for any tick over an hour (`FROZEN_EPHEMERIS_MAX_TICK_S`),
+  `World.step` runs inside
+  `nbody.time_correct_flight_ephemeris()` (daily DE440 knots, Hermite-interpolated per substep,
+  kept across frames, fetched 64 days per vectorized `ephemeris.body_states` call, bit-identical
+  to scalar calls); `test_deep_space_coast_at_warp_follows_the_moving_planets` pins it. The Moon
+  is NOT frame-frozen: it moves
   too much at high warp, so `moon_state_at()` is evaluated per substep — from hourly DE440
   samples, cubic-Hermite interpolated (~1 cm error, ~8 µs/call; a raw Skyfield call is ~35×
-  slower). Offline or outside DE440's 1849–2150 range it falls back to
+  slower), fetched in aligned blocks of 256 knots (a 1e8× frame spans ~463). Offline or outside DE440's 1849–2150 range it falls back to
   `moon_circular_state_at`, a circle fitted to the real Moon's J2000 plane/phase (i = 20.9° to
   the **equator** — 5.1° is the inclination to the *ecliptic*; the frame here is ICRF).
 - **The real Moon is eccentric, so Lagrange points pulsate.** `earth_fixed_lagrange_points`
