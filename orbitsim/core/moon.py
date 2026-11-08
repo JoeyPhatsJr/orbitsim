@@ -83,7 +83,8 @@ def _sample(index: int) -> StateVector:
         else:
             for offset, knot in enumerate(knots):
                 _sample_cache[first + offset] = knot
-            state = _sample_cache[index]
+            # From the local block, not the shared dict: another thread may clear it.
+            state = knots[index - first]
     return state
 
 

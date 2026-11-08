@@ -81,3 +81,38 @@ def test_no_crossing_for_an_outbound_escape():
 def test_no_crossing_when_already_at_or_below_the_surface():
     r = np.array([R_EARTH - 10.0, 0.0, 0.0])
     assert surface_crossing_s(r, np.array([-10.0, 0, 0]), MU_EARTH, R_EARTH) is None
+
+
+def _near_parabolic(energy_jpkg, r0=4.0e8, rp=R_EARTH - 1.0e6):
+    """Inbound at r0 with specific energy ~energy_jpkg and periapsis ~rp."""
+    h = np.sqrt(2.0 * MU_EARTH * rp)                   # parabolic h for that periapsis
+    v2 = 2.0 * (energy_jpkg + MU_EARTH / r0)
+    vt = h / r0
+    vr = -np.sqrt(v2 - vt * vt)
+    return np.array([r0, 0.0, 0.0]), np.array([vr, vt, 0.0])
+
+
+def test_near_parabolic_crossing_is_continuous_across_escape_energy():
+    # Review of PR #19: at -1e-6 J/kg (400,000 km out) M = E - e sin E lost all its
+    # digits and the crossing came out as t = 0 (instant landing from 400,000 km).
+    rp = R_EARTH - 1.0e6
+    p = 2.0 * rp
+    nu0 = -np.arccos(p / 4.0e8 - 1.0)
+    nuc = -np.arccos(p / R_EARTH - 1.0)
+    barker = lambda nu: 0.5 * np.sqrt(p**3 / MU_EARTH) * (np.tan(nu / 2) + np.tan(nu / 2)**3 / 3)
+    t_parabola = barker(nuc) - barker(nu0)             # Barker's equation, exact at e = 1
+    for energy in (-1.0e-6, -1.0e-3, 0.0, 1.0e-3, 1.0e-6):
+        t = surface_crossing_s(*_near_parabolic(energy), MU_EARTH, R_EARTH)
+        assert t == pytest.approx(t_parabola, rel=1e-6), energy
+    for energy in (-10.0, 10.0):                       # regular branches agree nearby
+        t = surface_crossing_s(*_near_parabolic(energy), MU_EARTH, R_EARTH)
+        assert t == pytest.approx(t_parabola, rel=1e-3), energy
+
+
+def test_radial_parabolic_infall():
+    r0 = 4.0e8
+    v = -np.sqrt(2.0 * MU_EARTH / r0)                  # escape speed, straight down
+    expected = (r0**1.5 - R_EARTH**1.5) / (1.5 * np.sqrt(2.0 * MU_EARTH))
+    t = surface_crossing_s(np.array([r0, 0.0, 0.0]), np.array([v, 0.0, 0.0]),
+                           MU_EARTH, R_EARTH)
+    assert t == pytest.approx(expected, rel=1e-6)
