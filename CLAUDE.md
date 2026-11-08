@@ -207,19 +207,26 @@ don't batch many changes into one late commit. Stage specific files by **explici
   (`nbody._symplectic_adaptive`, alias `_verlet_adaptive`) is **Yoshida 4th-order**: three
   kick-drift-kick sub-steps weighted w1, w0, w1, so a step costs `EVALS_PER_STEP` (3) gravity
   evaluations. `max_safe_warp[_solar]` budget **gravity evaluations** (`budget_evals=200` per
-  frame), not steps; in deep space the 12 h max step (`nbody.FLIGHT_MAX_STEP_S`) binds, so
-  the top warp there is 100,000,000×. 12 h / 2^(k+1) = 6 h / 2^k, so raising it from 6 h
-  changed no step whose cap is under 12 h (goldens bit-identical). A single giant `world.step(period)` is accurate even across periapsis
+  frame), not steps, **and** cap a frame below `nbody.soi_entry_time_s` (straight-line time
+  to the nearest SOI it's outside of), so one frame can't integrate from deep space into a
+  planet. Where every cap is long (deep space, and Earth orbits above ~570,000 km) the 12 h
+  max step (`nbody.FLIGHT_MAX_STEP_S`) binds, so the top warp there is 100,000,000×.
+  12 h / 2^(k+1) = 6 h / 2^k, so raising it from 6 h changed no step whose cap is under
+  12 h (goldens bit-identical). A single giant `world.step(period)` is accurate even across periapsis
   passages, but flight-cadence stepping remains the truest exercise of the sandbox loop. Don't
   switch the coast integrator to RK4 — it isn't symplectic and drifts on long coasts.
 - **The cap divisor is a default argument, bound at import.** `_timescale_cap_s` and
   `_solar_cap_s` take `divisor=SUBSTEP_DIVISOR`; assigning `nbody.SUBSTEP_DIVISOR` at runtime
   changes nothing. To experiment, patch their `__defaults__` (or pass `divisor=`). Powered
   flight (`core/flight.py`) and the warp caps size substeps through the same caps.
-- **Vessels land, not sink — or tunnel.** Before a coast tick, `core.impact.surface_crossing_s`
-  gives the conic time to the inbound surface crossing; inside the tick, the vessel coasts to
-  it, lands, and rides the surface for the rest (at 1e5× a LEO frame is ~1,700 s, enough to dive
-  under and climb back out). `World.step` also resolves surface contact after each tick: below the
+- **Vessels land, not sink — or tunnel.** `World._coast` checks each piece of a coast with
+  `core.impact.surface_crossing_s` (conic time to the inbound surface crossing; Barker's
+  equation near e = 1) about the dominant body; inside the piece, the vessel coasts to it,
+  lands, and rides the surface for the rest (at 1e5× a LEO frame is ~1,700 s, enough to dive
+  under and climb back out). A tick is cut into pieces where that check would go blind: at
+  `soi_entry_time_s` (a jump chunk could enter a body the tick start's dominant body never
+  sees) and into ≤ 1 h pieces while the Moon or a planet dominates (its conic ignores Earth's
+  pull: from the Moon's SOI edge a 198 km pass read 400 km). `World.step` also resolves surface contact after each tick: below the
   dominant body's surface a vessel is clamped to it with the body's velocity and `landed_on`
   set; TWR > 1 lifts off again. This (plus the surface-radius floor in the substep caps) is
   what keeps the singular r→0 gravity region unreachable — don't remove one without the other.
@@ -329,7 +336,10 @@ don't batch many changes into one late commit. Stage specific files by **explici
   wrappers (`_csun`, etc.) ignore their `t_s` argument when the cache is populated; near Earth
   that's harmless (Earth and ship feel nearly the same Sun). Outside Earth's SOI the direct and
   indirect solar terms stop cancelling: a Sun frozen for a whole frame put a deep-space coast
-  2,000,000 km off after 60 days at 1e7×. There `World.step` runs inside
+  2,000,000 km off after 60 days at 1e7×. The error grows with frame length everywhere (a
+  700,000 km Earth orbit: 106 / 1,060 / 10,477 km after 60 days at 1e5 / 1e6 / 1e7×). So
+  outside Earth's SOI, and for any tick over an hour (`FROZEN_EPHEMERIS_MAX_TICK_S`),
+  `World.step` runs inside
   `nbody.time_correct_flight_ephemeris()` (daily DE440 knots, Hermite-interpolated per substep,
   kept across frames, fetched 64 days per vectorized `ephemeris.body_states` call, bit-identical
   to scalar calls); `test_deep_space_coast_at_warp_follows_the_moving_planets` pins it. The Moon

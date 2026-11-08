@@ -148,11 +148,14 @@ class World:
                 if target is not None:
                     vessel.orientation = slew_toward(
                         vessel.orientation, target, vessel.max_turn_rate_radps, sim_dt_s)
-            # 2) Translation (+ 3) contact). Outside Earth's SOI the planets must
-            # move within the tick (see time_correct_flight_ephemeris); inside it
-            # the per-frame cache is kept, so near-Earth flight is unchanged.
-            if self.solar_system and float(np.dot(vessel.state.r, vessel.state.r)) \
-                    > EARTH_SOI_M * EARTH_SOI_M:
+            # 2) Translation (+ 3) contact). Outside Earth's SOI, or for a tick over
+            # an hour (1e6x frames and up, jump chunks), the planets must move within
+            # the tick (see time_correct_flight_ephemeris). Short ticks near Earth keep
+            # the per-frame cache: there the frozen Sun's tidal error is negligible.
+            if self.solar_system and (
+                    sim_dt_s > self.FROZEN_EPHEMERIS_MAX_TICK_S
+                    or float(np.dot(vessel.state.r, vessel.state.r))
+                    > EARTH_SOI_M * EARTH_SOI_M):
                 from orbitsim.core.nbody import time_correct_flight_ephemeris
                 with time_correct_flight_ephemeris():
                     self._translate(vessel, sim_dt_s, propagate_fn, powered_fn)
@@ -189,17 +192,8 @@ class World:
             self._ride_surface(vessel, sim_dt_s)
             return
         else:
-            hit = self._surface_hit_within(vessel, sim_dt_s)
-            if hit is not None:
-                # The path reaches a surface inside this tick. Checking only the
-                # end position lets a long (high-warp) tick dive under the
-                # surface and climb back out: stop at the impact and land.
-                t_hit, name = hit
-                vessel.state = propagate_fn(vessel.state, t_hit)
-                self._land_on(vessel, name)
-                self._ride_surface(vessel, sim_dt_s - t_hit)
-                return
-            vessel.state = propagate_fn(vessel.state, sim_dt_s)
+            if self._coast(vessel, sim_dt_s, propagate_fn):
+                return                                     # landed during the tick
         # 3) Surface contact: a vessel below the dominant body's surface is
         # placed on it with the body's velocity. This is what physically
         # bounds the integrator too — the singular r -> 0 region of the
@@ -223,6 +217,66 @@ class World:
             (self.central.name, np.zeros(3), np.zeros(3), self.central.radius_m),
             (MOON.name, moon.r, moon.v, MOON.radius_m),
         ]
+
+    # Longest tick inside Earth's SOI that still reads the per-frame (frozen) planet
+    # cache [s]. Frozen-Sun error grows with tick length: at 700,000 km it was 106 /
+    # 1,060 / 10,477 km after 60 days at 1e5 / 1e6 / 1e7x.
+    FROZEN_EPHEMERIS_MAX_TICK_S = 3600.0
+
+    # A coast tick is cut where the conic contact check would go blind: at the edge of
+    # a sphere of influence it could jump into (the tick start's dominant body never
+    # sees it), and into pieces of at most this long while a Moon or planet dominates
+    # (its conic ignores Earth's pull, which a day-long jump chunk makes matter).
+    PERTURBED_PIECE_S = 3600.0
+    MIN_PIECE_S = 60.0
+
+    def _coast(self, vessel, sim_dt_s: float, propagate_fn) -> bool:
+        """Coast sim_dt_s, landing on the first surface the path reaches; True if it
+        landed (the vessel then rides that surface for the rest of the tick)."""
+        t_end = vessel.state.epoch_s + sim_dt_s
+        remaining = sim_dt_s
+        split = False
+        while remaining > 0.0:
+            piece = min(remaining, max(self._piece_limit_s(vessel, remaining),
+                                       self.MIN_PIECE_S))
+            hit = self._surface_hit_within(vessel, piece)
+            if hit is not None:
+                # The path reaches a surface inside this piece. Checking only the
+                # end position lets a long (high-warp) tick dive under the surface
+                # and climb back out: stop at the impact and land.
+                t_hit, name = hit
+                vessel.state = propagate_fn(vessel.state, t_hit)
+                self._land_on(vessel, name)
+                self._ride_surface(vessel, t_end - vessel.state.epoch_s)
+                return True
+            vessel.state = propagate_fn(vessel.state, piece)
+            split = split or piece < remaining
+            remaining -= piece
+        if split:                       # pieces summed in floating point: end exactly
+            vessel.state = StateVector(r=vessel.state.r, v=vessel.state.v,
+                                       mu=vessel.state.mu, epoch_s=t_end)
+        return False
+
+    def _piece_limit_s(self, vessel, remaining_s: float) -> float:
+        """Longest piece of this coast the contact check can vouch for [s]."""
+        from orbitsim.core.nbody import soi_entry_time_s
+        limit = soi_entry_time_s(vessel.state.r, vessel.state.v, vessel.state.epoch_s,
+                                 planets=self.solar_system)
+        if remaining_s > self.PERTURBED_PIECE_S:
+            if self.solar_system:
+                name = self._contact_candidates(vessel)[0][0]
+            else:
+                name = self._earth_moon_dominant(vessel)
+            if name not in ("Earth", "Sun"):
+                limit = min(limit, self.PERTURBED_PIECE_S)
+        return limit
+
+    def _earth_moon_dominant(self, vessel) -> str:
+        from orbitsim.core.moon import moon_state_at
+        from orbitsim.core.nbody import MOON_SOI_M
+        moon = moon_state_at(vessel.state.epoch_s)
+        inside = float(np.linalg.norm(vessel.state.r - moon.r)) < MOON_SOI_M
+        return "Moon" if inside else self.central.name
 
     def _surface_hit_within(self, vessel, sim_dt_s: float):
         """(t_hit_s, body name) if the coast's conic about a contact candidate

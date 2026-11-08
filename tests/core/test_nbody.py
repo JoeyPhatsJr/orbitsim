@@ -468,12 +468,16 @@ def test_solar_max_warp_reaches_the_top_step_in_deep_space():
     # brings it back (39 steps = 117 evaluations).
     from orbitsim.sim.clock import SimClock
 
+    # A heliocentric circular orbit 0.67 AU from the Sun: no SOI within a frame's
+    # reach (the cap also stops a frame from crossing into one).
+    sun = nb._csun(0.0)
     state = StateVector(
-        r=np.array([1.0e11, 0.0, 0.0]),
-        v=np.array([0.0, 3.0e4, 0.0]),
+        r=sun.r + np.array([0.0, 1.0e11, 0.0]),
+        v=sun.v + np.array([-np.sqrt(nb.MU_SUN / 1.0e11), 0.0, 0.0]),
         mu=MU_EARTH,
     )
     assert nb.FLIGHT_MAX_STEP_S == 12.0 * 3600.0
+    assert nb.soi_entry_time_s(state.r, state.v, 0.0) > 1.0e8 / 60.0
     assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 100_000_000
 
 

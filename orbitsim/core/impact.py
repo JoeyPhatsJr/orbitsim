@@ -11,6 +11,27 @@ from orbitsim.core.nbody import _cross3, _norm3
 _TWO_PI = 2.0 * np.pi
 
 
+# Below this |energy| r / mu the anomaly formulas lose their digits (E ~ 2 pi or F ~ 0
+# with e ~ 1: M = E - e sin E cancels), so the path is treated as a parabola. Treating
+# that little energy as zero changes the time by ~1e-7 relative.
+_PARABOLIC_REL_ENERGY = 1e-7
+
+
+def _parabolic_crossing_s(r, rdotv, h2, mu, radius_m):
+    """Time to fall to radius_m on a parabola (Barker's equation; radial if h = 0)."""
+    if rdotv >= 0.0:
+        return None                                    # outbound: it escapes
+    p = h2 / mu
+    if p <= 0.0:
+        # Radial parabola: r^(3/2) shrinks at (3/2) sqrt(2 mu) per second.
+        return float((r**1.5 - radius_m**1.5) / (1.5 * np.sqrt(2.0 * mu)))
+
+    def t_of(radius):                                  # time since periapsis (< 0 inbound)
+        d = -np.tan(0.5 * np.arccos(np.clip(p / radius - 1.0, -1.0, 1.0)))
+        return 0.5 * np.sqrt(p**3 / mu) * (d + d**3 / 3.0)
+    return float(t_of(radius_m) - t_of(r))
+
+
 def surface_crossing_s(r_rel_m, v_rel_mps, mu: float, radius_m: float):
     """Time [s] until the conic through (r, v) first descends to radius_m.
 
@@ -32,9 +53,11 @@ def surface_crossing_s(r_rel_m, v_rel_mps, mu: float, radius_m: float):
     energy = 0.5 * float(np.dot(v_vec, v_vec)) - mu / r
     e = float(np.sqrt(max(0.0, 1.0 + 2.0 * energy * h2 / mu**2)))
     rp = h2 / mu / (1.0 + e)
-    if rp >= radius_m or energy == 0.0:
+    if rp >= radius_m:
         return None
     rdotv = float(np.dot(r_vec, v_vec))
+    if abs(energy) * r / mu < _PARABOLIC_REL_ENERGY:
+        return _parabolic_crossing_s(r, rdotv, h2, mu, radius_m)
     a = -mu / (2.0 * energy)
     if energy < 0.0:                                   # ellipse (incl. radial)
         n = np.sqrt(mu / a**3)

@@ -728,13 +728,47 @@ def osculating_elements_solar(state, t_s):
     return state_to_elements(rel)
 
 
+def soi_entry_time_s(r_m, v_mps, t_s, planets: bool = True) -> float:
+    """Lower bound [s] on when (r, v) can enter the SOI of a body it is outside of.
+
+    Straight-line distance to the SOI over the relative speed, in any direction, so
+    it never overestimates. Covers the Moon, Earth (the frame origin) and, with
+    ``planets``, the seven other planets; inf when no SOI is reachable this way.
+    A frame (or tick) shorter than this cannot jump into a body it never sees.
+    """
+    r = np.asarray(r_m, dtype=np.float64)
+    v = np.asarray(v_mps, dtype=np.float64)
+    bodies = [(moon_state_at(t_s), MOON_SOI_M)]
+    origin = np.zeros(3)
+    bodies.append((None, EARTH_SOI_M))
+    if planets:
+        for state_fn, _mu, soi, _radius in _SOLAR_CAP_BODIES[1:]:
+            bodies.append((state_fn(t_s), soi))
+    best = float("inf")
+    for st, soi in bodies:
+        if st is None:
+            dr, dv = r - origin, v
+        else:
+            dr, dv = r - st.r, v - st.v
+        gap = _norm3(dr) - soi
+        if gap <= 0.0:
+            continue                       # already inside this one
+        speed = _norm3(dv)
+        if speed > 0.0:
+            best = min(best, gap / speed)
+    return best
+
+
 def max_safe_warp_solar(state, t_s, warp_steps, real_dt_s=1 / 60, budget_evals=200):
     """Largest warp whose per-frame integration stays within budget_evals gravity
-    evaluations (solar system; a coast step costs EVALS_PER_STEP)."""
+    evaluations (solar system; a coast step costs EVALS_PER_STEP), and whose frame
+    is too short to cross into a sphere of influence (soi_entry_time_s): a 1e8x
+    frame from deep space would otherwise integrate straight into a planet."""
+    entry_s = soi_entry_time_s(state.r, state.v, t_s)
     allowed = [w for w in warp_steps
                if _solar_system_substeps(state, real_dt_s * w, FLIGHT_MAX_STEP_S)
                * EVALS_PER_STEP
-               <= budget_evals]
+               <= budget_evals and real_dt_s * w <= entry_s]
     return max(allowed) if allowed else min(warp_steps)
 
 
