@@ -275,9 +275,11 @@ don't batch many changes into one late commit. Stage specific files by **explici
   Broyden updates. About 8 evaluations, ~2 s. With an executor *every* evaluation runs on
   it, not just the FD fan-out. On the planning thread the serial ones held the GIL, and
   `node_planned` frame time rose 47%. It runs on the *prediction* propagator, so
-  the plan matches the drawn preview (198 km). The flight integrator flies that plan to a
-  147–165 km pass (3600 / 600 / 60 s chunks), safe but about 40 km low. The pre-Yoshida
-  flight crashed it.
+  the plan matches the drawn preview (198 km). Flown the app's way (cache refreshed per
+  chunk) it passes at 204.5 / 199.3 / 197.2 km in 3600 / 600 / 60 s chunks; converged truth
+  is 193.8 km (`test_flown_plan_passes_where_the_plan_says`). An earlier "147–165 km" note
+  didn't reproduce. A cache left un-refreshed for the whole coast reads 1,428 km: always
+  refresh per frame. The pre-Yoshida flight crashed it.
 - **Editing a burn: one state, two inputs.** The nudge keys (`node_edit.NUDGE_KEYS`) and the
   3D handles (`node_handles`) write `app._dv` / `app._node_epoch_s` through
   `maneuver_editor.set_dv` / `set_node_epoch` / `place_node`, so they always agree (the jog

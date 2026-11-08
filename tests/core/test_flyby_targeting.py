@@ -22,7 +22,8 @@ from orbitsim.core.optimize import intercept_node
 from orbitsim.core.state import StateVector
 
 # Measured online (DE440) value of the app's "I" seed for the default sandbox LEO.
-SEED = ManeuverNode(3669.3721983198875, 3129.318767185485, -9.7657275283089, -38.144927341423305)
+# (Radial is + out since the radial-sign fix; it was measured as -38.14 on the old axis.)
+SEED = ManeuverNode(3669.3721983198875, 3129.318767185485, -9.7657275283089, 38.144927341423305)
 
 # Post-burn state of the centre-aimed Moon intercept (tests/render/test_preview_accuracy.py).
 PINNED = StateVector(
@@ -87,6 +88,7 @@ def test_seed_is_the_measured_intercept(seed):
         pytest.skip("SEED was measured with DE440")
     assert seed.epoch_s == pytest.approx(SEED.epoch_s, abs=1e-6)
     assert seed.dv_prograde_mps == pytest.approx(SEED.dv_prograde_mps, abs=1e-6)
+    assert seed.dv_radial_mps == pytest.approx(SEED.dv_radial_mps, abs=1e-6)
 
 
 def test_moon_flyby_node_reaches_200_km(seed, plan):
@@ -146,3 +148,32 @@ def test_with_an_executor_no_evaluation_runs_on_the_calling_thread(monkeypatch, 
         pooled = moon_flyby_node(_leo(), seed, executor=ex)
     assert threads and caller not in threads
     assert pooled.node == plan.node
+
+
+def _flown_pe_alt(post, chunk_s):
+    """Fly like the app: flight propagator in frame-sized chunks, the ephemeris cache
+    refreshed before each one; conic Moon Pe at the closest chunk sample."""
+    cur, prev, prev_d = post, None, None
+    for _ in range(int(20 * 86400 / chunk_s)):
+        m = moon_state_at(cur.epoch_s)
+        d = float(np.linalg.norm(cur.r - m.r))
+        if prev_d is not None and d > prev_d and prev_d < nb.MOON_SOI_M:
+            mp = moon_state_at(prev.epoch_s)
+            return conic_periapsis(prev.r - mp.r, prev.v - mp.v, MU_MOON).radius_m - R_MOON
+        prev, prev_d = cur, d
+        nb.refresh_ephemeris_cache(cur.epoch_s)
+        cur = nb.propagate_solar_system(cur, chunk_s)
+    raise AssertionError("no Moon pass in 20 days")
+
+
+def test_flown_plan_passes_where_the_plan_says(seed, plan):
+    # The planner aims with the prediction propagator; flight must fly that plan to
+    # the same pass. Measured (2026-11-07): plan 198.0 km; flown 204.5 / 199.3 /
+    # 197.2 km in 3600 / 600 / 60 s chunks; converged truth 193.8 km.
+    nb.refresh_ephemeris_cache(0.0)
+    if not nb.ephemeris_available():
+        pytest.skip("measured with DE440")
+    planned = plan.moon_pass.periapsis_radius_m - R_MOON
+    post = apply_maneuver(_leo(), plan.node)
+    for chunk_s in (3600.0, 600.0):
+        assert abs(_flown_pe_alt(post, chunk_s) - planned) <= 15e3, chunk_s
