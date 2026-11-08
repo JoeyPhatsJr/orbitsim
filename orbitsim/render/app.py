@@ -180,6 +180,7 @@ class OrbitApp(ShowBase):
                 )
                 self._grid_executor = None
             self._planning_future = None      # in-flight intercept plan (thread future)
+            self._planning_target_name = None  # the target that plan is for
             self._porkchop_future = None      # in-flight porkchop grid (thread future)
             self._porkchop_render = None      # (dep_times, tof_grid, label) for on-poll draw
             self._porkchop_request = 0

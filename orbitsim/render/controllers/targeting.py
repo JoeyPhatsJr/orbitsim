@@ -281,6 +281,7 @@ class Targeting:
         # departure would be gone when the plan lands. Plan at 1x (like coasts/burns).
         self.app.clock.warp = 1.0
         self.app._flash_message(f"Planning {self.app._target.name} transfer...")
+        self.app._planning_target_name = self.app._target.name
         self.app._planning_future = self.app._planning_executor.submit(job)
 
     def _apply_planned_node(self, result) -> None:
@@ -304,13 +305,17 @@ class Targeting:
             self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
             return
         alt_km = (result.moon_pass.periapsis_radius_m - R_MOON) / 1000.0
+        aim_km = FLYBY_TARGET_ALT_M / 1000.0
         if result.converged:
             self.app._flash_message(
                 f"Moon transfer planned · Pe {alt_km:,.0f} km · dV {node.magnitude_mps:,.0f} m/s")
+        elif alt_km < 0.0:
+            self.app._flash_message(
+                f"Moon transfer planned · it impacts the Moon (couldn't reach {aim_km:,.0f} km)")
         else:
             self.app._flash_message(
                 f"Moon transfer planned · closest Pe {alt_km:,.0f} km "
-                f"(couldn't reach {FLYBY_TARGET_ALT_M / 1000.0:,.0f} km)")
+                f"(couldn't reach {aim_km:,.0f} km)")
 
     def poll_planning(self) -> None:
         """Apply an intercept plan once its background job finishes."""
@@ -327,6 +332,11 @@ class Targeting:
             import traceback
             traceback.print_exc()
             self.app._flash_message("Planning failed")
+            return
+        target = getattr(self.app, "_target", None)
+        if target is None or target.name != getattr(self.app, "_planning_target_name", None):
+            # Planning takes seconds; a burn aimed at the old target is wrong now.
+            self.app._flash_message("Target changed — plan dropped")
             return
         self._apply_planned_node(result)
 

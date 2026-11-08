@@ -101,3 +101,42 @@ def test_fresh_plan_is_installed():
     Targeting(app)._apply_planned_node(_plan(4000.0 + 60.0))
     assert ("epoch", 4060.0) in edits_of(app)
     assert toasts and toasts[0].startswith("Moon transfer planned · Pe 198 km")
+
+
+def _plan_moon_with(monkeypatch, plan):
+    import orbitsim.core.optimize as opt
+    import orbitsim.core.flyby_targeting as ft
+    monkeypatch.setattr(opt, "intercept_node", lambda *a, **k: plan.node)
+    monkeypatch.setattr(ft, "moon_flyby_node", lambda *a, **k: plan)
+
+
+def test_plan_for_a_target_no_longer_selected_is_dropped(monkeypatch):
+    # The planner runs for seconds; if the player switches or clears the target
+    # meanwhile, the burn it returns aims at something else. Don't install it.
+    app, toasts = _fake_app(now_s=4000.0)
+    _plan_moon_with(monkeypatch, _plan(4000.0 + 60.0))
+    t = Targeting(app)
+    t.plan_intercept()
+    app._target = None                       # cleared while planning
+    t.poll_planning()
+    assert edits_of(app) == []
+    assert toasts[-1] == "Target changed — plan dropped"
+
+
+def test_plan_for_the_same_target_is_still_installed(monkeypatch):
+    app, toasts = _fake_app(now_s=4000.0)
+    _plan_moon_with(monkeypatch, _plan(4000.0 + 60.0))
+    t = Targeting(app)
+    t.plan_intercept()
+    app._target = MoonTarget()               # re-selected: same body
+    t.poll_planning()
+    assert ("epoch", 4060.0) in edits_of(app)
+
+
+def test_unconverged_plan_that_hits_the_moon_says_impact():
+    app, toasts = _fake_app(now_s=4000.0)
+    node = ManeuverNode(4060.0, 3131.0, -25.0, 81.0)
+    plan = FlybyPlan(node, MoonPass(R_MOON - 30e3, 4060.0 + 1e6, np.zeros(2), 1000.0, True),
+                     False)
+    Targeting(app)._apply_planned_node(plan)
+    assert "impact" in toasts[-1].lower() and "Pe -" not in toasts[-1], toasts[-1]
