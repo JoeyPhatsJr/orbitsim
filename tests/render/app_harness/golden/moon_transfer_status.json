@@ -116,7 +116,7 @@
  "vessel": {
   "fuel_mass_kg": 8000.0,
   "nodes": [
-   "ManeuverNode(epoch_s=3669.374313045672, dv_prograde_mps=3131.483775208199, dv_normal_mps=-25.09668586054124, dv_radial_mps=-81.27834880056986)"
+   "ManeuverNode(epoch_s=3669.374313045672, dv_prograde_mps=3131.484090297134, dv_normal_mps=-25.08702898308733, dv_radial_mps=81.25172956034726)"
   ],
   "orientation": [
    1.0,

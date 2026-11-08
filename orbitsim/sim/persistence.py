@@ -18,7 +18,10 @@ from orbitsim.core.state import StateVector
 from orbitsim.sim.clock import SimClock
 from orbitsim.sim.world import Vessel, World
 
-SCHEMA_VERSION = 1
+# 2: dv_radial_mps is along the radial-OUT axis (v x h). Schema 1 stored it on the
+# old inward axis (h x v); loading one negates it, so the burn pushes the same way.
+SCHEMA_VERSION = 2
+_READABLE_SCHEMAS = (1, 2)
 
 BODY_REGISTRY = {
     "Sun": SUN, "Earth": EARTH, "Moon": MOON, "Mercury": MERCURY,
@@ -73,7 +76,7 @@ def save_scenario(world: World, clock: SimClock, path) -> None:
         json.dump(data, f, indent=2)
 
 
-def _vessel_from_dict(d: dict, mu: float) -> Vessel:
+def _vessel_from_dict(d: dict, mu: float, radial_sign: float = 1.0) -> Vessel:
     try:
         state = StateVector(
             r=np.array(d["r_m"], dtype=np.float64),
@@ -99,7 +102,7 @@ def _vessel_from_dict(d: dict, mu: float) -> Vessel:
                 epoch_s=n["epoch_s"],
                 dv_prograde_mps=n["dv_prograde_mps"],
                 dv_normal_mps=n["dv_normal_mps"],
-                dv_radial_mps=n["dv_radial_mps"],
+                dv_radial_mps=radial_sign * n["dv_radial_mps"],
             ))
     except KeyError as exc:
         raise ValueError(f"Save file missing required field: {exc}") from exc
@@ -118,11 +121,13 @@ def load_scenario(path) -> tuple[World, SimClock]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Malformed save file: {exc}") from exc
 
-    if data.get("schema") != SCHEMA_VERSION:
+    schema = data.get("schema")
+    if schema not in _READABLE_SCHEMAS:
         raise ValueError(
-            f"Unsupported save schema {data.get('schema')!r}; "
-            f"expected {SCHEMA_VERSION}"
+            f"Unsupported save schema {schema!r}; "
+            f"expected one of {_READABLE_SCHEMAS}"
         )
+    radial_sign = -1.0 if schema == 1 else 1.0
 
     name = data.get("central")
     if name not in BODY_REGISTRY:
@@ -130,7 +135,7 @@ def load_scenario(path) -> tuple[World, SimClock]:
     central = BODY_REGISTRY[name]
 
     try:
-        vessels = [_vessel_from_dict(v, central.mu) for v in data["vessels"]]
+        vessels = [_vessel_from_dict(v, central.mu, radial_sign) for v in data["vessels"]]
         clock = SimClock(sim_time_s=data["sim_time_s"], warp=data["warp"])
     except KeyError as exc:
         raise ValueError(f"Save file missing required field: {exc}") from exc

@@ -81,7 +81,7 @@ def test_escape_preview_is_finite_and_fast_enough(de440, monkeypatch):
 # where it read a 190 km pass). Converged truth today (prediction propagator at divisor
 # 3,000, 3600 s chunks, conic Pe; re-measured 2026-11-05): -30.4 km, a grazing impact.
 # The preview's 256 samples are 2.8 h apart; the old parabola through them read 3,298 km.
-LOW_PASS_NODE_DV = (3131.43288823, -27.139359, -87.11806646)
+LOW_PASS_NODE_DV = (3131.43288823, -27.139359, 87.11806646)   # radial is + out since the sign fix
 LOW_PASS_NODE_EPOCH_S = 3669.3721983198875
 REF_LOW_PASS_ALT_M = -30.4e3
 

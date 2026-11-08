@@ -313,10 +313,12 @@ don't batch many changes into one late commit. Stage specific files by **explici
   - Every `accept()` changes the `events` field of every sandbox golden.
   - The navball has its own display region, drawn over all 2D GUI; popups must keep clear of
     it (`node_edit.menu_clear_of`).
-- **Burn radial sign (open issue):** `apply_maneuver`'s radial axis is `h_hat x v_hat`, which
-  points *toward* the central body, while SAS `RADIAL_OUT` is `v x h` (away). The planner and
-  `rtn_basis` use the same `h x v`, so burns are self-consistent; only the "radial in/out"
-  naming is inverted. Fixing it means flipping the sign in core and in stored burns.
+- **Burn radial axis is radial OUT (`v_hat x h_hat`), like SAS `RADIAL_OUT`.** It used to be
+  `h x v` (inward), so "radial in/out" were swapped. `apply_maneuver`, `maneuver_direction`,
+  `rtn_basis` and `optimize.py`'s three RTN projections must all use the same axis. Saves are
+  schema 2; a schema-1 save loads with `dv_radial_mps` negated (same physical burn). The
+  B-plane planner's forward-difference probes aren't sign-symmetric, so its Moon plans moved
+  by ≤ 0.03 m/s when the axis flipped (same on-screen result).
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.

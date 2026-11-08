@@ -114,7 +114,7 @@ def test_load_rejects_malformed_json(tmp_path):
 def test_load_rejects_missing_field(tmp_path):
     # Valid schema + body, but a vessel is missing 'fuel_mass_kg'.
     data = {
-        "schema": 1, "kind": "sandbox", "central": "Earth",
+        "schema": 2, "kind": "sandbox", "central": "Earth",
         "sim_time_s": 0.0, "warp": 1.0,
         "vessels": [{
             "name": "X", "r_m": [7.0e6, 0.0, 0.0], "v_mps": [0.0, 7546.0, 0.0],
@@ -171,3 +171,24 @@ def test_solar_system_defaults_false_on_old_save(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     w2, _ = load_scenario(str(path))
     assert w2.solar_system is False
+
+
+def test_new_saves_use_schema_two():
+    from orbitsim.sim.persistence import SCHEMA_VERSION
+    assert SCHEMA_VERSION == 2
+
+
+def test_schema_one_save_keeps_the_same_physical_burn(tmp_path):
+    # Schema 1 stored radial delta-V on the old inward axis (h x v); schema 2 uses
+    # the radial-out axis (v x h). A schema-1 node loads with its radial negated, so
+    # it pushes exactly the way it did when saved.
+    world, clock = _sample_world()
+    path = tmp_path / "old.json"
+    save_scenario(world, clock, path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["schema"] = 1
+    path.write_text(json.dumps(data), encoding="utf-8")
+    loaded, _clock = load_scenario(path)
+    radials = [n.dv_radial_mps for n in loaded.vessels[0].nodes]
+    assert radials == [-1.5, -4.0]
+    assert [n.dv_prograde_mps for n in loaded.vessels[0].nodes] == [50.0, -12.0]
