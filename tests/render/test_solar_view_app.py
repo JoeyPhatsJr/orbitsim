@@ -59,7 +59,7 @@ def test_solar_orbits_rebuild_per_bucket_not_on_zoom():
         scale_ok = math.isclose(hooks.solar_orbit_frame_scale(app),
                                 1.0e9 / app.transform.scale_m_per_unit, rel_tol=1e-6)  # NodePath scale is float32
         app.clock.sim_time_s += 30 * 86400.0
-        h.step(1)
+        h.step(30)                 # rebuilds wait SOLAR_ORBIT_MIN_REBUILD_S (0.5 s) of real time
         keys2 = keys()
         print("RESULT " + json.dumps([keys0, keys1, scale_ok, keys2]))
     """)
@@ -167,24 +167,16 @@ def test_names_keep_clear_of_the_hud():
     # sweep really tests it), and with them no shown name overlaps the HUD.
     from orbitsim.render.label_layout import rects_overlap
     results = _probe("""
-        from orbitsim.render.label_layout import render2d_rect_px
         h.step(5)
         out = []
         for d in (3.0e11, 2.0e12, 4.0e12):
             for i in range(21):
-                app.rig.azimuth = app.rig.target_azimuth = 0.3 * i
-                app.rig.set_distance(d)
+                hooks.set_solar_camera(app, 0.3 * i, d)
                 h.step(2)
-                lo, hi = app.hud.text.get_tight_bounds(app.render2d)
-                hud = render2d_rect_px((lo.x, lo.z), (hi.x, hi.z),
-                                       (app.win.get_fb_x_size(), app.win.get_fb_y_size()))
                 with_obstacles = hooks.solar_label_rects(app)
-                app.solar_view._ui_obstacles_px = lambda: []
-                app.solar_view.frame_markers_and_labels(None)
-                without = hooks.solar_label_rects(app)
-                del app.solar_view._ui_obstacles_px
-                app.solar_view.frame_markers_and_labels(None)
-                out.append([with_obstacles, without, [hud] + app.readouts.panel_rects_px()])
+                without = hooks.solar_label_rects_ignoring_hud(app)
+                out.append([with_obstacles, without,
+                            [hooks.hud_text_rect_px(app)] + app.readouts.panel_rects_px()])
         print("RESULT " + json.dumps(out))
     """)
 
@@ -195,3 +187,20 @@ def test_names_keep_clear_of_the_hud():
     assert any(on_hud(without, hud_rects) for _, without, hud_rects in results)
     for with_obstacles, _, hud_rects in results:
         assert on_hud(with_obstacles, hud_rects) == [], (with_obstacles, hud_rects)
+
+
+def test_max_warp_rebuilds_the_orbits_a_few_times_a_second_not_every_frame():
+    rebuilds = _probe("""
+        h.step(5)
+        app.clock.warp = 1.0e8
+        h.step(2)
+        keys = {k: n.get_key() for k, n in hooks.solar_orbit_nodes(app).items()}
+        count = 0
+        for _ in range(120):                       # 2 s of frames
+            h.step(1)
+            now = {k: n.get_key() for k, n in hooks.solar_orbit_nodes(app).items()}
+            count += now != keys
+            keys = now
+        print("RESULT " + json.dumps(count))
+    """)
+    assert 1 <= rebuilds <= 5, rebuilds

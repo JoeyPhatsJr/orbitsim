@@ -50,7 +50,6 @@ class Targeting:
         # Earth-only Kepler closest approach: the "checking..." estimate (throttled).
         self.app._ca_recompute_t = 0.0
         self.app._ca = None
-        self.app._ca_traj = None
         self.app._ca_abs_epoch = 0.0
         self.app._aim_status = None             # AimStatus shown in the target panel
         self.app._aim_ghost_np = None           # "{Target} when you arrive" sphere
@@ -145,19 +144,27 @@ class Targeting:
         w, h = self.app.win.get_x_size(), self.app.win.get_y_size()
         return ((proj.x * 0.5 + 0.5) * w, (proj.y * 0.5 + 0.5) * h)
 
+    def render_to_clip(self) -> np.ndarray:
+        """Row-vector 4x4 render -> clip matrix for this frame's camera and lens."""
+        def m(lm):
+            return np.array([tuple(lm.get_row(r)) for r in range(4)], dtype=np.float64)
+        return m(self.app.render.get_mat(self.app.cam)) @ m(
+            self.app.camLens.get_projection_mat())
+
+    def project_render_px(self, points_render):
+        """Render-space points, shape (N, 3), to bottom-up window pixels (N, 2); NaN rows
+        are behind the camera."""
+        from orbitsim.render.picking import project_points_px
+        return project_points_px(np.asarray(points_render, dtype=np.float64),
+                                 self.render_to_clip(),
+                                 self.app.win.get_x_size(), self.app.win.get_y_size())
+
     def project_px(self, points_m):
         """Geocentric positions [m], shape (N, 3), to bottom-up pixels (N, 2); NaN rows
         are behind the camera. One matrix pass (matches marker_px to ~3e-5 px)."""
-        from orbitsim.render.picking import project_points_px
         pts = (np.asarray(points_m, dtype=np.float64) - self.app.transform.origin_m) \
             / self.app.transform.scale_m_per_unit
-
-        def m(lm):
-            return np.array([[lm.get_cell(r, c) for c in range(4)] for r in range(4)])
-        render_to_clip = m(self.app.render.get_mat(self.app.cam)) @ m(
-            self.app.camLens.get_projection_mat())
-        return project_points_px(pts, render_to_clip,
-                                 self.app.win.get_x_size(), self.app.win.get_y_size())
+        return self.project_render_px(pts)
 
     def pick_body_at(self, click_px) -> bool:
         """Target the body under ``click_px`` (22 px), as a tap on its marker; True on a hit."""
@@ -217,7 +224,6 @@ class Targeting:
         if isinstance(self.app._target, PlanetTarget):
             from orbitsim.core.optimize import interplanetary_departure_node_by_name
             from orbitsim.core.planets import A_EARTH, _N_EARTH
-            from orbitsim.core.constants import MU_SUN, R_MOON
             target_a = {
                 "Mercury": A_MERCURY, "Venus": A_VENUS, "Mars": A_MARS,
                 "Jupiter": A_JUPITER, "Saturn": A_SATURN,
@@ -275,6 +281,7 @@ class Targeting:
         # departure would be gone when the plan lands. Plan at 1x (like coasts/burns).
         self.app.clock.warp = 1.0
         self.app._flash_message(f"Planning {self.app._target.name} transfer...")
+        self.app._planning_target_name = self.app._target.name
         self.app._planning_future = self.app._planning_executor.submit(job)
 
     def _apply_planned_node(self, result) -> None:
@@ -298,13 +305,17 @@ class Targeting:
             self.app._flash_message(f"Intercept planned (dV {node.magnitude_mps:,.0f} m/s)")
             return
         alt_km = (result.moon_pass.periapsis_radius_m - R_MOON) / 1000.0
+        aim_km = FLYBY_TARGET_ALT_M / 1000.0
         if result.converged:
             self.app._flash_message(
                 f"Moon transfer planned · Pe {alt_km:,.0f} km · dV {node.magnitude_mps:,.0f} m/s")
+        elif alt_km < 0.0:
+            self.app._flash_message(
+                f"Moon transfer planned · it impacts the Moon (couldn't reach {aim_km:,.0f} km)")
         else:
             self.app._flash_message(
                 f"Moon transfer planned · closest Pe {alt_km:,.0f} km "
-                f"(couldn't reach {FLYBY_TARGET_ALT_M / 1000.0:,.0f} km)")
+                f"(couldn't reach {aim_km:,.0f} km)")
 
     def poll_planning(self) -> None:
         """Apply an intercept plan once its background job finishes."""
@@ -321,6 +332,11 @@ class Targeting:
             import traceback
             traceback.print_exc()
             self.app._flash_message("Planning failed")
+            return
+        target = getattr(self.app, "_target", None)
+        if target is None or target.name != getattr(self.app, "_planning_target_name", None):
+            # Planning takes seconds; a burn aimed at the old target is wrong now.
+            self.app._flash_message("Target changed — plan dropped")
             return
         self._apply_planned_node(result)
 
@@ -379,7 +395,8 @@ class Targeting:
             encounters, approach = app._preview_encounters, app._preview_approach
         else:
             approach = app._traj_approach[0]
-            exact = approach is not None and approach.body_name == name
+            exact = (approach is not None and approach.body_name == name
+                     and app.trajectory_view.live_line_current(0))
             encounters = app._traj_encounters[0] or []
         from orbitsim.render.aim_status import aim_status
         status = aim_status(name, encounters, approach, exact, estimate_m)
@@ -456,7 +473,6 @@ class Targeting:
             # exact N-body preview for this burn is in.
             app._ca = closest_approach(
                 traj, target.state_at(base_epoch), window_s=window, coarse_samples=720)
-            app._ca_traj = traj
             app._ca_abs_epoch = base_epoch + app._ca.t_ca_s
         return app._ca.separation_m, target.state_at(app._ca_abs_epoch).r
 

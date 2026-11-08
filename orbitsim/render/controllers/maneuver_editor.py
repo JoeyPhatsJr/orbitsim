@@ -12,10 +12,22 @@ from orbitsim.render.node_edit import (
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
     kepler_estimate_points, localize_polyline, maneuver_preview_key, preview_start_drifted,
+    same_burn,
     should_refresh_exact, should_submit_exact,
 )
 from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
+
+
+def execute_label(auto_armed: bool, ttn_s, tolerance_s: float, passed: bool = False) -> str:
+    """What the burn panel's Execute button does now."""
+    if auto_armed:
+        return "Cancel Auto Burn"
+    if ttn_s is not None and ttn_s > tolerance_s:
+        return "Jump & Execute"
+    if passed or (ttn_s is not None and ttn_s < -tolerance_s):
+        return "Burn Now"                    # the node passed: it burns where you are
+    return "Execute Burn"
 
 
 class ManeuverEditor:
@@ -42,6 +54,7 @@ class ManeuverEditor:
         self.app._nudge_held = {}          # nudge key -> seconds held
         self.app._encounter_line = ""      # in-SOI flyby readout (target panel row)
         self.app._node_epoch_s = None      # absolute epoch of the scheduled node (None = none)
+        self.app._node_passed = False      # its time slipped past: it now burns from here
         self.app._auto_execute_node = False
         self.app._node_marker_np = None
         self.app._node_dv_label = None
@@ -86,17 +99,19 @@ class ManeuverEditor:
             self.app._flash_message("Can't plan a burn while landed")
         return ok
 
-    def place_node(self, epoch_s: float) -> None:
-        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept."""
+    def place_node(self, epoch_s: float, snap: bool = True) -> None:
+        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept. ``snap`` rounds
+        to whole seconds (hand placement); the apsis buttons keep the exact time."""
         if not self.burn_editable():
             return
         self.app._auto_execute_node = False
-        self.set_node_epoch(snap_epoch(epoch_s))
+        self.set_node_epoch(snap_epoch(epoch_s) if snap else epoch_s)
 
     def set_node_epoch(self, epoch_s: float) -> None:
         """Schedule the burn at ``epoch_s`` (never in the past)."""
         now = self.app.clock.sim_time_s
         self.app._node_epoch_s = max(now, float(epoch_s))
+        self.app._node_passed = False
 
     def _nudge(self, axis: str, delta: float) -> None:
         if axis == "time":
@@ -169,17 +184,20 @@ class ManeuverEditor:
 
     def _node_to_pe(self):
         from orbitsim.core.maneuvers import time_to_periapsis
-        try:
-            self.app._node_epoch_s = self.app.clock.sim_time_s + time_to_periapsis(self.app.world.vessels[0].state)
-        except ValueError:
-            pass  # unbound orbit: no apsis to target
+        self._node_to_apsis(time_to_periapsis)
 
     def _node_to_ap(self):
         from orbitsim.core.maneuvers import time_to_apoapsis
+        self._node_to_apsis(time_to_apoapsis)
+
+    def _node_to_apsis(self, time_to) -> None:
+        if not self.burn_editable():
+            return
         try:
-            self.app._node_epoch_s = self.app.clock.sim_time_s + time_to_apoapsis(self.app.world.vessels[0].state)
+            wait = time_to(self.app.world.vessels[0].state)
         except ValueError:
-            pass
+            return  # unbound orbit: no apsis to target
+        self.place_node(self.app.clock.sim_time_s + wait, snap=False)
 
     def _clear_node(self):
         self.app._auto_execute_node = False
@@ -194,6 +212,7 @@ class ManeuverEditor:
     def delete_burn(self) -> None:
         """Remove the planned burn: no node time and no delta-V."""
         self._clear_node()
+        self.app._node_passed = False
         for axis in self.app._dv:
             self.app._dv[axis] = 0.0
         self.refresh_readout()
@@ -213,7 +232,8 @@ class ManeuverEditor:
                                        v0.max_thrust_n, node.magnitude_mps)
         except ValueError:
             duration = None
-        return burn_summary(node.magnitude_mps, self.time_to_node(), duration)
+        return burn_summary(node.magnitude_mps, self.time_to_node(), duration,
+                            passed=getattr(self.app, "_node_passed", False))
 
     def sync_maneuver_hud(self) -> None:
         """The burn panel: readout + Delete burn while a burn exists, Execute while it has
@@ -225,12 +245,8 @@ class ManeuverEditor:
         dv = node.magnitude_mps
         exists = app._node_epoch_s is not None or dv > 0.0
         ttn = self.time_to_node()
-        if app._auto_execute_node:
-            exec_label = "Cancel Auto Burn"
-        elif ttn is not None and ttn > app.EXECUTE_TOLERANCE_S:
-            exec_label = "Jump & Execute"
-        else:
-            exec_label = "Execute Burn"
+        exec_label = execute_label(app._auto_execute_node, ttn, app.EXECUTE_TOLERANCE_S,
+                                   passed=app._node_passed)
         readout = self.burn_summary_text(node) if exists else None
         state = (readout, exists, exec_label if dv > 0.0 else None)
         if state == app._burn_panel_state:
@@ -293,13 +309,16 @@ class ManeuverEditor:
             self.app.operation_overlay.update(self.app.operation.status)
             return
         if ttn is not None and ttn < -self.app.EXECUTE_TOLERANCE_S:
-            self._clear_node()  # node already passed; discard rather than burn backward in time
-            return
+            # The node passed ("Burn Now"): drop its time rather than burn backward in
+            # time, and burn from where the ship is now.
+            self._clear_node()
         v0 = self.app.world.vessels[0]
         node = self.current_node()
         dv = node.magnitude_mps
         if 0.0 < dv <= v0.delta_v_remaining:
             v0.state = apply_maneuver(v0.state, node)
+            self.app._node_passed = False
+            self.app.trajectory_view.invalidate_live_line()
             # Spend fuel for this impulse, so maneuver nodes and live thrust draw
             # from the same tank (no separate budget pool) — unless unlimited.
             if not v0.unlimited_dv:
@@ -333,6 +352,7 @@ class ManeuverEditor:
                 app._preview_encounters = encounters
                 app._preview_approach = approach
                 app._preview_exact_key = completed_key
+                app._preview_drawn_key = completed_key   # the burn the drawn line is for
                 app._preview_exact_start = app._preview_inflight_start
                 self._draw_preview_exact()
                 self._remove_preview_estimate()
@@ -355,7 +375,13 @@ class ManeuverEditor:
         if preview_key != app._preview_last_key:
             app._preview_last_key = preview_key
             app._preview_key_changed_t = now_real
-            if preview_key != app._preview_exact_key:
+            drawn_key = getattr(app, "_preview_drawn_key", None)
+            if same_burn(preview_key, drawn_key) and app._preview_np is not None:
+                # Only the target changed: the drawn path is still this burn's. Keep it
+                # (no flicker) but mark it not current, so the approach to the new
+                # target is recomputed and the status box says "checking" meanwhile.
+                app._preview_exact_key = None
+            elif preview_key != app._preview_exact_key:
                 self._remove_preview_exact()      # stale: it shows a different burn
                 app._preview_exact_key = None
                 app._preview_exact_start = None
@@ -423,6 +449,7 @@ class ManeuverEditor:
         if app._preview_np is not None:
             app._preview_np.remove_node()
         app._preview_np = None
+        app._preview_drawn_key = None
         app._preview_origin = None
         app._preview_built_scale = None
         app._preview_encounters = []
@@ -466,6 +493,10 @@ class ManeuverEditor:
             self._clear_node()
             ttn = None
             node = self.current_node()
+            if node.magnitude_mps > 0.0:
+                # Its delta-V is kept and now burns from wherever the ship is: say so.
+                self.app._node_passed = True
+                self.app._flash_message("Burn time passed — Burn Now burns from here")
         v0.nodes = [node] if (self.app._node_epoch_s is not None or node.magnitude_mps > 0.0) else []
         # N-body preview sampling is CPU-heavy, so it runs on one worker. Only the cheap
         # LineSegs swap happens here on the render thread when a result is ready.

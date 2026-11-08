@@ -22,6 +22,20 @@ class TrajectoryView:
     def __init__(self, app) -> None:
         self.app = app
 
+    def invalidate_live_line(self, resubmit: bool = True) -> None:
+        """The vessel's path just jumped: the drawn live line (and its target approach)
+        shows the old one. ``resubmit`` asks for a fresh line without waiting for the
+        refresh cadence (one-off jumps; not every thrusting frame)."""
+        app = self.app
+        app._orbit_generation += 1
+        if resubmit:
+            app._traj_last_submit_t = [float("-inf") for _ in app._traj_last_submit_t]
+            app._traj_last_complete_t = [float("-inf") for _ in app._traj_last_complete_t]
+
+    def live_line_current(self, idx: int = 0) -> bool:
+        """Whether vessel idx's drawn live line was sampled from its current path."""
+        return self.app._traj_generation[idx] == self.app._orbit_generation
+
     def cancel_operation(self) -> None:
         self.app.operation.cancel()
         rollback = getattr(self.app, "_operation_rollback", None)
@@ -30,6 +44,7 @@ class TrajectoryView:
             vessel.state = state
             vessel.orientation = orientation
             self.app.clock.sim_time_s = clock_time
+            self.invalidate_live_line()
         self.app._operation_rollback = None
         self.app.operation_overlay.update(self.app.operation.status)
         self.app._flash_message("Operation cancelled")
@@ -133,7 +148,15 @@ class TrajectoryView:
                 self.app._traj_encounters[idx] = []
                 self.app._traj_approach[idx] = None
             self.app._traj_future[idx] = None
-            self.app._traj_last_complete_t[idx] = now_real
+            generation = self.app._traj_submit_generation[idx]
+            self.app._traj_generation[idx] = generation
+            # A line for an outdated path is replaced at once, not after the cadence
+            # (both timestamps gate the next submit).
+            if generation == self.app._orbit_generation:
+                self.app._traj_last_complete_t[idx] = now_real
+            else:
+                self.app._traj_last_complete_t[idx] = float("-inf")
+                self.app._traj_last_submit_t[idx] = float("-inf")
             self.app._traj_render_scale[idx] = None
 
         scale = self.app.transform.scale_m_per_unit
@@ -147,14 +170,18 @@ class TrajectoryView:
 
         if (
             self.app._traj_future[idx] is None
-            and now_real - max(
+            and (now_real - max(
                 self.app._traj_last_submit_t[idx], self.app._traj_last_complete_t[idx]
             ) >= self.TRAJECTORY_REFRESH_S
+                # The path jumped (e.g. a manual burn just ended): replace the stale
+                # line now. Not while thrusting -- that would resample every frame.
+                or (not self.live_line_current(idx) and not self.app.world.any_thrusting()))
         ):
             horizon = _trajectory_horizon_s(vessel.state, self.app.world.solar_system)
             n_pts = 256
             approach_body = self.app.targeting.aim_target_name() if idx == 0 else None
             self.app._traj_last_submit_t[idx] = now_real
+            self.app._traj_submit_generation[idx] = self.app._orbit_generation
             self.app._traj_future[idx] = self.app._compute_executor.submit(
                 sample_trajectory,
                 vessel.state,
@@ -199,7 +226,7 @@ class TrajectoryView:
             marker.set_pos(rx, ry, rz)
             marker.show()
             text = encounter_label(enc.body_name, enc.periapsis_radius_m - enc.body_radius_m,
-                                   enc.impact)
+                                   enc.impact, self.app.hud.units)
             if label.node().get_text() != text:
                 label.node().set_text(text)
             label.set_pos(rx, ry, rz + 8.0)

@@ -60,3 +60,31 @@ def test_markers_say_what_they_mean():
     assert out["summary"] in planned, (out["summary"], planned)        # the burn's one line
     assert out["summary"].startswith("Burn 3,1") and " · in " in out["summary"]
     assert any(t.startswith("Moon encounter · Pe ") for t in planned), planned
+
+
+DECLUTTER = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism(win_size="1600 900")
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(30)
+hooks.select_target(app, "L4")
+app.rig.set_distance(5.0e9)
+h.step(5)
+hooks.pretend_label_on_panel(app, "TARGET: L4")
+app.readouts.update_marker_readability(app.world.vessels[0].state.r)
+print("RESULT", repr(hooks.shown_world_labels(app)))
+app.destroy()
+"""
+
+
+def test_a_label_on_a_panel_does_not_suppress_its_neighbour():
+    # "TARGET: L4" outranks the point's own "L4" label at the same spot; when the
+    # target label sits on a HUD panel (so the last pass hides it), "L4" must show.
+    proc = subprocess.run([sys.executable, "-c", DECLUTTER], cwd=REPO_ROOT,
+                          capture_output=True, text=True, timeout=240)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")][-1]
+    shown = ast.literal_eval(line[len("RESULT "):])
+    assert "L4" in shown and "TARGET: L4" not in shown, shown

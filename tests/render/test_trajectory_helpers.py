@@ -101,3 +101,16 @@ def test_encounter_source_no_burn_uses_live():
     from orbitsim.render.trajectory_helpers import encounter_source
     assert encounter_source(False, False, [], ["l"]) == ["l"]
     assert encounter_source(False, False, [], None) == []
+
+
+def test_same_burn_ignores_only_the_target():
+    from orbitsim.core.maneuvers import ManeuverNode
+    from orbitsim.render.trajectory_helpers import maneuver_preview_key, same_burn
+    node = ManeuverNode(100.0, 10.0, 0.0, 1.0)
+    moon = maneuver_preview_key(node, 100.0, "Moon")
+    assert same_burn(moon, maneuver_preview_key(node, 100.0, "Mars"))
+    assert same_burn(moon, maneuver_preview_key(node, 100.0, None))
+    assert not same_burn(moon, maneuver_preview_key(ManeuverNode(100.0, 11.0, 0.0, 1.0),
+                                                    100.0, "Moon"))
+    assert not same_burn(moon, maneuver_preview_key(node, 160.0, "Moon"))
+    assert not same_burn(moon, None) and not same_burn(None, None)

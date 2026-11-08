@@ -90,3 +90,98 @@ def test_planning_at_warp_lands_a_future_burn():
     before, during, lead_s, min_lead_s = _run(PLAN_AT_WARP)
     assert before == 100.0 and during == 1.0
     assert lead_s >= min_lead_s
+
+
+SWITCH = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.send("i"); h.step(30)                       # Moon transfer planned, exact path drawn
+before = hooks.preview_lines(app)
+hooks.select_target(app, "Mars")              # switch target with the burn unchanged
+shown, statuses = [], []
+for _ in range(40):
+    h.step(1)
+    shown.append(hooks.preview_lines(app))
+    statuses.append(hooks.aim_status(app))
+hooks.select_target(app, "Venus"); h.step(1)   # A -> B -> C -> A, each a frame apart
+shown.append(hooks.preview_lines(app))
+hooks.select_target(app, "Moon"); h.step(1)
+shown.append(hooks.preview_lines(app))
+print("RESULT", repr({"before": before, "shown": shown, "statuses": statuses}))
+app.destroy()
+"""
+
+
+def test_switching_target_keeps_the_exact_path_drawn():
+    # The drawn path doesn't depend on the target; only the approach does. Switching
+    # target must not drop the exact line (flicker) or fall back to the estimate.
+    out = _run(SWITCH)
+    assert out["before"] == (False, True), out["before"]
+    assert all(s == (False, True) for s in out["shown"]), out["shown"]
+    assert out["statuses"][0] is None or out["statuses"][0][0] == "checking", out["statuses"][0]
+    assert out["statuses"][-1] is not None and out["statuses"][-1][0] != "checking", \
+        out["statuses"][-1]
+
+
+EXECUTED = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.step(150)                                   # live line: LEO misses the Moon
+before = hooks.aim_status(app)
+h.send("i"); h.step(30)                       # plan the transfer
+h.press("Jump & Execute")                     # burn it: no burn left, a new path
+after = []
+for _ in range(150):
+    h.step(1)
+    after.append(hooks.aim_status(app))
+print("RESULT", repr({"before": before, "after": after}))
+app.destroy()
+"""
+
+
+def test_status_never_shows_the_pre_burn_path_after_a_burn():
+    # With no burn planned the box follows the live line; right after a burn (or a
+    # quickload) that line still shows the old orbit for up to its 2 s refresh.
+    out = _run(EXECUTED)
+    assert out["before"][0] == "miss", out["before"]
+    kinds = [s[0] for s in out["after"] if s is not None]
+    assert "miss" not in kinds, kinds[:20]
+    assert kinds and kinds[-1] == "encounter", kinds[-5:]
+
+
+THRUST = r"""
+from tests.render.app_harness import hooks
+from tests.render.app_harness.driver import Harness, build_app, install_determinism
+install_determinism()
+app = build_app("sandbox")
+h = Harness(app)
+h.press("LAUNCH SANDBOX"); h.step(5)
+hooks.select_target(app, "Moon")
+h.step(150)
+vessel = app.world.vessels[0]
+vessel.throttle = 1.0
+h.step(30)                                    # a short manual burn
+vessel.throttle = 0.0
+frames = 0
+while frames < 300 and (hooks.aim_status(app) or ("checking",))[0] == "checking":
+    h.step(1)
+    frames += 1
+print("RESULT", repr(frames))
+app.destroy()
+"""
+
+
+def test_status_recovers_right_after_a_manual_burn():
+    # Review of PR #20: the stale line's completion left the submit time alone, so
+    # the box sat on "checking" ~1.5-2 s after the throttle was cut.
+    assert _run(THRUST) <= 10

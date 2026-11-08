@@ -47,7 +47,7 @@ PANELS: dict[str, PanelRect] = {r.name: r for r in (
     # orbit rows + fuel / dV left / throttle . TWR
     PanelRect("orbit_fuel", "bottom_left", 0.04, 0.04, 0.84, 0.66),
     # the ball's own display region (30% of the window height), never scaled
-    PanelRect("navball", "bottom_center", -0.31, 0.00, 0.31, 0.62, scales=False),
+    PanelRect("navball", "bottom_center", -0.31, 0.03, 0.31, 0.63, scales=False),
     # "Orbital 8.053 km/s", sits on top of the ball
     PanelRect("speed_chip", "bottom_center", -0.30, 0.63, 0.30, 0.71, scales=False),
     # SAS readout + 3x3 buttons, grows outward from its edge next to the ball

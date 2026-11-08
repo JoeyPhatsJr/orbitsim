@@ -146,7 +146,8 @@ class OrbitApp(ShowBase):
         self._preview_approach = None          # TargetApproach of the drawn exact preview
         self._preview_points = None            # cached exact preview samples [m]
         self._preview_built_scale = None       # zoom scale the exact line was built at
-        self._preview_exact_key = None         # burn the drawn exact line belongs to
+        self._preview_exact_key = None         # burn + target the exact result is current for
+        self._preview_drawn_key = None         # burn + target the drawn exact line was sampled for
         self._preview_last_key = None          # burn seen last frame (change detection)
         self._preview_key_changed_t = 0.0      # real time the burn last changed
         self._preview_estimate_np = None       # faint two-body line while editing
@@ -180,6 +181,7 @@ class OrbitApp(ShowBase):
                 )
                 self._grid_executor = None
             self._planning_future = None      # in-flight intercept plan (thread future)
+            self._planning_target_name = None  # the target that plan is for
             self._porkchop_future = None      # in-flight porkchop grid (thread future)
             self._porkchop_render = None      # (dep_times, tof_grid, label) for on-poll draw
             self._porkchop_request = 0
@@ -278,6 +280,7 @@ class OrbitApp(ShowBase):
         self.flight_input.apply_flight_input(real_dt)
         if self.world.any_thrusting():
             self.clock.warp = 1.0
+            self.trajectory_view.invalidate_live_line(resubmit=False)
         elif self.world.vessels:
             from orbitsim.sim.clock import SimClock
             if self.world.solar_system:
