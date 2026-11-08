@@ -206,15 +206,19 @@ don't batch many changes into one late commit. Stage specific files by **explici
   (`nbody._symplectic_adaptive`, alias `_verlet_adaptive`) is **Yoshida 4th-order**: three
   kick-drift-kick sub-steps weighted w1, w0, w1, so a step costs `EVALS_PER_STEP` (3) gravity
   evaluations. `max_safe_warp[_solar]` budget **gravity evaluations** (`budget_evals=200` per
-  frame), not steps; in deep space the 6 h max step binds, so the top warp there is
-  10,000,000×. A single giant `world.step(period)` is accurate even across periapsis
+  frame), not steps; in deep space the 12 h max step (`nbody.FLIGHT_MAX_STEP_S`) binds, so
+  the top warp there is 100,000,000×. 12 h / 2^(k+1) = 6 h / 2^k, so raising it from 6 h
+  changed no step whose cap is under 12 h (goldens bit-identical). A single giant `world.step(period)` is accurate even across periapsis
   passages, but flight-cadence stepping remains the truest exercise of the sandbox loop. Don't
   switch the coast integrator to RK4 — it isn't symplectic and drifts on long coasts.
 - **The cap divisor is a default argument, bound at import.** `_timescale_cap_s` and
   `_solar_cap_s` take `divisor=SUBSTEP_DIVISOR`; assigning `nbody.SUBSTEP_DIVISOR` at runtime
   changes nothing. To experiment, patch their `__defaults__` (or pass `divisor=`). Powered
   flight (`core/flight.py`) and the warp caps size substeps through the same caps.
-- **Vessels land, not sink.** `World.step` resolves surface contact after each tick: below the
+- **Vessels land, not sink — or tunnel.** Before a coast tick, `core.impact.surface_crossing_s`
+  gives the conic time to the inbound surface crossing; inside the tick, the vessel coasts to
+  it, lands, and rides the surface for the rest (at 1e5× a LEO frame is ~1,700 s, enough to dive
+  under and climb back out). `World.step` also resolves surface contact after each tick: below the
   dominant body's surface a vessel is clamped to it with the body's velocity and `landed_on`
   set; TWR > 1 lifts off again. This (plus the surface-radius floor in the substep caps) is
   what keeps the singular r→0 gravity region unreachable — don't remove one without the other.
@@ -316,12 +320,18 @@ don't batch many changes into one late commit. Stage specific files by **explici
 - **Camera is smoothed: `CameraRig` holds current AND target state.** `set_distance` snaps both;
   `move_to_distance`/`zoom`/`orbit` set only the *target*; `CameraRig.update(dt)` eases each
   frame. Don't write `rig.azimuth`/`distance_m` directly from input handlers.
-- **Ephemeris cache positions are constant within a frame.** The cached wrappers (`_csun`, etc.)
-  ignore their `t_s` argument when the cache is populated — this is by design (planet positions
-  don't change meaningfully over one frame's substeps). The Moon is NOT frame-frozen: it moves
+- **Ephemeris cache positions are constant within a frame — inside Earth's SOI.** The cached
+  wrappers (`_csun`, etc.) ignore their `t_s` argument when the cache is populated; near Earth
+  that's harmless (Earth and ship feel nearly the same Sun). Outside Earth's SOI the direct and
+  indirect solar terms stop cancelling: a Sun frozen for a whole frame put a deep-space coast
+  2,000,000 km off after 60 days at 1e7×. There `World.step` runs inside
+  `nbody.time_correct_flight_ephemeris()` (daily DE440 knots, Hermite-interpolated per substep,
+  kept across frames, fetched 64 days per vectorized `ephemeris.body_states` call, bit-identical
+  to scalar calls); `test_deep_space_coast_at_warp_follows_the_moving_planets` pins it. The Moon
+  is NOT frame-frozen: it moves
   too much at high warp, so `moon_state_at()` is evaluated per substep — from hourly DE440
   samples, cubic-Hermite interpolated (~1 cm error, ~8 µs/call; a raw Skyfield call is ~35×
-  slower). Offline or outside DE440's 1849–2150 range it falls back to
+  slower), fetched in aligned blocks of 256 knots (a 1e8× frame spans ~463). Offline or outside DE440's 1849–2150 range it falls back to
   `moon_circular_state_at`, a circle fitted to the real Moon's J2000 plane/phase (i = 20.9° to
   the **equator** — 5.1° is the inclination to the *ecliptic*; the frame here is ICRF).
 - **The real Moon is eccentric, so Lagrange points pulsate.** `earth_fixed_lagrange_points`
