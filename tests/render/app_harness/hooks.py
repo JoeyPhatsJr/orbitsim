@@ -334,3 +334,29 @@ def solar_label_rects(app):
 def hover_solar_body(app, name: str) -> None:
     """Lay the solar names out again as if the mouse were over ``name``'s dot."""
     app.solar_view.frame_markers_and_labels(mouse_px=app._solar_marker_px[name][:2])
+
+
+def set_solar_camera(app, azimuth_rad: float, distance_m: float) -> None:
+    """Snap the solar viewer's camera to an azimuth and distance (no easing)."""
+    app.rig.azimuth = app.rig.target_azimuth = azimuth_rad
+    app.rig.set_distance(distance_m)
+
+
+def solar_label_rects_ignoring_hud(app):
+    """The solar name layout as it would be with no HUD obstacles; restores the
+    real layout afterwards."""
+    app.solar_view._ui_obstacles_px = lambda: []
+    try:
+        app.solar_view.frame_markers_and_labels(None)
+        return solar_label_rects(app)
+    finally:
+        del app.solar_view._ui_obstacles_px
+        app.solar_view.frame_markers_and_labels(None)
+
+
+def hud_text_rect_px(app):
+    """The top-left HUD text's tight bounds in framebuffer px."""
+    from orbitsim.render.label_layout import render2d_rect_px
+    lo, hi = app.hud.text.get_tight_bounds(app.render2d)
+    return render2d_rect_px((lo.x, lo.z), (hi.x, hi.z),
+                            (app.win.get_fb_x_size(), app.win.get_fb_y_size()))

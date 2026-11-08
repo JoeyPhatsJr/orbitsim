@@ -167,24 +167,16 @@ def test_names_keep_clear_of_the_hud():
     # sweep really tests it), and with them no shown name overlaps the HUD.
     from orbitsim.render.label_layout import rects_overlap
     results = _probe("""
-        from orbitsim.render.label_layout import render2d_rect_px
         h.step(5)
         out = []
         for d in (3.0e11, 2.0e12, 4.0e12):
             for i in range(21):
-                app.rig.azimuth = app.rig.target_azimuth = 0.3 * i
-                app.rig.set_distance(d)
+                hooks.set_solar_camera(app, 0.3 * i, d)
                 h.step(2)
-                lo, hi = app.hud.text.get_tight_bounds(app.render2d)
-                hud = render2d_rect_px((lo.x, lo.z), (hi.x, hi.z),
-                                       (app.win.get_fb_x_size(), app.win.get_fb_y_size()))
                 with_obstacles = hooks.solar_label_rects(app)
-                app.solar_view._ui_obstacles_px = lambda: []
-                app.solar_view.frame_markers_and_labels(None)
-                without = hooks.solar_label_rects(app)
-                del app.solar_view._ui_obstacles_px
-                app.solar_view.frame_markers_and_labels(None)
-                out.append([with_obstacles, without, [hud] + app.readouts.panel_rects_px()])
+                without = hooks.solar_label_rects_ignoring_hud(app)
+                out.append([with_obstacles, without,
+                            [hooks.hud_text_rect_px(app)] + app.readouts.panel_rects_px()])
         print("RESULT " + json.dumps(out))
     """)
 
