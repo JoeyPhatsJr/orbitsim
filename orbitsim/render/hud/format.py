@@ -85,12 +85,23 @@ def fmt_burn_duration(seconds) -> str:
     return f"{s // 3600}h {s % 3600 // 60:02d}m burn"
 
 
+PASSED_NODE_TOL_S = 2.0   # the app's EXECUTE_TOLERANCE_S: later than this is "passed"
+
+
 def burn_summary(dv_mps, ttn_s, duration_s) -> str:
     """One line for a planned burn: Burn 3,130 m/s · in 23 min · 6m 54s burn.
-    No time part for a burn-now node (ttn_s None), no duration part when unknown."""
+    No time part for a burn-now node (ttn_s None), no duration part when unknown.
+    A node with a time but no delta-V says "No dV yet"; one more than
+    PASSED_NODE_TOL_S in the past says it burns now (Execute burns where you are)."""
+    if dv_mps <= 0.0:
+        parts = ["No dV yet"]
+        if ttn_s is not None:
+            parts.append(fmt_until(ttn_s))
+        return " · ".join(parts)
     parts = [f"Burn {dv_mps:,.0f} m/s"]
     if ttn_s is not None:
-        parts.append(fmt_until(ttn_s))
+        parts.append("node passed, burns now" if ttn_s < -PASSED_NODE_TOL_S
+                     else fmt_until(ttn_s))
     if duration_s is not None:
         parts.append(fmt_burn_duration(duration_s))
     return " · ".join(parts)

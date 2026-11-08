@@ -19,6 +19,17 @@ from orbitsim.render.trajectory_sampling import sample_preview
 from panda3d.core import TextNode
 
 
+def execute_label(auto_armed: bool, ttn_s, tolerance_s: float) -> str:
+    """What the burn panel's Execute button does now."""
+    if auto_armed:
+        return "Cancel Auto Burn"
+    if ttn_s is not None and ttn_s > tolerance_s:
+        return "Jump & Execute"
+    if ttn_s is not None and ttn_s < -tolerance_s:
+        return "Burn Now"                    # the node passed: it burns where you are
+    return "Execute Burn"
+
+
 class ManeuverEditor:
     """Stateless controller: holds only ``self.app``; all state lives on OrbitApp."""
 
@@ -87,12 +98,13 @@ class ManeuverEditor:
             self.app._flash_message("Can't plan a burn while landed")
         return ok
 
-    def place_node(self, epoch_s: float) -> None:
-        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept."""
+    def place_node(self, epoch_s: float, snap: bool = True) -> None:
+        """Schedule the (one) burn at ``epoch_s``; its delta-V is kept. ``snap`` rounds
+        to whole seconds (hand placement); the apsis buttons keep the exact time."""
         if not self.burn_editable():
             return
         self.app._auto_execute_node = False
-        self.set_node_epoch(snap_epoch(epoch_s))
+        self.set_node_epoch(snap_epoch(epoch_s) if snap else epoch_s)
 
     def set_node_epoch(self, epoch_s: float) -> None:
         """Schedule the burn at ``epoch_s`` (never in the past)."""
@@ -170,17 +182,20 @@ class ManeuverEditor:
 
     def _node_to_pe(self):
         from orbitsim.core.maneuvers import time_to_periapsis
-        try:
-            self.app._node_epoch_s = self.app.clock.sim_time_s + time_to_periapsis(self.app.world.vessels[0].state)
-        except ValueError:
-            pass  # unbound orbit: no apsis to target
+        self._node_to_apsis(time_to_periapsis)
 
     def _node_to_ap(self):
         from orbitsim.core.maneuvers import time_to_apoapsis
+        self._node_to_apsis(time_to_apoapsis)
+
+    def _node_to_apsis(self, time_to) -> None:
+        if not self.burn_editable():
+            return
         try:
-            self.app._node_epoch_s = self.app.clock.sim_time_s + time_to_apoapsis(self.app.world.vessels[0].state)
+            wait = time_to(self.app.world.vessels[0].state)
         except ValueError:
-            pass
+            return  # unbound orbit: no apsis to target
+        self.place_node(self.app.clock.sim_time_s + wait, snap=False)
 
     def _clear_node(self):
         self.app._auto_execute_node = False
@@ -226,12 +241,7 @@ class ManeuverEditor:
         dv = node.magnitude_mps
         exists = app._node_epoch_s is not None or dv > 0.0
         ttn = self.time_to_node()
-        if app._auto_execute_node:
-            exec_label = "Cancel Auto Burn"
-        elif ttn is not None and ttn > app.EXECUTE_TOLERANCE_S:
-            exec_label = "Jump & Execute"
-        else:
-            exec_label = "Execute Burn"
+        exec_label = execute_label(app._auto_execute_node, ttn, app.EXECUTE_TOLERANCE_S)
         readout = self.burn_summary_text(node) if exists else None
         state = (readout, exists, exec_label if dv > 0.0 else None)
         if state == app._burn_panel_state:
@@ -294,8 +304,9 @@ class ManeuverEditor:
             self.app.operation_overlay.update(self.app.operation.status)
             return
         if ttn is not None and ttn < -self.app.EXECUTE_TOLERANCE_S:
-            self._clear_node()  # node already passed; discard rather than burn backward in time
-            return
+            # The node passed ("Burn Now"): drop its time rather than burn backward in
+            # time, and burn from where the ship is now.
+            self._clear_node()
         v0 = self.app.world.vessels[0]
         node = self.current_node()
         dv = node.magnitude_mps

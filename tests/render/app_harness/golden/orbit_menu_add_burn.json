@@ -100,9 +100,9 @@
  "target": null,
  "texts": [
   "Altitude 505.6 km",
-  "Burn 0 m/s \u00b7 in 34 min \u00b7 0s burn",
   "Fuel 100% \u00b7 dV left 5,633 m/s",
   "Inc 8.1\u00b0 \u00b7 Period 115.6 min",
+  "No dV yet \u00b7 in 34 min",
   "Pe 500.0 km \u00b7 Ap 2,465.2 km",
   "SAS OFF \u00b7 HDG 082\u00b0 \u00b7 PIT +01\u00b0",
   "Speed 8.069 km/s",
@@ -141,10 +141,6 @@
    false
   ],
   [
-   "Burn 0 m/s \u00b7 in 34 min \u00b7 0s burn",
-   false
-  ],
-  [
    "Jupiter",
    false
   ],
@@ -178,6 +174,10 @@
   ],
   [
    "Neptune",
+   false
+  ],
+  [
+   "No dV yet \u00b7 in 34 min",
    false
   ],
   [

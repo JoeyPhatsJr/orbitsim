@@ -126,3 +126,16 @@ def test_encounter_label():
     from orbitsim.render.hud.format import encounter_label
     assert encounter_label("Moon", 4_317.4e3, False) == "Moon encounter \u00b7 Pe 4,317 km"
     assert encounter_label("Moon", -10.0, True) == "Moon impact"
+
+
+def test_burn_summary_without_delta_v_says_so():
+    # After "Add burn here" / Next Ap the node has a time but no delta-V yet.
+    from orbitsim.render.hud.format import burn_summary
+    assert burn_summary(0.0, 23 * 60, None) == "No dV yet · in 23 min"
+    assert burn_summary(0.0, None, None) == "No dV yet"
+
+
+def test_burn_summary_for_a_passed_node_says_it_burns_now():
+    from orbitsim.render.hud.format import burn_summary
+    assert burn_summary(120.0, -30.0, 7.4) == "Burn 120 m/s · node passed, burns now · 7s burn"
+    assert burn_summary(120.0, -1.0, 7.4) == "Burn 120 m/s · now · 7s burn"   # within tolerance
