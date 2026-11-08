@@ -107,16 +107,28 @@ def burn_summary(dv_mps, ttn_s, duration_s) -> str:
     return " · ".join(parts)
 
 
-def apsis_label(kind: str, altitude_m: float) -> str:
-    """Map label of an apsis tick: Pe 500 km / Ap 2,465 km (whole km above the surface)."""
-    return f"{'Pe' if kind == 'PE' else 'Ap'} {altitude_m / 1000.0:,.0f} km"
+_MI_PER_KM = 0.621371
 
 
-def encounter_label(body_name: str, periapsis_alt_m: float, impact: bool) -> str:
+def _whole(meters: float, units: str) -> str:
+    """A map-label distance: whole km, or whole mi with the HUD in miles."""
+    km = meters / 1000.0
+    if units == "mi":
+        return f"{km * _MI_PER_KM:,.0f} mi"
+    return f"{km:,.0f} km"
+
+
+def apsis_label(kind: str, altitude_m: float, units: str = "km") -> str:
+    """Map label of an apsis tick: Pe 500 km / Ap 2,465 km (whole units above the surface)."""
+    return f"{'Pe' if kind == 'PE' else 'Ap'} {_whole(altitude_m, units)}"
+
+
+def encounter_label(body_name: str, periapsis_alt_m: float, impact: bool,
+                    units: str = "km") -> str:
     """Map label of a predicted encounter: Moon encounter \u00b7 Pe 4,317 km / Moon impact."""
     if impact:
         return f"{body_name} impact"
-    return f"{body_name} encounter \u00b7 Pe {periapsis_alt_m / 1000.0:,.0f} km"
+    return f"{body_name} encounter \u00b7 Pe {_whole(periapsis_alt_m, units)}"
 
 
 def flyby_line(body_name: str, v_inf_mps: float, deflection_rad: float,

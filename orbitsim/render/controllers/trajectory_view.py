@@ -219,7 +219,7 @@ class TrajectoryView:
             marker.set_pos(rx, ry, rz)
             marker.show()
             text = encounter_label(enc.body_name, enc.periapsis_radius_m - enc.body_radius_m,
-                                   enc.impact)
+                                   enc.impact, self.app.hud.units)
             if label.node().get_text() != text:
                 label.node().set_text(text)
             label.set_pos(rx, ry, rz + 8.0)

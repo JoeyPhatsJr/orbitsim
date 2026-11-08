@@ -78,7 +78,8 @@ class Readouts:
             marker.set_pos(rx, ry, rz)
             label.set_pos(rx, ry, rz + 7.0)
             altitude = self.app._apsis_altitudes[name]
-            text = apsis_label(name, altitude) if altitude is not None else ""
+            text = (apsis_label(name, altitude, self.app.hud.units)
+                    if altitude is not None else "")
             if label.node().get_text() != text:
                 label.node().set_text(text)
             marker.show()

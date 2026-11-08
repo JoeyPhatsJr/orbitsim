@@ -139,3 +139,10 @@ def test_burn_summary_for_a_passed_node_says_it_burns_now():
     from orbitsim.render.hud.format import burn_summary
     assert burn_summary(120.0, -30.0, 7.4) == "Burn 120 m/s · node passed, burns now · 7s burn"
     assert burn_summary(120.0, -1.0, 7.4) == "Burn 120 m/s · now · 7s burn"   # within tolerance
+
+
+def test_map_labels_follow_the_hud_units():
+    from orbitsim.render.hud.format import apsis_label, encounter_label
+    assert apsis_label("PE", 500.0e3, units="mi") == "Pe 311 mi"
+    assert encounter_label("Moon", 4_317.4e3, False, units="mi") == "Moon encounter · Pe 2,683 mi"
+    assert apsis_label("AP", 2_465.2e3, units="km") == "Ap 2,465 km"
