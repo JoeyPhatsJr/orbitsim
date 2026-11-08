@@ -383,3 +383,35 @@ def test_tick_that_ends_before_the_surface_does_not_land():
     world.step(t_hit - 30.0)
     assert vessel.landed_on is None
     assert np.linalg.norm(vessel.state.r) > R_EARTH
+
+
+def _flown_deep_space_error_m(warp: float, days: float = 60.0) -> float:
+    """Fly a heliocentric coast (~0.5 AU from Earth) through World.step at the frame
+    cadence of `warp` (cache refreshed each frame, like the app) and return its
+    distance from the time-correct converged path."""
+    import pytest
+    from orbitsim.core import nbody as nb
+    if not nb.refresh_ephemeris_cache(0.0):
+        pytest.skip("DE440 ephemeris not available offline")
+    total = days * 86400.0
+    with nb.stable_prediction_ephemeris():
+        sun = nb._csun(0.0)
+        r = sun.r + np.array([0.0, 1.0e11, 0.0])
+        v = sun.v + np.array([-np.sqrt(nb.MU_SUN / 1.0e11), 0.0, 0.0])
+        start = StateVector(r=r, v=v, mu=MU_EARTH, epoch_s=0.0)
+        truth = nb.propagate_solar_system(start, total, max_step_s=600.0)
+    vessel = Vessel(name="probe", state=start)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    frame = warp / 60.0
+    while vessel.state.epoch_s < total - 1e-6:
+        nb.refresh_ephemeris_cache(vessel.state.epoch_s)
+        world.step(min(frame, total - vessel.state.epoch_s))
+    return float(np.linalg.norm(vessel.state.r - truth.r))
+
+
+def test_deep_space_coast_at_warp_follows_the_moving_planets():
+    # The per-frame ephemeris cache froze the Sun for a whole frame: outside Earth's
+    # SOI that was 2,000,000 km off after 60 days at 1e7x (19,000,000 km at 1e8x).
+    # Out there flight reads time-correct (interpolated) planet positions instead.
+    assert _flown_deep_space_error_m(1.0e7) < 50.0e3
+    assert _flown_deep_space_error_m(1.0e8) < 50.0e3

@@ -419,7 +419,7 @@ def test_warp_budget_counts_gravity_evaluations():
                          v=np.array([0.0, np.sqrt(MU_EARTH / r), 0.0]),
                          mu=MU_EARTH, epoch_s=0.0)
         w = nb.max_safe_warp_solar(st, 0.0, SimClock.WARP_STEPS)
-        evals = nb._solar_system_substeps(st, w / 60.0, 6.0 * 3600.0) * nb.EVALS_PER_STEP
+        evals = nb._solar_system_substeps(st, w / 60.0, nb.FLIGHT_MAX_STEP_S) * nb.EVALS_PER_STEP
         assert evals <= 200 or w == SimClock.WARP_STEPS[0], (r, w, evals)
         w = nb.max_safe_warp(st, 0.0, SimClock.WARP_STEPS)
         evals = nb._earth_moon_substeps(st, w / 60.0, 3600.0) * nb.EVALS_PER_STEP
@@ -461,10 +461,11 @@ def test_flown_moon_transfer_matches_converged_truth():
     assert abs(coarse - fine) <= 50.0e3
 
 
-def test_solar_max_warp_reaches_ten_million_in_deep_space():
-    # In deep space the 6 h max step binds, not the divisor: at 100,000,000x a frame is
-    # 78 steps = 234 gravity evaluations (> 200), so the evaluation budget stops one
-    # level lower than the old step budget did (flight-accuracy plan, Task 2 warp report).
+def test_solar_max_warp_reaches_the_top_step_in_deep_space():
+    # In deep space the flight max step binds, not the divisor. At 100,000,000x a frame
+    # is 1.67e6 s: with 6 h steps that was 78 steps = 234 gravity evaluations (> 200),
+    # so Yoshida's 3 evaluations per step cost the top warp level. The 12 h max step
+    # brings it back (39 steps = 117 evaluations).
     from orbitsim.sim.clock import SimClock
 
     state = StateVector(
@@ -472,7 +473,38 @@ def test_solar_max_warp_reaches_ten_million_in_deep_space():
         v=np.array([0.0, 3.0e4, 0.0]),
         mu=MU_EARTH,
     )
-    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 10_000_000
+    assert nb.FLIGHT_MAX_STEP_S == 12.0 * 3600.0
+    assert nb.max_safe_warp_solar(state, 0.0, SimClock.WARP_STEPS) == 100_000_000
+
+
+def test_flight_max_step_change_is_bit_identical_below_six_hours():
+    # Steps are quantized to max_step / 2^k, and 12 h / 2^(k+1) == 6 h / 2^k, so any
+    # coast whose local cap is under 12 h takes exactly the steps it took with 6 h.
+    # LEO and a cislunar coast (caps of minutes to hours) must match bit for bit.
+    leo = StateVector(r=np.array([7.0e6, 0.0, 0.0]),
+                      v=np.array([0.0, np.sqrt(MU_EARTH / 7.0e6), 0.0]),
+                      mu=MU_EARTH, epoch_s=0.0)
+    for st, dt in ((leo, 5_400.0), (_MOON_TRANSFER, 2.0 * 86400.0)):
+        nb.refresh_ephemeris_cache(st.epoch_s)
+        a = nb.propagate_solar_system(st, dt, max_step_s=6.0 * 3600.0)
+        b = nb.propagate_solar_system(st, dt)
+        assert np.array_equal(a.r, b.r) and np.array_equal(a.v, b.v)
+
+
+def test_deep_space_coast_with_twelve_hour_steps_stays_accurate():
+    # Heliocentric coast 0.67 AU from the Sun (~0.5 AU from Earth) for 60 days:
+    # 12 h steps vs 10 min steps, under the time-correct (interpolated) ephemeris so
+    # the difference is the integrator's truncation error alone: measured 4.97 km
+    # (6 h steps 0.31 km, 24 h 79.5 km -- 4th order). The frozen-per-frame planets
+    # it ships alongside were 2,000,000 km off on this coast at 1e7x.
+    with nb.stable_prediction_ephemeris():
+        sun = nb._csun(0.0)
+        r = sun.r + np.array([0.0, 1.0e11, 0.0])
+        v = sun.v + np.array([-np.sqrt(nb.MU_SUN / 1.0e11), 0.0, 0.0])
+        st = StateVector(r=r, v=v, mu=MU_EARTH, epoch_s=0.0)
+        coarse = nb.propagate_solar_system(st, 60 * 86400.0)
+        fine = nb.propagate_solar_system(st, 60 * 86400.0, max_step_s=600.0)
+    assert np.linalg.norm(coarse.r - fine.r) < 10.0e3       # < 10 km after 60 days
 
 
 def test_solar_max_warp_is_capped_near_earth():

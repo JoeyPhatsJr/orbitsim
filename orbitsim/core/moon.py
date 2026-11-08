@@ -53,14 +53,37 @@ def _ephemeris_ready() -> bool:
     return _ephemeris is not None and _ephemeris.available()
 
 
+_SAMPLE_BATCH = 256              # knots per vectorized Skyfield call (~10.7 sim-days)
+
+
 def _sample(index: int) -> StateVector:
-    """DE440 geocentric Moon state at the ``index``-th hourly knot (cached)."""
+    """DE440 geocentric Moon state at the ``index``-th hourly knot (cached).
+
+    A missing knot fetches its whole aligned block of _SAMPLE_BATCH knots in one
+    vectorized call (bit-identical to per-knot calls): a 1e8x frame spans ~463
+    knots, and one call each made a deep-space frame cost ~100 ms.
+    """
     state = _sample_cache.get(index)
     if state is None:
-        if len(_sample_cache) >= _SAMPLE_CACHE_MAX:
+        batch = max(1, min(_SAMPLE_BATCH, _SAMPLE_CACHE_MAX))
+        if len(_sample_cache) + batch > _SAMPLE_CACHE_MAX:
             _sample_cache.clear()
-        state = _ephemeris.body_state("MOON", index * _SAMPLE_STEP_S, center="EARTH")
-        _sample_cache[index] = state
+        first = (index // batch) * batch
+        try:
+            knots = _ephemeris.body_states(
+                "MOON", np.arange(first, first + batch) * _SAMPLE_STEP_S, center="EARTH")
+        except ValueError:
+            # The block runs past the kernel's range: fetch this knot alone (it
+            # raises the range error itself when it is out too).
+            knots = None
+        if knots is None:
+            state = _ephemeris.body_states(
+                "MOON", np.array([index * _SAMPLE_STEP_S]), center="EARTH")[0]
+            _sample_cache[index] = state
+        else:
+            for offset, knot in enumerate(knots):
+                _sample_cache[first + offset] = knot
+            state = _sample_cache[index]
     return state
 
 

@@ -87,6 +87,25 @@ def sim_time_to_skyfield(t_sim_s: float):
     return _ts.tdb_jd(jd_tdb)
 
 
+def body_states(name: str, t_sim_s, center: str = "SUN") -> list:
+    """body_state at each time in t_sim_s, in one vectorized Skyfield call.
+
+    Bit-identical to calling body_state per time (Skyfield evaluates the arrays
+    elementwise) at roughly the cost of one or two scalar calls.
+    """
+    kernel = _ensure_kernel()
+    times = np.asarray(t_sim_s, dtype=np.float64)
+    t = sim_time_to_skyfield(times)
+    target = kernel[_TARGETS[name.upper()]]
+    origin = kernel[_TARGETS[center.upper()]]
+    rel = (target - origin).at(t)
+    r_m = np.asarray(rel.position.m, dtype=np.float64)
+    v_m_s = np.asarray(rel.velocity.m_per_s, dtype=np.float64)
+    mu = _CENTER_MU.get(center.upper(), 0.0)
+    return [StateVector(r=r_m[:, i].copy(), v=v_m_s[:, i].copy(), mu=mu,
+                        epoch_s=float(times[i])) for i in range(times.shape[0])]
+
+
 def body_state(name: str, t_sim_s: float, center: str = "SUN") -> StateVector:
     """Position + velocity of `name` relative to `center` as an SI StateVector.
 

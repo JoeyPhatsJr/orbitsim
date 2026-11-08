@@ -115,3 +115,33 @@ def test_moon_sample_cache_is_bounded(monkeypatch):
     for k in range(40):
         moon_state_at(k * moon._SAMPLE_STEP_S + 1.0)
     assert len(moon._sample_cache) <= 16
+
+
+def test_moon_knots_are_fetched_in_batches(monkeypatch):
+    # A 1e8x frame spans ~463 sim-hours: one Skyfield call per hourly knot made a
+    # deep-space frame cost ~100 ms. Knots now come in vectorized blocks.
+    ephemeris = _kernel_or_skip()
+    monkeypatch.setattr(moon, "_sample_cache", {})
+    calls = []
+    real_states = ephemeris.body_states
+    monkeypatch.setattr(ephemeris, "body_state",
+                        lambda *a, **k: calls.append(a) or pytest.fail("scalar call"))
+    monkeypatch.setattr(ephemeris, "body_states",
+                        lambda *a, **k: calls.append(a) or real_states(*a, **k))
+    for hour in range(463):
+        moon_state_at(1.0e8 + hour * moon._SAMPLE_STEP_S + 0.5)
+    assert len(calls) <= 3
+
+
+def test_batched_moon_knots_match_per_knot_samples():
+    ephemeris = _kernel_or_skip()
+    moon._sample_cache.clear()
+    for t_s in (1.0e8 + 1234.5, 1.0e8 + 77 * 3600.0 + 1.0):
+        got = moon_state_at(t_s)
+        bucket = int(np.floor(t_s / moon._SAMPLE_STEP_S))
+        from orbitsim.core.hermite import hermite_state
+        start = ephemeris.body_state("MOON", bucket * 3600.0, center="EARTH")
+        end = ephemeris.body_state("MOON", (bucket + 1) * 3600.0, center="EARTH")
+        want = hermite_state(start, end, bucket * 3600.0, 3600.0, t_s, mu=MOON_ORBIT.mu)
+        np.testing.assert_array_equal(got.r, want.r)
+        np.testing.assert_array_equal(got.v, want.v)
