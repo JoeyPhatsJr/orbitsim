@@ -332,3 +332,54 @@ def test_unlimited_dv_thrusts_with_empty_tank():
     # Nose is +Z (identity orientation): thrust accel = 30 kN / 2000 kg = 15 m/s^2.
     assert vessel.state.v[2] > 10.0             # thrust produced acceleration
     assert vessel.fuel_mass_kg == 0.0           # tank untouched under unlimited
+
+
+def _deorbit_vessel(depth_m: float = 2.0e6) -> Vessel:
+    """At a 400 km apoapsis on an orbit whose periapsis is depth_m underground."""
+    ra, rp = R_EARTH + 4.0e5, R_EARTH - depth_m
+    a = 0.5 * (ra + rp)
+    va = np.sqrt(MU_EARTH * (2.0 / ra - 1.0 / a))
+    state = StateVector(r=np.array([ra, 0.0, 0.0]), v=np.array([0.0, va, 0.0]),
+                        mu=MU_EARTH, epoch_s=0.0)
+    return Vessel(name="deorbit", state=state)
+
+
+def _past_the_climb_out_s(vessel) -> float:
+    """A tick length that ends back above the surface on the far side: the conic
+    is symmetric about periapsis, so it re-emerges at period - t_hit."""
+    from orbitsim.core.impact import surface_crossing_s
+    t_hit = surface_crossing_s(vessel.state.r, vessel.state.v, MU_EARTH, R_EARTH)
+    a = state_to_elements(vessel.state).a
+    period = 2.0 * np.pi * np.sqrt(a**3 / MU_EARTH)
+    return period - t_hit + 200.0
+
+
+def test_one_long_tick_cannot_tunnel_through_the_planet():
+    # High warp in LEO is ~1,700 s per frame: a path that dips under the surface and
+    # comes back out inside one tick must still land, not pass through the planet.
+    vessel = _deorbit_vessel()
+    dt = _past_the_climb_out_s(vessel)
+    world = World(central=EARTH, vessels=[vessel])
+    world.step(dt)                        # past the dive and the climb back out
+    assert vessel.landed_on == "Earth"
+    assert abs(np.linalg.norm(vessel.state.r) - R_EARTH) < 1.0
+    assert vessel.state.epoch_s == dt
+
+
+def test_one_long_tick_cannot_tunnel_through_the_planet_solar_system():
+    vessel = _deorbit_vessel()
+    dt = _past_the_climb_out_s(vessel)
+    world = World(central=EARTH, vessels=[vessel], solar_system=True)
+    world.step(dt)
+    assert vessel.landed_on == "Earth"
+    assert abs(np.linalg.norm(vessel.state.r) - R_EARTH) < 1.0
+
+
+def test_tick_that_ends_before_the_surface_does_not_land():
+    from orbitsim.core.impact import surface_crossing_s
+    vessel = _deorbit_vessel()
+    t_hit = surface_crossing_s(vessel.state.r, vessel.state.v, MU_EARTH, R_EARTH)
+    world = World(central=EARTH, vessels=[vessel])
+    world.step(t_hit - 30.0)
+    assert vessel.landed_on is None
+    assert np.linalg.norm(vessel.state.r) > R_EARTH

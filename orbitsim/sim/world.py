@@ -9,6 +9,14 @@ from orbitsim.core.attitude import quat_identity
 from orbitsim.core.flight import tsiolkovsky_dv
 
 
+def _body_named(name: str) -> CelestialBody:
+    from orbitsim.core.bodies import MOON, PLANETS, SUN
+    for body in (SUN, MOON, *PLANETS):
+        if body.name == name:
+            return body
+    raise ValueError(f"unknown body: {name!r}")
+
+
 @dataclass
 class Vessel:
     """A point-mass vessel: orbital state, propulsion, and attitude.
@@ -168,6 +176,16 @@ class World:
                 self._ride_surface(vessel, sim_dt_s)
                 continue
             else:
+                hit = self._surface_hit_within(vessel, sim_dt_s)
+                if hit is not None:
+                    # The path reaches a surface inside this tick. Checking only the
+                    # end position lets a long (high-warp) tick dive under the
+                    # surface and climb back out: stop at the impact and land.
+                    t_hit, name = hit
+                    vessel.state = propagate_fn(vessel.state, t_hit)
+                    self._land_on(vessel, name)
+                    self._ride_surface(vessel, sim_dt_s - t_hit)
+                    continue
                 vessel.state = propagate_fn(vessel.state, sim_dt_s)
             # 3) Surface contact: a vessel below the dominant body's surface is
             # placed on it with the body's velocity. This is what physically
@@ -192,6 +210,33 @@ class World:
             (self.central.name, np.zeros(3), np.zeros(3), self.central.radius_m),
             (MOON.name, moon.r, moon.v, MOON.radius_m),
         ]
+
+    def _surface_hit_within(self, vessel, sim_dt_s: float):
+        """(t_hit_s, body name) if the coast's conic about a contact candidate
+        descends to its surface within sim_dt_s, else None (earliest wins)."""
+        from orbitsim.core.impact import surface_crossing_s
+
+        best = None
+        for name, center, velocity, radius in self._contact_candidates(vessel):
+            t = surface_crossing_s(vessel.state.r - center, vessel.state.v - velocity,
+                                   _body_named(name).mu, radius)
+            if t is not None and t < sim_dt_s and (best is None or t < best[0]):
+                best = (t, name)
+        return best
+
+    def _land_on(self, vessel, name: str) -> None:
+        """Place the vessel on name's surface below its current position, at rest
+        relative to the body (the integrated state is within metres of it)."""
+        from orbitsim.core.nbody import geocentric_body_state
+        body = geocentric_body_state(name, vessel.state.epoch_s)
+        rel = vessel.state.r - body.r
+        dist = float(np.linalg.norm(rel))
+        up = rel / dist if dist > 0.0 else np.array([0.0, 0.0, 1.0])
+        vessel.state = StateVector(
+            r=body.r + up * _body_named(name).radius_m,
+            v=np.asarray(body.v, dtype=np.float64),
+            mu=vessel.state.mu, epoch_s=vessel.state.epoch_s)
+        vessel.landed_on = name
 
     def _resolve_surface_contact(self, vessel) -> None:
         """Clamp a vessel that ended the tick below a surface onto that surface."""
