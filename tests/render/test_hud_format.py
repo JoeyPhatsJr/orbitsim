@@ -146,3 +146,31 @@ def test_map_labels_follow_the_hud_units():
     assert apsis_label("PE", 500.0e3, units="mi") == "Pe 311 mi"
     assert encounter_label("Moon", 4_317.4e3, False, units="mi") == "Moon encounter · Pe 2,683 mi"
     assert apsis_label("AP", 2_465.2e3, units="km") == "Ap 2,465 km"
+
+
+def _row_width(text):
+    from panda3d.core import Filename, FontPool, TextNode
+    from orbitsim.render.ui.theme import font_path
+    node = TextNode("measure")
+    node.set_font(FontPool.load_font(Filename.from_os_specific(font_path()).get_fullpath()))
+    return node.calc_width(text) * 0.045                 # Hud's row text scale
+
+
+def test_unbound_orbit_shows_no_apoapsis_and_big_distances_compactly():
+    lines = _lines(periapsis_m=1.2e9, apoapsis_m=-1.0e12, altitude_m=4.4984e12)
+    assert "Pe 1.2M km · Ap —" in lines, lines
+    assert "Altitude 4,498.4M km" in lines, lines
+
+
+def test_every_orbit_fuel_row_fits_its_panel_at_the_extremes():
+    # Review (4b): "Pe 1,200,000.0 km · Ap -1,000,000,000.0 km" ran 0.02 past the panel.
+    from orbitsim.render.ui.hud_layout import PANELS
+    r = PANELS["orbit_fuel"]
+    avail = (r.x1 - r.x0) - 0.08 - 0.02                    # text inset 0.08, 0.02 margin
+    for units in ("km", "mi"):
+        for pe, ap in ((1.2e9, -1.0e12), (4.4984e12, 4.4984e12), (9.99e8, 9.99e8)):
+            lines = _lines(units=units, periapsis_m=pe, apoapsis_m=ap, altitude_m=4.4984e12,
+                           speed_mps=99_999.9e3, period_s=6.0e9, dv_remaining=99_999.0,
+                           twr=999.99, warp_locked=True)
+            for line in lines:
+                assert _row_width(line) <= avail, (line, _row_width(line))

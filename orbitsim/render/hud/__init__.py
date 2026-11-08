@@ -11,11 +11,15 @@ _MI_PER_KM = 0.621371
 
 
 def _dist(meters: float, units: str) -> str:
-    """Format a distance [m] as km or mi (1 km = 0.621371 mi), one decimal."""
-    km = meters / 1000.0
+    """Format a distance [m] as km or mi (1 km = 0.621371 mi), one decimal; a million
+    or more as e.g. 4,498.4M km so heliocentric distances fit the panel row."""
+    value = meters / 1000.0
+    unit = "km"
     if units == "mi":
-        return f"{km * _MI_PER_KM:,.1f} mi"
-    return f"{km:,.1f} km"
+        value, unit = value * _MI_PER_KM, "mi"
+    if abs(value) >= 1.0e6:
+        return f"{value / 1.0e6:,.1f}M {unit}"
+    return f"{value:,.1f} {unit}"
 
 
 def _speed(mps: float, units: str) -> str:
@@ -35,10 +39,13 @@ def orbit_fuel_lines(
     """The bottom-left panel's rows, top to bottom. Pure (no DirectGUI) so it is
     unit-testable. Mass and thrust are constants of the one ship, so they're not here."""
     period = (f"{period_s / 60.0:,.1f} min" if math.isfinite(period_s) else "\u2014")
+    # An unbound orbit has no apoapsis (the conic formula gives a negative one).
+    apoapsis = (_dist(apoapsis_m, units) if math.isfinite(apoapsis_m) and apoapsis_m >= 0.0
+                else "\u2014")
     lines = [
         f"Altitude {_dist(altitude_m, units)}",
         f"Speed {_speed(speed_mps, units)}",
-        f"Pe {_dist(periapsis_m, units)} \u00b7 Ap {_dist(apoapsis_m, units)}",
+        f"Pe {_dist(periapsis_m, units)} \u00b7 Ap {apoapsis}",
         f"Inc {np.degrees(inclination_rad):,.1f}\u00b0 \u00b7 Period {period}",
     ]
     if dominant_body != "Earth":
