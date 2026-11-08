@@ -5,7 +5,6 @@ converged path passes at ~45,670 km: periapsis-sized steps with a 120 s floor ar
 too coarse near LEO, and a flyby amplifies the departure error. See
 docs/superpowers/plans/2026-11-04-map-readability-2-live-preview.md.
 """
-import time
 
 import numpy as np
 import pytest
@@ -62,11 +61,20 @@ def test_moon_transfer_preview_stays_cheap(de440, monkeypatch):
     assert calls["n"] <= 6_000, calls["n"]
 
 
-def test_escape_preview_is_finite_and_fast_enough(de440):
+def test_escape_preview_is_finite_and_fast_enough(de440, monkeypatch):
+    # Counted like the Moon preview above (a wall-clock bound failed under parallel
+    # test load): ~3.0k gravity evaluations, ~1 s on the dev machine.
+    calls = {"n": 0}
+    real = nb.solar_system_accel
+
+    def counted(r, t):
+        calls["n"] += 1
+        return real(r, t)
+    monkeypatch.setattr(nb, "solar_system_accel", counted)
     esc = StateVector(r=PINNED.r, v=PINNED.v * 1.25, mu=PINNED.mu, epoch_s=PINNED.epoch_s)
-    t0 = time.perf_counter()
     pts, _enc, _ap = sample_preview(esc, True, PREVIEW_FLOOR_S)
-    assert np.isfinite(pts).all() and time.perf_counter() - t0 < 5.0   # generous CI bound
+    assert np.isfinite(pts).all()
+    assert calls["n"] <= 3_500, calls["n"]
 
 
 # Plan 4: the B-plane planner prototype's node (planned against the pre-Yoshida preview,
