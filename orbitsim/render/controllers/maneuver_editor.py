@@ -12,6 +12,7 @@ from orbitsim.render.node_edit import (
 from orbitsim.render.orbit_lines import build_orbit_node
 from orbitsim.render.trajectory_helpers import (
     kepler_estimate_points, localize_polyline, maneuver_preview_key, preview_start_drifted,
+    same_burn,
     should_refresh_exact, should_submit_exact,
 )
 from orbitsim.render.trajectory_sampling import sample_preview
@@ -355,7 +356,12 @@ class ManeuverEditor:
         if preview_key != app._preview_last_key:
             app._preview_last_key = preview_key
             app._preview_key_changed_t = now_real
-            if preview_key != app._preview_exact_key:
+            if same_burn(preview_key, app._preview_exact_key) and app._preview_np is not None:
+                # Only the target changed: the drawn path is still this burn's. Keep it
+                # (no flicker) but mark it not current, so the approach to the new
+                # target is recomputed and the status box says "checking" meanwhile.
+                app._preview_exact_key = None
+            elif preview_key != app._preview_exact_key:
                 self._remove_preview_exact()      # stale: it shows a different burn
                 app._preview_exact_key = None
                 app._preview_exact_start = None

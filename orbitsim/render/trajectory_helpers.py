@@ -16,6 +16,13 @@ def maneuver_preview_key(node, scheduled_epoch_s, target_name=None):
     )
 
 
+def same_burn(key_a, key_b) -> bool:
+    """Whether two maneuver_preview_keys describe the same burn (they may differ in
+    target only). The drawn path depends on the burn alone; the target changes only
+    the measured approach."""
+    return key_a is not None and key_b is not None and key_a[:4] == key_b[:4]
+
+
 def coast_chunks(duration_s: float, max_chunk_s: float = 86400.0) -> list[float]:
     """Split a teleport coast into bounded positive steps that land exactly on its end."""
     if duration_s <= 0.0:
