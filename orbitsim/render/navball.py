@@ -31,6 +31,7 @@ _MARKER_COLORS = {
 _FILM = 2.6            # orthographic film size (ball has radius 1)
 _CAM_DIST = 10.0       # ortho camera distance along -Y
 _BALL_FRAC_H = 0.30    # navball height as a fraction of the window height
+_BALL_BOTTOM_FRAC = 0.015   # gap below the ball, as a fraction of the window height
 
 
 def ship_axes(q):
@@ -206,7 +207,8 @@ class Navball:
         self._last_win_size = (w, h)
         side_px = _BALL_FRAC_H * h
         half_w = (side_px / w) / 2.0
-        self.dr.set_dimensions(0.5 - half_w, 0.5 + half_w, 0.015, 0.015 + _BALL_FRAC_H)
+        self.dr.set_dimensions(0.5 - half_w, 0.5 + half_w, _BALL_BOTTOM_FRAC,
+                               _BALL_BOTTOM_FRAC + _BALL_FRAC_H)
 
     def update(self, *, orientation_q, state, target_pos=None, maneuver_dir=None) -> None:
         """Orient the ball to the ship attitude and place the orbital markers.

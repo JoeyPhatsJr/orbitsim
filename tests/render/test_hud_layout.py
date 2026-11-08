@@ -31,9 +31,13 @@ def test_panels_stay_on_screen(aspect):
 
 
 def test_navball_rect_matches_display_region():
-    from orbitsim.render.navball import _BALL_FRAC_H
+    # The display region spans window-height fractions [0.015, 0.015 + _BALL_FRAC_H];
+    # aspect2d y runs over 2 units bottom to top, so that is y0 = 0.03, y1 = 0.63.
+    from orbitsim.render.navball import _BALL_BOTTOM_FRAC, _BALL_FRAC_H
     r = PANELS["navball"]
-    assert abs((r.y1 - r.y0) - 2.0 * _BALL_FRAC_H) < 0.03
+    assert r.y0 == pytest.approx(2.0 * _BALL_BOTTOM_FRAC, abs=0.005)
+    assert r.y1 == pytest.approx(2.0 * (_BALL_BOTTOM_FRAC + _BALL_FRAC_H), abs=0.005)
+    assert r.x1 >= _BALL_FRAC_H and r.x0 <= -_BALL_FRAC_H     # square ball: half-width 0.3
 
 
 @pytest.mark.parametrize("scale", SCALES)
