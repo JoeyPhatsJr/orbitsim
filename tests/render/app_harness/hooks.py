@@ -360,3 +360,10 @@ def hud_text_rect_px(app):
     lo, hi = app.hud.text.get_tight_bounds(app.render2d)
     return render2d_rect_px((lo.x, lo.z), (hi.x, hi.z),
                             (app.win.get_fb_x_size(), app.win.get_fb_y_size()))
+
+
+def pretend_label_on_panel(app, text: str) -> None:
+    """Make the panel test report the world label showing ``text`` as on a panel."""
+    def blocked(labels):
+        return [label.node().get_text() == text for label in labels]
+    app.readouts.labels_blocked_by_panels = blocked

@@ -120,7 +120,11 @@ class Readouts:
                 label.hide()
                 idle_markers.append(marker)
 
-        points_px = [self.app.targeting.marker_px(item[2]) for item in candidates]
+        # A label the last pass will hide on a HUD panel mustn't win the declutter and
+        # suppress a neighbour that is in the clear.
+        blocked = self.labels_blocked_by_panels([item[0] for item in candidates])
+        points_px = [None if on_panel else self.app.targeting.marker_px(item[2])
+                     for item, on_panel in zip(candidates, blocked)]
         visible = declutter_indices(
             points_px, [item[3] for item in candidates], min_separation_px=52.0
         )
@@ -192,14 +196,25 @@ class Readouts:
         drawn box (its card, placed along the camera's right/up axes: labels are eye
         billboards) overlaps a shown panel (+4 px) is hidden, whatever its priority;
         static labels come back once they're clear."""
-        from panda3d.core import Vec3
-        from orbitsim.render.world_markers import box_blocked_by_panels, label_box_px
-        app = self.app
         owned, static = self._world_labels()
         owned = [label for label in owned if not label.is_hidden()]
         labels = owned + static
         if not labels:
             return
+        for i, (label, blocked) in enumerate(zip(labels, self.labels_blocked_by_panels(labels))):
+            if blocked:
+                label.hide()
+            elif i >= len(owned):
+                label.show()
+
+    def labels_blocked_by_panels(self, labels) -> list:
+        """For each world label: does its drawn box (card along the camera's right/up
+        axes) overlap a shown HUD panel (+4 px)?"""
+        from panda3d.core import Vec3
+        from orbitsim.render.world_markers import box_blocked_by_panels, label_box_px
+        app = self.app
+        if not labels:
+            return []
         rects = self.panel_rects_px()
         right = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(1, 0, 0))))
         up = np.array(tuple(app.render.get_relative_vector(app.cam, Vec3(0, 0, 1))))
@@ -211,13 +226,9 @@ class Readouts:
             sx, _sy, sz = label.get_scale(app.render)
             corners += [anchor + right * (x * sx) + up * (z * sz)
                         for x in (l, r) for z in (b, t)]
-
         px = app.targeting.project_render_px(np.array(corners))
-        for i, label in enumerate(labels):
-            if box_blocked_by_panels(label_box_px(px[4 * i:4 * i + 4]), rects):
-                label.hide()
-            elif i >= len(owned):
-                label.show()
+        return [box_blocked_by_panels(label_box_px(px[4 * i:4 * i + 4]), rects)
+                for i in range(len(labels))]
 
     def _update_encounter_info(self, vessel, dom_body, dom_pos) -> None:
         """Compute and display flyby encounter parameters when approaching a planet."""
